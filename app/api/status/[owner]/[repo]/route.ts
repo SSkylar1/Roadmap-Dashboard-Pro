@@ -1,7 +1,10 @@
-import { NextResponse } from 'next/server';
+// app/api/status/[owner]/[repo]/route.ts
+import { NextResponse } from "next/server";
+import { getInstallationToken } from "@/lib/githubApp";
 
-const GH_RAW =
-  'https://raw.githubusercontent.com';
+export const runtime = "nodejs";
+
+const DEFAULT_BRANCH = process.env.DEFAULT_BRANCH || "main";
 
 export async function GET(
   _req: Request,
@@ -9,29 +12,57 @@ export async function GET(
 ) {
   const { owner, repo } = params;
 
-  // Pull the status file (public path). If your repo is private, use the token path below.
-  const url = `${GH_RAW}/${owner}/${repo}/main/docs/roadmap-status.json`;
+  let token: string | undefined;
+  try {
+    token = await getInstallationToken();
+  } catch {
+    // silently fallback to unauthenticated fetch
+  }
 
-  // If your repo can be private, switch to the GitHub Contents API:
-  // const url = `https://api.github.com/repos/${owner}/${repo}/contents/docs/roadmap-status.json?ref=main`;
-  // const headers: HeadersInit = {};
-  // const token = process.env.GITHUB_TOKEN;
-  // if (token) headers.Authorization = `Bearer ${token}`;
-  // const res = await fetch(url, { headers, next: { revalidate: 30 } });
-  // if (!res.ok) return NextResponse.json({ ok: false, status: res.status }, { status: res.status });
-  // const data = await res.json();
-  // const body = Buffer.from(data.content, 'base64').toString('utf8');
-  // return new NextResponse(body, { headers: { 'content-type': 'application/json' } });
+  if (token) {
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/docs/roadmap-status.json?ref=${DEFAULT_BRANCH}`;
+    const r = await fetch(apiUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "roadmap-dashboard",
+      },
+      next: { revalidate: 30 },
+    });
+    if (r.ok) {
+      const data = (await r.json()) as {
+        content?: string;
+        encoding?: string;
+      };
+      const raw =
+        data.content && data.encoding === "base64"
+          ? Buffer.from(data.content, "base64").toString("utf8")
+          : await r.text();
+      return new NextResponse(raw, {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=0, must-revalidate",
+        },
+      });
+    }
+  }
 
-  const res = await fetch(url, { next: { revalidate: 30 } });
+  // Public fallback (raw.githubusercontent.com)
+  const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${DEFAULT_BRANCH}/docs/roadmap-status.json`;
+  const res = await fetch(rawUrl, { next: { revalidate: 30 } });
   if (!res.ok) {
     return NextResponse.json(
-      { ok: false, note: 'status file not found', status: res.status, url },
+      {
+        ok: false,
+        note: "status file not found",
+        status: res.status,
+        url: rawUrl,
+      },
       { status: 404 }
     );
   }
   const json = await res.json();
   return NextResponse.json(json, {
-    headers: { 'cache-control': 'public, max-age=0, must-revalidate' },
+    headers: { "cache-control": "public, max-age=0, must-revalidate" },
   });
 }
