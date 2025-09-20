@@ -1,12 +1,14 @@
 // app/page.tsx
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 type Week = { id?: string; title?: string; items?: any[] };
 
 function useStatus(owner: string, repo: string) {
   const [data, setData] = useState<{ weeks: Week[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
   useEffect(() => {
     const url = `/api/status/${owner}/${repo}`;
     fetch(url, { cache: "no-store" })
@@ -14,28 +16,34 @@ function useStatus(owner: string, repo: string) {
       .then(setData)
       .catch(e => setErr(e?.message || e?.error || "Failed to load status"));
   }, [owner, repo]);
+
   return { data, err };
 }
 
-export default function Home({
-  searchParams,
-}: {
-  searchParams?: Record<string, string | string[] | undefined>;
-}) {
-  const owner = (searchParams?.owner as string) || "SSkylar1";
-  const repo = (searchParams?.repo as string) || "Roadmap-Kit-Starter";
-  const { data, err } = useStatus(owner, repo);
+export default function Home() {
+  const sp = useSearchParams();
+  const owner = sp.get("owner") || "SSkylar1";
+  const repo = sp.get("repo") || "Roadmap-Kit-Starter";
 
+  const { data, err } = useStatus(owner, repo);
   const weeks = useMemo(() => data?.weeks ?? [], [data]);
 
   return (
     <main className="mx-auto max-w-4xl p-6 text-slate-200">
       <h1 className="text-3xl font-semibold mb-2">Roadmap Dashboard Pro</h1>
       <p className="mb-6 text-slate-400">
-        Repo: <b>{owner}/{repo}</b>
+        Repo: <b>{owner}/{repo}</b>{" "}
+        <a
+          className="underline ml-2 text-slate-400 hover:text-slate-200"
+          href={`/api/status/${owner}/${repo}`}
+          target="_blank"
+        >
+          (view JSON)
+        </a>
       </p>
 
       {!data && !err && <p>Loading…</p>}
+
       {err && (
         <div className="rounded-lg border border-red-500/40 p-4 text-red-300">
           <p className="font-medium mb-1">Couldn’t load status.</p>
@@ -43,6 +51,13 @@ export default function Home({
           <p className="text-sm mt-2">
             Try the wizard: <a className="underline" href="/new">/new</a>
           </p>
+        </div>
+      )}
+
+      {weeks.length === 0 && !err && data && (
+        <div className="rounded-lg border border-slate-700/40 p-4 text-slate-300">
+          <p>No weeks found in your roadmap yet.</p>
+          <p className="text-sm text-slate-400 mt-2">Check docs/roadmap.yml</p>
         </div>
       )}
 
@@ -71,4 +86,5 @@ export default function Home({
     </main>
   );
 }
+
 
