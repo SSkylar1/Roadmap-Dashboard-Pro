@@ -40,6 +40,15 @@ weeks:
             files:
               - app/page.tsx
               - app/HomeClient.tsx
+  - id: w05
+    title: Weeks 9–10 — PR automations
+    items:
+      - id: status-badge
+        name: Repo README shows live status badge
+        checks:
+          - type: files_exist
+            files:
+              - README.md
   - id: w12
     title: Weeks 23–24 — Packaging & docs
     items:
