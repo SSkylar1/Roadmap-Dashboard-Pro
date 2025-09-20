@@ -83,18 +83,17 @@ function sanitizeManualState(value: unknown): ManualState {
     const weekValue = rawWeek as Partial<ManualWeekState>;
     const addedRaw = Array.isArray(weekValue?.added) ? weekValue.added : [];
     const removedRaw = Array.isArray(weekValue?.removed) ? weekValue.removed : [];
-    const added: ManualItem[] = addedRaw
-      .map((entry) => {
-        if (!entry || typeof entry !== "object") return null;
-        const item = entry as ManualItem;
-        const key = typeof item.key === "string" ? item.key : null;
-        const name = typeof item.name === "string" ? item.name : null;
-        if (!key || !name) return null;
-        const note = typeof item.note === "string" ? item.note : undefined;
-        const done = typeof item.done === "boolean" ? item.done : undefined;
-        return { key, name, note, done };
-      })
-      .filter((entry): entry is ManualItem => Boolean(entry));
+    const added = addedRaw.reduce<ManualItem[]>((list, entry) => {
+      if (!entry || typeof entry !== "object") return list;
+      const item = entry as ManualItem;
+      const key = typeof item.key === "string" ? item.key : null;
+      const name = typeof item.name === "string" ? item.name : null;
+      if (!key || !name) return list;
+      const note = typeof item.note === "string" ? item.note : undefined;
+      const done = typeof item.done === "boolean" ? item.done : undefined;
+      list.push({ key, name, note, done });
+      return list;
+    }, []);
     const removed = removedRaw.filter((entry): entry is string => typeof entry === "string");
 
     if (added.length > 0 || removed.length > 0) {
