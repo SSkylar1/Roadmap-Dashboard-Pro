@@ -31,10 +31,13 @@ export async function POST(req: Request) {
       },
     };
 
-    const token = await getTokenForRepo(owner, repo);
+    const auth = await getTokenForRepo(owner, repo);
 
     await upsertFile({
-      owner, repo, branch, token,
+      owner,
+      repo,
+      branch,
+      auth,
       path: ".roadmaprc.json",
       json: roadmapRc,
     });
