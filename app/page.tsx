@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 type Check = {
@@ -236,7 +236,7 @@ function WeekCard({ week }: { week: Week }) {
   );
 }
 
-export default function Page() {
+function PageContent() {
   const sp = useSearchParams();
   const owner = sp.get("owner") || "SSkylar1";
   const repo = sp.get("repo") || "Roadmap-Kit-Starter";
@@ -289,6 +289,31 @@ export default function Page() {
         </div>
       )}
     </main>
+  );
+}
+
+function PageFallback() {
+  return (
+    <main className="mx-auto max-w-4xl p-4">
+      <h1 className="text-2xl font-bold">Roadmap Dashboard Pro</h1>
+      <p className="mt-1 text-sm text-gray-600">
+        Onboard repos, view status, edit rc, and verify infra — safely.
+      </p>
+
+      <div className="mt-3 h-5 w-40 animate-pulse rounded-full bg-gray-200" />
+
+      <div className="mt-6 animate-pulse rounded-2xl border p-6 text-gray-500">
+        Loading dashboard…
+      </div>
+    </main>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<PageFallback />}>
+      <PageContent />
+    </Suspense>
   );
 }
 
