@@ -7,6 +7,7 @@ build
 .parcel-cache
 .cache
 .eslintcache
+tsconfig.tsbuildinfo
 
 .env*
 !.env.example
