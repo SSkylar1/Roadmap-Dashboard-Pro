@@ -1,0 +1,57 @@
+version: 1
+weeks:
+  - id: w01
+    title: Weeks 1–2 — Foundations
+    items:
+      - id: roadmap-config
+        name: Roadmap configuration committed
+        checks:
+          - type: files_exist
+            files:
+              - .roadmaprc.json
+              - docs/roadmap.yml
+      - id: roadmap-ci
+        name: Roadmap sync workflow present
+        checks:
+          - type: files_exist
+            files:
+              - .github/workflows/roadmap.yml
+      - id: roadmap-script
+        name: Local roadmap verification script
+        checks:
+          - type: files_exist
+            files:
+              - scripts/roadmap-check.mjs
+  - id: w02
+    title: Weeks 3–4 — Dashboard polish
+    items:
+      - id: api-surface
+        name: API surface for dashboard
+        checks:
+          - type: files_exist
+            files:
+              - app/api/status/[owner]/[repo]/route.ts
+              - app/api/verify/route.ts
+              - app/api/webhook/route.ts
+      - id: dashboard-ui
+        name: Dashboard UI committed
+        checks:
+          - type: files_exist
+            files:
+              - app/page.tsx
+              - app/HomeClient.tsx
+  - id: w12
+    title: Weeks 23–24 — Packaging & docs
+    items:
+      - id: repo-template
+        name: New-repo bootstrap template published
+        checks:
+          - type: files_exist
+            files:
+              - docs/template-usage.md
+      - id: one-pager
+        name: "One-pager: how to adopt in <30 min"
+        checks:
+          - type: files_exist
+            files:
+              - docs/one-pager.md
