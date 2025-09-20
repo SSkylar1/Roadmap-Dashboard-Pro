@@ -68,9 +68,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 400 });
   }
 
-  // 3) Generate token & open PR with robust error surfacing
+  // 3) Generate GitHub credentials & open PR with robust error surfacing
   try {
-    const token = await getTokenForRepo(owner, repo);
+    const auth = await getTokenForRepo(owner, repo);
 
     const files = [
       {
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
     const pr = await openSetupPR({
       owner,
       repo,
-      token,
+      auth,
       branch, // e.g. "chore/roadmap-setup"
       files,
       title: "chore(setup): roadmap-kit bootstrap",

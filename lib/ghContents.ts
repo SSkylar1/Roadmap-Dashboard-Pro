@@ -1,10 +1,15 @@
-type H = Record<string, string>;
+import { RepoAuth, authHeaders } from "./token";
+
+const API_HEADERS = { Accept: "application/vnd.github+json" };
 
 export async function ensureBranch(opts: {
-  owner: string; repo: string; branch: string; token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  auth: RepoAuth;
 }) {
-  const { owner, repo, branch, token } = opts;
-  const headers: H = { Authorization: `token ${token}`, Accept: "application/vnd.github+json" };
+  const { owner, repo, branch, auth } = opts;
+  const headers = authHeaders(auth, API_HEADERS);
 
   // already exists?
   const ref = await fetch(
@@ -30,7 +35,7 @@ export async function ensureBranch(opts: {
     `https://api.github.com/repos/${owner}/${repo}/git/refs`,
     {
       method: "POST",
-      headers,
+      headers: authHeaders(auth, { ...API_HEADERS, "content-type": "application/json" }),
       body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: base.object.sha }),
     }
   );
@@ -44,7 +49,7 @@ export async function upsertFile(opts: {
   repo: string;
   path: string;
   branch: string;
-  token: string;
+  auth: RepoAuth;
   json: unknown;
   createMessage?: string;
   updateMessage?: string;
@@ -54,25 +59,22 @@ export async function upsertFile(opts: {
     repo,
     path,
     branch,
-    token,
+    auth,
     json,
     createMessage = `chore: add ${path}`,
     updateMessage = `chore: update ${path}`,
   } = opts;
 
-  const headers: H = {
-    Authorization: `token ${token}`,
-    Accept: "application/vnd.github+json",
-  };
+  const baseHeaders = authHeaders(auth, API_HEADERS);
 
-  await ensureBranch({ owner, repo, branch, token });
+  await ensureBranch({ owner, repo, branch, auth });
 
   // does file exist? (to fetch sha)
   const head = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(
       path
     )}?ref=${encodeURIComponent(branch)}`,
-    { headers }
+    { headers: baseHeaders }
   );
 
   let sha: string | undefined;
@@ -94,7 +96,7 @@ export async function upsertFile(opts: {
     )}`,
     {
       method: "PUT",
-      headers,
+      headers: authHeaders(auth, { ...API_HEADERS, "content-type": "application/json" }),
       body: JSON.stringify({
         message: sha ? updateMessage : createMessage,
         content: contentB64,
@@ -107,4 +109,3 @@ export async function upsertFile(opts: {
     throw new Error(`Upsert ${path} failed: ${put.status} ${await put.text()}`);
   }
 }
-

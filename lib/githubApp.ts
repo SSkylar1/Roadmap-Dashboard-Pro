@@ -6,32 +6,40 @@ import crypto from "node:crypto";
 
 /** ========= Env handling (throws early if missing) ========= */
 
-const GH_APP_ID = process.env.GH_APP_ID; // MUST be the numeric GitHub App ID (e.g. "123456")
 const GH_APP_INSTALLATION_ID = process.env.GH_APP_INSTALLATION_ID ?? null;
 
-// Preferred: single-line base64 of the PEM to avoid multiline .env issues
-const GH_APP_PRIVATE_KEY_B64 = process.env.GH_APP_PRIVATE_KEY_B64 ?? null;
+// Lazily decode the PEM so that importing this module doesn't throw during builds
+type AppConfig = { appId: string; privateKey: crypto.KeyObject };
 
-// Fallback: raw PEM (multiline) if you're only running locally and not using base64
-const GH_APP_PRIVATE_KEY_RAW = process.env.GH_APP_PRIVATE_KEY ?? null;
+let cachedAppConfig: AppConfig | null = null;
 
-// Decode to PEM string once at module load and assert it's present
-const GH_APP_PRIVATE_KEY: string = (() => {
-  const fromB64 = GH_APP_PRIVATE_KEY_B64
-    ? Buffer.from(GH_APP_PRIVATE_KEY_B64, "base64").toString("utf8")
-    : null;
+function loadAppConfig(): AppConfig {
+  if (cachedAppConfig) return cachedAppConfig;
 
-  const pem = fromB64 ?? GH_APP_PRIVATE_KEY_RAW;
+  const appId = process.env.GH_APP_ID;
+  if (!appId) {
+    throw new Error("Missing GH_APP_ID (must be the numeric GitHub App ID).");
+  }
+
+  // Preferred: single-line base64 of the PEM to avoid multiline .env issues
+  const privateKeyB64 = process.env.GH_APP_PRIVATE_KEY_B64 ?? null;
+
+  // Fallback: raw PEM (multiline) if you're only running locally and not using base64
+  const privateKeyRaw = process.env.GH_APP_PRIVATE_KEY ?? null;
+
+  const pem = privateKeyB64 ? Buffer.from(privateKeyB64, "base64").toString("utf8") : privateKeyRaw;
   if (!pem) {
     throw new Error(
       "Missing GitHub App private key — set GH_APP_PRIVATE_KEY_B64 (preferred) or GH_APP_PRIVATE_KEY."
     );
   }
-  return pem;
-})();
 
-if (!GH_APP_ID) {
-  throw new Error("Missing GH_APP_ID (must be the numeric GitHub App ID).");
+  cachedAppConfig = {
+    appId,
+    privateKey: crypto.createPrivateKey(pem),
+  };
+
+  return cachedAppConfig;
 }
 
 /** ========= JWT creation ========= */
@@ -41,19 +49,18 @@ function b64url(obj: object) {
 }
 
 function createAppJWT(): string {
+  const { appId, privateKey } = loadAppConfig();
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "RS256", typ: "JWT" };
   const payload = {
     iat: now - 60,   // allow 60s clock skew
     exp: now + 9 * 60, // ~9 minutes validity
-    iss: GH_APP_ID,  // numeric App ID
+    iss: appId,  // numeric App ID
   };
 
   const data = `${b64url(header)}.${b64url(payload)}`;
 
-  // Convert to a KeyObject so TypeScript knows it's a valid key type
-  const keyObj = crypto.createPrivateKey(GH_APP_PRIVATE_KEY);
-  const signature = crypto.createSign("RSA-SHA256").update(data).sign(keyObj, "base64url");
+  const signature = crypto.createSign("RSA-SHA256").update(data).sign(privateKey, "base64url");
 
   return `${data}.${signature}`;
 }

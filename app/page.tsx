@@ -327,7 +327,11 @@ function PageFallback() {
       <p className="mt-1 text-sm text-gray-600">
         Onboard repos, view status, edit rc, and verify infra — safely.
       </p>
-      <div className="mt-6 animate-pulse rounded-2xl border p-6 text-gray-500">Loading dashboard…</div>
+      <div className="mt-3 h-5 w-40 animate-pulse rounded-full bg-gray-200" />
+
+      <div className="mt-6 animate-pulse rounded-2xl border p-6 text-gray-500">
+        Loading dashboard…
+      </div>
     </main>
   );
 }
@@ -339,4 +343,5 @@ export default function Page() {
     </Suspense>
   );
 }
+
 

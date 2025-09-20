@@ -7,6 +7,22 @@ const GH_APP_PRIVATE_KEY_B64 = process.env.GH_APP_PRIVATE_KEY_B64 || "";
 const PAT = process.env.GITHUB_TOKEN || "";
 const ALG = "RS256";
 
+export type RepoAuth = {
+  token: string;
+  /** Authorization scheme for GitHub API requests */
+  scheme: "Bearer" | "token";
+  /** Source of the credentials (useful for debugging/logging) */
+  source: "app" | "pat";
+};
+
+export function authorizationHeader(auth: RepoAuth): string {
+  return `${auth.scheme} ${auth.token}`;
+}
+
+export function authHeaders(auth: RepoAuth, extra: Record<string, string> = {}) {
+  return { Authorization: authorizationHeader(auth), ...extra };
+}
+
 const GH_HEADERS = {
   Accept: "application/vnd.github+json",
   "X-GitHub-Api-Version": "2022-11-28",
@@ -109,14 +125,17 @@ async function installationToken(installationId: string, jwt: string): Promise<s
  * Main entry: get a GitHub token valid for a repo
  * Prefers GitHub App credentials, falls back to PAT
  */
-export async function getTokenForRepo(owner: string, repo: string): Promise<string> {
+export async function getTokenForRepo(owner: string, repo: string): Promise<RepoAuth> {
   if (GH_APP_ID && (GH_APP_PRIVATE_KEY || GH_APP_PRIVATE_KEY_B64)) {
     const jwt = await appJwt();
     const instId = await installationIdForRepo(owner, repo, jwt);
-    return await installationToken(instId, jwt);
+    const token = await installationToken(instId, jwt);
+    return { token, scheme: "Bearer", source: "app" };
   }
 
-  if (PAT) return PAT;
+  if (PAT) {
+    return { token: PAT, scheme: "token", source: "pat" };
+  }
 
   throw new Error(
     "No GitHub credentials configured. Need GH_APP_ID + GH_APP_PRIVATE_KEY(_B64) or GITHUB_TOKEN"
