@@ -11,9 +11,16 @@
   --pending:#fbbf24;
   --pending-bg:rgba(133, 77, 14, 0.45);
   --neutral-bg:rgba(71, 85, 105, 0.4);
+  color-scheme:dark;
 }
-*{ box-sizing:border-box }
-html,body{ margin:0; padding:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial }
+*{ box-sizing:border-box; scrollbar-width:thin; scrollbar-color:rgba(78,161,255,0.35) transparent }
+html,body{ margin:0; padding:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; -webkit-tap-highlight-color:rgba(78,161,255,0.15) }
+:focus-visible{ outline:2px solid var(--accent); outline-offset:3px; border-radius:6px }
+:focus:not(:focus-visible){ outline:none }
+*::-webkit-scrollbar{ width:12px; height:12px }
+*::-webkit-scrollbar-track{ background:transparent }
+*::-webkit-scrollbar-thumb{ background-color:rgba(78,161,255,0.35); border-radius:999px; border:3px solid transparent; background-clip:content-box }
+*::-webkit-scrollbar-thumb:hover{ background-color:rgba(78,161,255,0.55) }
 a{ color:var(--accent); text-decoration:none }
 .container{ max-width:1120px; margin:0 auto; padding:24px }
 .card{ background:var(--card); border:1px solid #1f2732; border-radius:16px; padding:16px }
