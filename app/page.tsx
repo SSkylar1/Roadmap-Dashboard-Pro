@@ -236,7 +236,7 @@ function WeekCard({ week }: { week: Week }) {
   );
 }
 
-function PageContent() {
+function DashboardPage() {
   const sp = useSearchParams();
   const owner = sp.get("owner") || "SSkylar1";
   const repo = sp.get("repo") || "Roadmap-Kit-Starter";
@@ -312,7 +312,7 @@ function PageFallback() {
 export default function Page() {
   return (
     <Suspense fallback={<PageFallback />}>
-      <PageContent />
+      <DashboardPage />
     </Suspense>
   );
 }
