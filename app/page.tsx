@@ -4,15 +4,21 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 type Check = {
+  id?: string;
+  name?: string;
   type: string;
   ok?: boolean;           // true, false, or undefined (pending)
   detail?: string;        // optional human message
+  note?: string;
+  status?: string;
+  result?: string;
 };
 
 type Item = {
   id?: string;
   name?: string;
   checks?: Check[];
+  done?: boolean;
 };
 
 type Week = {
@@ -74,10 +80,26 @@ function statusIcon(ok: boolean | undefined) {
   return "⏳";
 }
 
-function classFor(ok: boolean | undefined) {
-  if (ok === true) return "bg-green-100 text-green-800 border-green-200";
-  if (ok === false) return "bg-red-100 text-red-800 border-red-200";
-  return "bg-gray-100 text-gray-700 border-gray-200";
+function statusTone(ok: boolean | undefined, hasChecks: boolean) {
+  if (ok === true) return "success";
+  if (ok === false) return "fail";
+  return hasChecks ? "pending" : "neutral";
+}
+
+function statusText(ok: boolean | undefined, hasChecks: boolean) {
+  if (ok === true) return "Complete";
+  if (ok === false) return "Needs attention";
+  return hasChecks ? "In progress" : "No checks yet";
+}
+
+function formatResultLabel(result: unknown) {
+  if (typeof result !== "string") return null;
+  const trimmed = result.trim();
+  if (!trimmed) return null;
+  return trimmed
+    .split(/[_\s]+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 type StatusCounts = {
@@ -106,6 +128,55 @@ function formatStatusSummary({ total, passed, failed, pending }: StatusCounts) {
   return `${parts.join(" • ")}${total > 0 ? ` (of ${total})` : ""}`;
 }
 
+function checksStatus(checks?: Check[]): boolean | undefined {
+  const arr = checks ?? [];
+  if (arr.length === 0) return undefined;
+  let pending = false;
+  for (const c of arr) {
+    if (c.ok === false) return false;
+    if (c.ok !== true) pending = true;
+  }
+  if (pending) return undefined;
+  return true;
+}
+
+function itemStatus(item: Item): boolean | undefined {
+  if (typeof item.done === "boolean") return item.done;
+  return checksStatus(item.checks);
+}
+
+function weekStatus(week: Week): boolean | undefined {
+  const items = week.items ?? [];
+  if (items.length === 0) return undefined;
+  let pending = false;
+  for (const it of items) {
+    const st = itemStatus(it);
+    if (st === false) return false;
+    if (st !== true) pending = true;
+  }
+  if (pending) return undefined;
+  return true;
+}
+
+function StatusBadge({
+  ok,
+  total,
+  summary,
+}: {
+  ok: boolean | undefined;
+  total: number;
+  summary: string | null;
+}) {
+  const tone = statusTone(ok, total > 0);
+  const label = summary ?? statusText(ok, total > 0);
+  return (
+    <span className={`status-chip status-${tone}`}>
+      <span className="status-chip-icon">{statusIcon(ok)}</span>
+      <span className="status-chip-text">{label}</span>
+    </span>
+  );
+}
+
 function WeekProgress({ weeks }: { weeks: Week[] }) {
   const { total, passed, failed, pending } = useMemo(() => {
     let total = 0,
@@ -129,97 +200,72 @@ function WeekProgress({ weeks }: { weeks: Week[] }) {
   const pct = (n: number) => Math.round((n / total) * 100);
 
   const summary = formatStatusSummary({ total, passed, failed, pending });
+  const overallStatus = failed > 0 ? false : pending > 0 ? undefined : true;
 
   return (
-    <div className="mt-4 rounded-xl border p-4">
-      <div className="flex items-center justify-between">
-        <div className="font-semibold">Overall Progress</div>
-        {summary ? <div className="text-sm text-gray-600">{summary}</div> : null}
+    <div className="progress-card">
+      <div className="status-row">
+        <div className="section-title">Overall Progress</div>
+        <StatusBadge ok={overallStatus} total={total} summary={summary} />
       </div>
-      <div className="mt-3 h-3 w-full overflow-hidden rounded-full border">
-        <div
-          className="h-full"
-          style={{ width: `${pct(passed)}%` }}
-          aria-label="passed"
-          title={`Passed: ${passed}`}
-        />
-        <div
-          className="h-full"
-          style={{
-            width: `${pct(failed)}%`,
-            marginTop: "-0.75rem", // stack in same bar
-          }}
-          aria-label="failed"
-          title={`Failed: ${failed}`}
-        />
-        <div
-          className="h-full"
-          style={{
-            width: `${pct(pending)}%`,
-            marginTop: "-0.75rem",
-          }}
-          aria-label="pending"
-          title={`Pending: ${pending}`}
-        />
+      <div className="progress-bar" role="presentation">
+        <div className="progress-fill passed" style={{ width: `${pct(passed)}%` }} title={`Passed: ${passed}`} />
+        <div className="progress-fill failed" style={{ width: `${pct(failed)}%` }} title={`Failed: ${failed}`} />
+        <div className="progress-fill pending" style={{ width: `${pct(pending)}%` }} title={`Pending: ${pending}`} />
       </div>
-      <style jsx>{`
-        /* Keep default colors so we don't fight your Tailwind theme.
-           Three stacked bars using default matplotlib-like neutrals. */
-        div[aria-label="passed"] {
-          background: #86efac; /* green-300 */
-        }
-        div[aria-label="failed"] {
-          background: #fca5a5; /* red-300 */
-        }
-        div[aria-label="pending"] {
-          background: #d1d5db; /* gray-300 */
-        }
-      `}</style>
+      <div className="progress-legend">✅ {passed} · ❌ {failed} · ⏳ {pending}</div>
     </div>
   );
 }
 
 function CheckRow({ c }: { c: Check }) {
-  const label = c.type || "Check";
+  const label = c.name || c.id || c.type || "Check";
+  const detail = c.detail ?? c.note ?? null;
+  const resultLabel = formatResultLabel(c.result ?? c.status);
+  const tone = statusTone(c.ok, true);
   return (
-    <div
-      className={`flex w-full items-start justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${classFor(
-        c.ok
-      )}`}
-    >
-      <div className="min-w-0">
-        <div className="font-medium leading-tight">{label}</div>
-        {c.detail ? (
-          <div className="mt-0.5 text-xs leading-tight opacity-80">{c.detail}</div>
-        ) : null}
+    <li className={`subtask subtask-${tone}`}>
+      <div className="subtask-info">
+        <div className="subtask-label">{label}</div>
+        {detail ? <div className="subtask-detail">{detail}</div> : null}
       </div>
-      <span className="shrink-0 text-lg leading-none">{statusIcon(c.ok)}</span>
-    </div>
+      <div className="subtask-status">
+        <span className={`status-chip status-${tone}`}>
+          <span className="status-chip-icon">{statusIcon(c.ok)}</span>
+          {resultLabel ? <span className="status-chip-text">{resultLabel}</span> : null}
+        </span>
+      </div>
+    </li>
   );
 }
 
 function ItemCard({ item }: { item: Item }) {
   const sum = summarizeChecks(item.checks);
   const summary = formatStatusSummary(sum);
+  const ok = itemStatus(item);
+  const tone = statusTone(ok, sum.total > 0);
+  const title = item.name || item.id || "Untitled item";
+  const subtitle = item.id && item.id !== item.name ? item.id : null;
+
   return (
-    <div className="rounded-xl border p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="font-medium">{item.name ?? "Untitled item"}</div>
-        <div
-          className={`text-xs ${summary ? "text-gray-600" : "italic text-gray-400"}`}
-        >
-          {summary ?? "No checks yet"}
+    <div className={`item-card item-${tone}`}>
+      <div className="item-header">
+        <div className="item-heading">
+          <div className="item-title">{title}</div>
+          {subtitle ? <div className="item-meta">{subtitle}</div> : null}
         </div>
+        <StatusBadge ok={ok} total={sum.total} summary={summary} />
       </div>
 
-      {sum.total === 0 ? (
-        <div className="text-sm text-gray-500">No checks yet.</div>
+      {sum.total > 0 ? (
+        <ul className="subtask-list">
+          {(item.checks ?? []).map((c, i) => {
+            const key = c.id || c.name || c.type || `check-${i}`;
+            return <CheckRow key={key} c={c} />;
+          })}
+        </ul>
       ) : (
-        <div className="grid gap-2">
-          {(item.checks ?? []).map((c, i) => (
-            <CheckRow key={`${c.type}-${i}`} c={c} />
-          ))}
-        </div>
+        <div className="empty-subtasks">No sub tasks yet.</div>
       )}
     </div>
   );
@@ -243,24 +289,32 @@ function WeekCard({ week }: { week: Week }) {
   }, [week]);
 
   const summary = formatStatusSummary(rollup);
+  const ok = weekStatus(week);
+  const tone = statusTone(ok, rollup.total > 0);
+  const title = week.title || week.id || "Untitled week";
+  const subtitle = week.id && week.id !== week.title ? week.id : null;
+  const items = week.items ?? [];
 
   return (
-    <div className="rounded-2xl border p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-lg font-semibold">{week.title ?? "Untitled week"}</div>
-        <div
-          className={`text-sm ${summary ? "text-gray-600" : "italic text-gray-400"}`}
-        >
-          {summary ?? "No checks yet"}
+    <section className={`week-card week-${tone}`}>
+      <div className="week-header">
+        <div className="week-heading">
+          <div className="week-title">{title}</div>
+          {subtitle ? <div className="week-meta">{subtitle}</div> : null}
         </div>
+        <StatusBadge ok={ok} total={rollup.total} summary={summary} />
       </div>
 
-      <div className="grid gap-3">
-        {(week.items ?? []).map((it, i) => (
-          <ItemCard key={`${it.id ?? i}`} item={it} />
-        ))}
-      </div>
-    </div>
+      {items.length > 0 ? (
+        <div className="week-items">
+          {items.map((it, i) => (
+            <ItemCard key={`${it.id ?? it.name ?? i}`} item={it} />
+          ))}
+        </div>
+      ) : (
+        <div className="empty-subtasks">No tasks tracked for this week yet.</div>
+      )}
+    </section>
   );
 }
 
@@ -272,26 +326,22 @@ function DashboardPage() {
   const { data, err, loading } = useStatus(owner, repo);
 
   return (
-    <main className="mx-auto max-w-4xl p-4">
-      <h1 className="text-2xl font-bold">Roadmap Dashboard Pro</h1>
-      <p className="mt-1 text-sm text-gray-600">
-        Onboard repos, view status, edit rc, and verify infra — safely.
-      </p>
-
-      <div className="mt-3 text-sm text-gray-700">
-        Repo: <span className="font-mono">{owner}/{repo}</span>
+    <main className="dashboard">
+      <div className="repo-line">
+        <span className="repo-label">Repo:</span>
+        <code>{owner}/{repo}</code>
+        <a href={`/api/status/${owner}/${repo}`} target="_blank" rel="noreferrer">
+          View status JSON ↗
+        </a>
       </div>
 
-      {loading && (
-        <div className="mt-6 animate-pulse rounded-2xl border p-6 text-gray-500">
-          Loading status…
-        </div>
-      )}
+      {loading && <div className="card muted">Loading status…</div>}
 
       {err && !loading && (
-        <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
-          <div className="font-semibold">Failed to load status</div>
-          <div className="text-sm">{err}</div>
+        <div className="card error">
+          <div className="card-title">Failed to load status</div>
+          <div className="card-subtitle">{err}</div>
+          <div className="card-subtitle">Try running the onboarding wizard at <code>/new</code>.</div>
         </div>
       )}
 
@@ -299,20 +349,20 @@ function DashboardPage() {
         <>
           <WeekProgress weeks={data.weeks ?? []} />
 
-          <div className="mt-6 grid gap-4">
+          <div className="week-grid">
             {(data.weeks ?? []).map((w, i) => (
               <WeekCard key={`${w.id ?? i}`} week={w} />
             ))}
           </div>
 
-          <div className="mt-6 text-xs text-gray-500">
+          <div className="timestamp">
             Generated at: {data.generated_at ?? "unknown"} · env: {data.env ?? "unknown"}
           </div>
         </>
       )}
 
       {!loading && !err && (!data || (data.weeks ?? []).length === 0) && (
-        <div className="mt-6 rounded-xl border p-6 text-gray-600">
+        <div className="card muted">
           No weeks found. Make sure your <code>.roadmaprc.json</code> or status API is populated.
         </div>
       )}
@@ -322,16 +372,8 @@ function DashboardPage() {
 
 function PageFallback() {
   return (
-    <main className="mx-auto max-w-4xl p-4">
-      <h1 className="text-2xl font-bold">Roadmap Dashboard Pro</h1>
-      <p className="mt-1 text-sm text-gray-600">
-        Onboard repos, view status, edit rc, and verify infra — safely.
-      </p>
-      <div className="mt-3 h-5 w-40 animate-pulse rounded-full bg-gray-200" />
-
-      <div className="mt-6 animate-pulse rounded-2xl border p-6 text-gray-500">
-        Loading dashboard…
-      </div>
+    <main className="dashboard">
+      <div className="card muted">Loading dashboard…</div>
     </main>
   );
 }
