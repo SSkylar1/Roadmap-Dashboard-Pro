@@ -56,7 +56,7 @@ async function fetchViaContentsAPI(owner: string, repo: string, path: string, re
     if (data?.content && data.encoding === "base64") {
       return Buffer.from(data.content, "base64").toString("utf8");
     }
-    return await r.text(); // directory listing or unusual payload
+    return await r.text();
   } catch {
     return await r.text();
   }
@@ -79,7 +79,6 @@ async function loadFile(owner: string, repo: string, path: string, ref: string, 
 
 /** HEAD/GET presence check for a repo path */
 async function fileExists(owner: string, repo: string, path: string, ref: string, token?: string) {
-  // Try contents API (fast) then raw
   if (token) {
     const u = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(
       path
@@ -93,7 +92,8 @@ async function fileExists(owner: string, repo: string, path: string, ref: string
 }
 
 /** tiny helpers */
-const asArray = <T,>(x: T | T[] | undefined) => (Array.isArray(x) ? x : x ? [x] : []);
+const asArray = <T,>(x: T | T[] | undefined): T[] =>
+  Array.isArray(x) ? x : x !== undefined ? [x] : [];
 
 /** Execute one check; returns {status, note} */
 async function runCheck(
@@ -107,8 +107,17 @@ async function runCheck(
   const type = String(check?.type || "").trim();
 
   if (type === "files_exist") {
-    const paths = asArray<string>(check.globs) // we treat "globs" as literal paths
-      .concat(asArray<string>(check.detail?.split?.(",").map((s: string) => s.trim())));
+    const detailList: string[] =
+      typeof check.detail === "string"
+        ? check.detail.split(",").map((s: string) => s.trim()).filter(Boolean)
+        : [];
+
+    const paths: string[] = [
+      ...asArray<string>(check.files),
+      ...asArray<string>(check.globs),
+      ...detailList,
+    ];
+
     if (paths.length === 0) return { status: "skip", note: "no paths provided" };
 
     for (const p of paths) {
@@ -164,7 +173,6 @@ async function runCheck(
 export async function GET(_req: Request, { params }: Ctx) {
   const { owner, repo } = params;
 
-  // optional auth
   let token: string | undefined;
   try {
     token = await getInstallationToken();
@@ -172,19 +180,15 @@ export async function GET(_req: Request, { params }: Ctx) {
 
   const branch = (await detectDefaultBranch(owner, repo, token)) || DEFAULT_BRANCH;
 
-  // status artifact first
   const statusPath = "docs/roadmap-status.json";
   const statusTxt = await loadFile(owner, repo, statusPath, branch, token);
   if (statusTxt) {
     try {
       const json = JSON.parse(statusTxt);
       return NextResponse.json(json, { headers: { "cache-control": "no-store", "x-status-route": "artifact" } });
-    } catch {
-      // ignore and fall back
-    }
+    } catch {}
   }
 
-  // discover roadmap path via rc
   let rc: any = null;
   let roadmapPath = "docs/roadmap.yml";
   const rcTxt = await loadFile(owner, repo, ".roadmaprc.json", branch, token);
@@ -195,7 +199,6 @@ export async function GET(_req: Request, { params }: Ctx) {
     } catch {}
   }
 
-  // load & parse YAML
   const roadmapTxt = await loadFile(owner, repo, roadmapPath, branch, token);
   if (!roadmapTxt) {
     return NextResponse.json(
@@ -216,7 +219,6 @@ export async function GET(_req: Request, { params }: Ctx) {
 
   const weeks = Array.isArray(doc?.weeks) ? doc.weeks : [];
 
-  // execute checks (sequential to be gentle on rate limits)
   for (const w of weeks) {
     if (!Array.isArray(w.items)) continue;
     for (const it of w.items) {
@@ -235,7 +237,7 @@ export async function GET(_req: Request, { params }: Ctx) {
     {
       ok: true,
       generated_at: new Date().toISOString(),
-      env: "dev",
+      env: process.env.VERCEL_ENV ?? "dev",
       owner,
       repo,
       branch,
@@ -245,4 +247,3 @@ export async function GET(_req: Request, { params }: Ctx) {
     { headers: { "cache-control": "no-store", "x-status-route": "yaml-live" } }
   );
 }
-
