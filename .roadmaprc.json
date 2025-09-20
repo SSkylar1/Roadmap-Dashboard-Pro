@@ -1,0 +1,21 @@
+{
+  "$schema": "./schema/roadmaprc.schema.json",
+  "kitVersion": "0.1.1",
+  "roadmapFile": "docs/roadmap.yml",
+  "envs": {
+    "dev": {
+      "READ_ONLY_CHECKS_URL": "https://<dev-example>.functions.supabase.co/read_only_checks"
+    }
+  },
+  "verify": {
+    "symbols": ["ext:pgcrypto", "table:public:users"],
+    "defaultEnv": "dev"
+  },
+  "comment": {
+    "liveProbe": true,
+    "probeTestPass": false,
+    "probeSupaFn": false,
+    "privacyDisclaimer": "🔒 Read-only checks only.",
+    "legendEnabled": true
+  }
+}
