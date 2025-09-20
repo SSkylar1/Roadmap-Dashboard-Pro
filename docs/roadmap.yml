@@ -55,4 +55,3 @@ weeks:
           - type: files_exist
             files:
               - docs/one-pager.md
-

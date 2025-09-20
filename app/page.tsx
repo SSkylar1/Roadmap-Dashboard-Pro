@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 type Check = {
@@ -32,6 +32,12 @@ type StatusResponse = {
   env?: string;
   weeks: Week[];
 };
+
+const enum CopyState {
+  Idle = "idle",
+  Copied = "copied",
+  Error = "error",
+}
 
 function useStatus(owner: string, repo: string) {
   const [data, setData] = useState<StatusResponse | null>(null);
@@ -100,6 +106,137 @@ function formatResultLabel(result: unknown) {
     .split(/[_\s]+/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function itemTitle(item: Item) {
+  const title = typeof item.name === "string" && item.name.trim() ? item.name.trim() : null;
+  const id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : null;
+  if (title) return { title, meta: id && id !== title ? id : null };
+  if (id) return { title: id, meta: null };
+  return { title: "Untitled item", meta: null };
+}
+
+function weekTitle(week: Week | undefined) {
+  if (!week) return { title: "Untitled week", meta: null };
+  const title = typeof week.title === "string" && week.title.trim() ? week.title.trim() : null;
+  const id = typeof week.id === "string" && week.id.trim() ? week.id.trim() : null;
+  if (title) return { title, meta: id && id !== title ? id : null };
+  if (id) return { title: id, meta: null };
+  return { title: "Untitled week", meta: null };
+}
+
+function friendlyCheckResult(check: Check) {
+  const label = formatResultLabel(check.result ?? check.status);
+  if (label) return label;
+  if (check.ok === true) return "Complete";
+  if (check.ok === false) return "Failed";
+  return "Pending";
+}
+
+function checkLabel(check: Check) {
+  return check.name || check.id || check.type || "Check";
+}
+
+function checkDetail(check: Check) {
+  const detail = check.detail ?? check.note;
+  return typeof detail === "string" && detail.trim() ? detail.trim() : null;
+}
+
+function incompleteChecks(checks?: Check[]) {
+  return (checks ?? []).filter((c) => c.ok !== true);
+}
+
+function buildCheckSummary(check: Check) {
+  const label = checkLabel(check);
+  const status = friendlyCheckResult(check);
+  const detail = checkDetail(check);
+  const parts = [status];
+  if (detail) parts.push(detail);
+  return `${label}${parts.length ? ` — ${parts.join(" • ")}` : ""}`;
+}
+
+function buildItemCopyText(item: Item, week?: Week) {
+  const { title: itemHeading, meta: itemMeta } = itemTitle(item);
+  const { title: weekHeading, meta: weekMeta } = weekTitle(week);
+  const weekPart = weekHeading ? `${weekHeading}${weekMeta ? ` (${weekMeta})` : ""}` : null;
+  const itemPart = `${itemHeading}${itemMeta ? ` (${itemMeta})` : ""}`;
+
+  const lines: string[] = [weekPart ? `${weekPart} — ${itemPart}` : itemPart];
+  const checks = item.checks ?? [];
+  const hasChecks = checks.length > 0;
+  const status = itemStatus(item);
+  lines.push(`Status: ${statusText(status, hasChecks)}`);
+
+  const blockers = incompleteChecks(checks);
+  if (hasChecks && blockers.length > 0) {
+    lines.push("Blocked by:");
+    blockers.forEach((chk) => {
+      lines.push(`- ${buildCheckSummary(chk)}`);
+    });
+  } else if (!hasChecks) {
+    lines.push("Blocked by: No checks configured yet.");
+  } else {
+    lines.push("Blocked by: None");
+  }
+
+  return lines.join("\n");
+}
+
+type IncompleteEntry = {
+  key: string;
+  week: Week;
+  item: Item;
+  summary: string;
+  statusLabel: string;
+  weekLabel: string;
+  itemLabel: string;
+  itemMeta?: string | null;
+  blockers: string[];
+};
+
+function collectIncompleteEntries(weeks: Week[]): IncompleteEntry[] {
+  const entries: IncompleteEntry[] = [];
+  for (const week of weeks) {
+    const { title: wTitle, meta: wMeta } = weekTitle(week);
+    for (const item of week.items ?? []) {
+      const status = itemStatus(item);
+      const checks = item.checks ?? [];
+      const hasChecks = checks.length > 0;
+      if (status === true) continue;
+      const { title: itemHeading, meta: itemMeta } = itemTitle(item);
+      const blockers = hasChecks
+        ? incompleteChecks(checks).map((chk) => buildCheckSummary(chk))
+        : ["No checks configured yet."];
+      entries.push({
+        key: `${week.id ?? wTitle ?? "week"}::${item.id ?? itemHeading}`,
+        week,
+        item,
+        summary: buildItemCopyText(item, week),
+        statusLabel: statusText(status, hasChecks),
+        weekLabel: wMeta ? `${wTitle} (${wMeta})` : wTitle,
+        itemLabel: itemHeading,
+        itemMeta,
+        blockers,
+      });
+    }
+  }
+  return entries;
+}
+
+function buildOverallCopyText(entries: IncompleteEntry[]) {
+  if (entries.length === 0) return "All roadmap items are complete!";
+  const lines: string[] = [`Incomplete roadmap items (${entries.length}):`];
+  entries.forEach((entry, index) => {
+    const count = index + 1;
+    const meta = entry.itemMeta ? ` (${entry.itemMeta})` : "";
+    const weekPrefix = entry.weekLabel ? `${entry.weekLabel} — ` : "";
+    lines.push(`${count}. ${weekPrefix}${entry.itemLabel}${meta}`);
+    lines.push(`   Status: ${entry.statusLabel}`);
+    entry.blockers.forEach((blocker) => {
+      lines.push(`   - ${blocker}`);
+    });
+  });
+  return lines.join("\n");
 }
 
 type StatusCounts = {
@@ -239,13 +376,15 @@ function CheckRow({ c }: { c: Check }) {
   );
 }
 
-function ItemCard({ item }: { item: Item }) {
+function ItemCard({ item, week }: { item: Item; week: Week }) {
   const sum = summarizeChecks(item.checks);
   const summary = formatStatusSummary(sum);
   const ok = itemStatus(item);
   const tone = statusTone(ok, sum.total > 0);
   const title = item.name || item.id || "Untitled item";
   const subtitle = item.id && item.id !== item.name ? item.id : null;
+  const hasIncomplete = ok !== true;
+  const copyText = useMemo(() => buildItemCopyText(item, week), [item, week]);
 
   return (
     <div className={`item-card item-${tone}`}>
@@ -254,7 +393,17 @@ function ItemCard({ item }: { item: Item }) {
           <div className="item-title">{title}</div>
           {subtitle ? <div className="item-meta">{subtitle}</div> : null}
         </div>
-        <StatusBadge ok={ok} total={sum.total} summary={summary} />
+        <div className="item-actions">
+          <StatusBadge ok={ok} total={sum.total} summary={summary} />
+          {hasIncomplete ? (
+            <CopyButton
+              label="Copy incomplete details"
+              text={copyText}
+              disabled={!hasIncomplete}
+              size="small"
+            />
+          ) : null}
+        </div>
       </div>
 
       {sum.total > 0 ? (
@@ -308,7 +457,7 @@ function WeekCard({ week }: { week: Week }) {
       {items.length > 0 ? (
         <div className="week-items">
           {items.map((it, i) => (
-            <ItemCard key={`${it.id ?? it.name ?? i}`} item={it} />
+            <ItemCard key={`${it.id ?? it.name ?? i}`} item={it} week={week} />
           ))}
         </div>
       ) : (
@@ -324,6 +473,7 @@ function DashboardPage() {
   const repo = sp.get("repo") || "Roadmap-Kit-Starter";
 
   const { data, err, loading } = useStatus(owner, repo);
+  const incompleteEntries = useMemo(() => collectIncompleteEntries(data?.weeks ?? []), [data]);
 
   return (
     <main className="dashboard">
@@ -348,6 +498,8 @@ function DashboardPage() {
       {data && (
         <>
           <WeekProgress weeks={data.weeks ?? []} />
+
+          <IncompleteSummary entries={incompleteEntries} />
 
           <div className="week-grid">
             {(data.weeks ?? []).map((w, i) => (
@@ -383,6 +535,121 @@ export default function Page() {
     <Suspense fallback={<PageFallback />}>
       <DashboardPage />
     </Suspense>
+  );
+}
+
+function CopyButton({
+  label,
+  text,
+  disabled,
+  size = "default",
+}: {
+  label: string;
+  text: string;
+  disabled?: boolean;
+  size?: "default" | "small";
+}) {
+  const [state, setState] = useState<CopyState>(CopyState.Idle);
+
+  useEffect(() => {
+    if (state === CopyState.Idle) return undefined;
+    const timer = setTimeout(() => setState(CopyState.Idle), 1800);
+    return () => clearTimeout(timer);
+  }, [state]);
+
+  const attemptCopy = useCallback(async () => {
+    if (disabled) return;
+    try {
+      const success = await copyTextToClipboard(text);
+      setState(success ? CopyState.Copied : CopyState.Error);
+    } catch {
+      setState(CopyState.Error);
+    }
+  }, [disabled, text]);
+
+  const classNames = ["copy-button", `copy-${size}`];
+  if (state === CopyState.Copied) classNames.push("copy-success");
+  if (state === CopyState.Error) classNames.push("copy-error");
+
+  const buttonLabel = state === CopyState.Copied ? "Copied!" : state === CopyState.Error ? "Copy failed" : label;
+
+  return (
+    <button
+      type="button"
+      className={classNames.join(" ")}
+      onClick={attemptCopy}
+      disabled={disabled}
+      aria-live="polite"
+    >
+      <span className="copy-button-icon" aria-hidden="true">
+        {state === CopyState.Copied ? "✅" : "📋"}
+      </span>
+      <span>{buttonLabel}</span>
+    </button>
+  );
+}
+
+function copyTextToClipboard(text: string) {
+  if (typeof navigator === "undefined") return Promise.resolve(false);
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard
+      .writeText(text)
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  if (typeof document === "undefined") return Promise.resolve(false);
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return Promise.resolve(ok);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+function IncompleteSummary({ entries }: { entries: IncompleteEntry[] }) {
+  const count = entries.length;
+  const copyText = useMemo(() => buildOverallCopyText(entries), [entries]);
+
+  return (
+    <div className="incomplete-card">
+      <div className="status-row">
+        <div className="section-title">Incomplete tasks</div>
+        <div className="incomplete-actions">
+          <CopyButton label={`Copy all (${count})`} text={copyText} disabled={count === 0} />
+        </div>
+      </div>
+      {count === 0 ? (
+        <div className="empty-subtasks">All roadmap items are complete. 🎉</div>
+      ) : (
+        <ul className="incomplete-list">
+          {entries.map((entry) => (
+            <li key={entry.key} className="incomplete-item">
+              <div className="incomplete-item-header">
+                <div className="incomplete-item-title">{entry.itemLabel}</div>
+                {entry.itemMeta ? <div className="incomplete-item-meta">{entry.itemMeta}</div> : null}
+              </div>
+              {entry.weekLabel ? <div className="incomplete-item-week">{entry.weekLabel}</div> : null}
+              <div className="incomplete-item-status">Status: {entry.statusLabel}</div>
+              <ul className="incomplete-blockers">
+                {entry.blockers.map((blocker, idx) => (
+                  <li key={`${entry.key}-blocker-${idx}`}>{blocker}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

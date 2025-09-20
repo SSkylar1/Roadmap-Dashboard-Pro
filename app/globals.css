@@ -87,6 +87,7 @@ textarea{ min-height:180px; font-family: ui-monospace, SFMono-Regular, Menlo, Mo
 .item-card.item-neutral{ border-color:rgba(148,163,184,0.28) }
 .item-header{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between }
 .item-heading{ display:grid; gap:4px; min-width:0 }
+.item-actions{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end }
 .item-title{ font-size:15px; font-weight:600 }
 .item-meta{ font-size:13px; color:var(--muted) }
 
@@ -103,3 +104,24 @@ textarea{ min-height:180px; font-family: ui-monospace, SFMono-Regular, Menlo, Mo
 
 .empty-subtasks{ font-size:13px; color:var(--muted) }
 .timestamp{ font-size:12px; color:var(--muted) }
+.copy-button{ display:inline-flex; align-items:center; gap:6px; background:#1b2430; border:1px solid #293241; color:var(--fg);
+  border-radius:8px; padding:8px 12px; font-size:12px; line-height:1; transition:background .2s ease, border-color .2s ease,
+  color .2s ease }
+.copy-button:hover:not(:disabled){ background:#273243 }
+.copy-button:disabled{ opacity:0.5; cursor:not-allowed }
+.copy-default{ font-size:13px; padding:9px 14px }
+.copy-small{ font-size:12px; padding:6px 10px }
+.copy-button-icon{ font-size:14px }
+.copy-success{ background:var(--success-bg); border-color:rgba(52,211,153,0.5); color:#c0f8e0 }
+.copy-error{ background:var(--danger-bg); border-color:rgba(248,113,113,0.5); color:#fecaca }
+
+.incomplete-card{ background:var(--card); border:1px solid #1f2732; border-radius:18px; padding:18px; display:grid; gap:12px }
+.incomplete-actions{ display:flex; flex-wrap:wrap; gap:8px }
+.incomplete-list{ list-style:none; margin:0; padding:0; display:grid; gap:12px }
+.incomplete-item{ background:rgba(11,17,25,0.72); border:1px solid #1f2732; border-radius:14px; padding:14px; display:grid; gap:8px }
+.incomplete-item-header{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:space-between }
+.incomplete-item-title{ font-size:14px; font-weight:600 }
+.incomplete-item-meta{ font-size:12px; color:var(--muted) }
+.incomplete-item-week{ font-size:12px; color:var(--muted) }
+.incomplete-item-status{ font-size:12px; color:var(--muted) }
+.incomplete-blockers{ margin:0; padding-left:18px; display:grid; gap:4px; color:var(--muted); font-size:13px }
