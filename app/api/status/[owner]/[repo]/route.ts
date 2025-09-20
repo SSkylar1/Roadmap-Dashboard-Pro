@@ -1,13 +1,29 @@
 // app/api/status/[owner]/[repo]/route.ts
 import { NextResponse } from "next/server";
 import yaml from "js-yaml";
-import { getInstallationToken } from "@/lib/githubApp";
 
 export const runtime = "nodejs";
 
 const DEFAULT_BRANCH = process.env.DEFAULT_BRANCH || "main";
 const REVALIDATE_SECS = 15;
 const UA = "roadmap-dashboard-pro";
+
+function hasGitHubAppConfig() {
+  return Boolean(
+    process.env.GH_APP_ID &&
+      (process.env.GH_APP_PRIVATE_KEY_B64 || process.env.GH_APP_PRIVATE_KEY)
+  );
+}
+
+async function tryGetInstallationToken(): Promise<string | undefined> {
+  if (!hasGitHubAppConfig()) return undefined;
+  try {
+    const mod = await import("@/lib/githubApp");
+    return await mod.getInstallationToken();
+  } catch {
+    return undefined;
+  }
+}
 
 type Ctx = { params: { owner: string; repo: string } };
 type GHContentsResp = { content?: string; encoding?: string };
@@ -300,10 +316,7 @@ async function enrichWeeks(
 export async function GET(_req: Request, { params }: Ctx) {
   const { owner, repo } = params;
 
-  let token: string | undefined;
-  try {
-    token = await getInstallationToken();
-  } catch {}
+  const token = await tryGetInstallationToken();
 
   const branch = (await detectDefaultBranch(owner, repo, token)) || DEFAULT_BRANCH;
 
