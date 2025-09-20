@@ -37,7 +37,7 @@ label{ display:block; font-size:14px; color:var(--muted); margin:8px 0 4px }
 .form-row{ display:grid; gap:10px; grid-template-columns: 1fr 1fr }
 textarea{ min-height:180px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace }
 
-.dashboard{ display:grid; gap:18px }
+.dashboard{ display:grid; gap:18px; min-width:0 }
 .repo-line{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; font-size:14px; color:var(--muted) }
 .repo-label{ opacity:0.85 }
 .repo-line code{ font-size:13px }
@@ -103,3 +103,58 @@ textarea{ min-height:180px; font-family: ui-monospace, SFMono-Regular, Menlo, Mo
 
 .empty-subtasks{ font-size:13px; color:var(--muted) }
 .timestamp{ font-size:12px; color:var(--muted) }
+
+.dashboard-shell{ display:grid; gap:24px; grid-template-columns:minmax(0,280px) minmax(0,1fr); align-items:flex-start }
+.project-panel{ background:var(--card); border:1px solid #1f2732; border-radius:20px; padding:20px; display:grid; gap:16px; position:sticky; top:24px; min-width:0; max-height:calc(100vh - 48px); overflow:auto }
+.project-header{ display:flex; align-items:center; justify-content:space-between; gap:12px }
+.project-header h2{ margin:0; font-size:18px; color:#cfe2f3 }
+.project-wizard{ font-size:13px; color:var(--accent) }
+.project-wizard:hover{ text-decoration:underline }
+.project-hint{ font-size:12px; color:var(--muted) }
+.project-empty{ font-size:13px; color:var(--muted); background:rgba(11,17,25,0.65); border:1px dashed rgba(148,163,184,0.35); padding:12px 14px; border-radius:12px }
+.project-list{ list-style:none; margin:0; padding:0; display:grid; gap:10px }
+.project-item{ display:flex; align-items:center; gap:10px }
+.project-button{ flex:1; border:1px solid #1f2732; background:rgba(11,17,25,0.7); color:var(--fg); padding:10px 12px; border-radius:12px; font-size:13px; display:flex; align-items:center; justify-content:space-between; transition:border-color 0.2s ease, background 0.2s ease }
+.project-button:hover{ border-color:rgba(78,161,255,0.45) }
+.project-button.active{ border-color:rgba(78,161,255,0.55); background:rgba(78,161,255,0.12) }
+.project-slug{ font-weight:600 }
+.project-active{ font-size:11px; color:var(--muted) }
+.project-form{ display:grid; gap:12px }
+.project-form-row{ display:grid; gap:10px }
+.project-form button{ width:100% }
+.project-error{ color:var(--danger); font-size:12px }
+button.icon-button{ width:30px; height:30px; padding:0; border-radius:10px; display:grid; place-items:center; background:rgba(15,21,32,0.85); border:1px solid #1f2732; color:var(--muted) }
+button.icon-button:hover{ color:var(--fg); border-color:rgba(78,161,255,0.45) }
+button.icon-button.danger{ color:rgba(248,113,113,0.9); border-color:rgba(248,113,113,0.45) }
+button.icon-button.danger:hover{ background:rgba(127,29,29,0.35); color:#fecdd3; border-color:rgba(248,113,113,0.7) }
+button.ghost-button{ background:transparent; border:1px solid rgba(148,163,184,0.4); color:var(--muted); padding:6px 12px; border-radius:10px; font-size:12px; cursor:pointer }
+button.ghost-button:hover{ color:var(--fg); border-color:rgba(78,161,255,0.45); background:rgba(78,161,255,0.08) }
+button.ghost-button.danger{ border-color:rgba(248,113,113,0.45); color:rgba(248,113,113,0.9) }
+button.ghost-button.danger:hover{ background:rgba(127,29,29,0.35); color:#fecdd3; border-color:rgba(248,113,113,0.7) }
+button.ghost-button.compact{ padding:6px 10px; font-size:12px }
+button.ghost-button:disabled{ opacity:0.6; cursor:not-allowed; background:transparent }
+.item-title-row{ display:flex; align-items:center; gap:8px }
+.manual-pill{ display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; border:1px solid rgba(78,161,255,0.45); background:rgba(78,161,255,0.12); color:var(--accent); font-size:11px; letter-spacing:0.04em; text-transform:uppercase }
+.item-actions{ display:flex; align-items:center; gap:8px }
+.item-note{ font-size:13px; color:var(--muted); line-height:1.5 }
+.manual-summary{ display:flex; align-items:center; justify-content:space-between; gap:10px; background:rgba(15,21,32,0.7); border:1px solid rgba(78,161,255,0.18); border-radius:12px; padding:10px 12px; font-size:13px; color:var(--muted) }
+.manual-summary-text{ flex:1; min-width:0 }
+.manual-details{ border-top:1px solid rgba(31,39,50,0.9); padding-top:12px }
+.manual-details summary{ cursor:pointer; font-size:13px; color:var(--muted); outline:none; display:flex; align-items:center; gap:6px }
+.manual-details[open] summary{ color:var(--accent); margin-bottom:12px }
+.manual-details summary::-webkit-details-marker{ display:none }
+.manual-details summary::before{ content:"＋"; margin-right:0; font-weight:600; color:var(--accent) }
+.manual-details[open] summary::before{ content:"−" }
+.manual-item-form{ display:grid; gap:10px }
+.manual-item-form textarea{ min-height:120px }
+.manual-label{ display:grid; gap:6px; font-size:13px; color:var(--muted) }
+.manual-optional{ font-size:11px; margin-left:6px; opacity:0.75 }
+.manual-actions{ display:flex; justify-content:flex-end }
+.manual-error{ color:var(--danger); font-size:12px }
+.manual-hint{ font-size:12px; color:var(--muted); margin-top:8px }
+.manual-project-banner{ display:flex; align-items:center; justify-content:space-between; gap:12px }
+.banner-title{ font-size:15px; font-weight:600; color:var(--fg) }
+.banner-subtitle{ font-size:13px; color:var(--muted) }
+
+@media (min-width:560px){ .project-form-row{ grid-template-columns:repeat(2,minmax(0,1fr)) } }
+@media (max-width:980px){ .dashboard-shell{ grid-template-columns:1fr } .project-panel{ position:relative; top:auto; max-height:none; overflow:visible } }
