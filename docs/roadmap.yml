@@ -40,3 +40,19 @@ weeks:
             files:
               - app/page.tsx
               - app/HomeClient.tsx
+  - id: w12
+    title: Weeks 23–24 — Packaging & docs
+    items:
+      - id: repo-template
+        name: New-repo bootstrap template published
+        checks:
+          - type: files_exist
+            files:
+              - docs/template-usage.md
+      - id: one-pager
+        name: "One-pager: how to adopt in <30 min"
+        checks:
+          - type: files_exist
+            files:
+              - docs/one-pager.md
+
