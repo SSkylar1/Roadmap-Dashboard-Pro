@@ -80,12 +80,30 @@ function classFor(ok: boolean | undefined) {
   return "bg-gray-100 text-gray-700 border-gray-200";
 }
 
-function summarizeChecks(checks?: Check[]) {
+type StatusCounts = {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+};
+
+function summarizeChecks(checks?: Check[]): StatusCounts {
   const total = checks?.length ?? 0;
   const passed = (checks ?? []).filter((c) => c.ok === true).length;
   const failed = (checks ?? []).filter((c) => c.ok === false).length;
   const pending = total - passed - failed;
   return { total, passed, failed, pending };
+}
+
+function formatStatusSummary({ total, passed, failed, pending }: StatusCounts) {
+  if (total === 0) return null;
+  const parts: string[] = [];
+  if (passed > 0) parts.push(`✅ ${passed}`);
+  if (failed > 0) parts.push(`❌ ${failed}`);
+  if (pending > 0) parts.push(`⏳ ${pending}`);
+
+  if (parts.length === 0) return null;
+  return `${parts.join(" • ")}${total > 0 ? ` (of ${total})` : ""}`;
 }
 
 function WeekProgress({ weeks }: { weeks: Week[] }) {
@@ -110,13 +128,13 @@ function WeekProgress({ weeks }: { weeks: Week[] }) {
 
   const pct = (n: number) => Math.round((n / total) * 100);
 
+  const summary = formatStatusSummary({ total, passed, failed, pending });
+
   return (
     <div className="mt-4 rounded-xl border p-4">
       <div className="flex items-center justify-between">
         <div className="font-semibold">Overall Progress</div>
-        <div className="text-sm text-gray-600">
-          ✅ {passed} • ❌ {failed} • ⏳ {pending} (of {total})
-        </div>
+        {summary ? <div className="text-sm text-gray-600">{summary}</div> : null}
       </div>
       <div className="mt-3 h-3 w-full overflow-hidden rounded-full border">
         <div
@@ -162,36 +180,42 @@ function WeekProgress({ weeks }: { weeks: Week[] }) {
 }
 
 function CheckRow({ c }: { c: Check }) {
+  const label = c.type || "Check";
   return (
     <div
-      className={`mb-1 inline-flex items-center gap-2 rounded-lg border px-2 py-1 text-sm ${classFor(
+      className={`flex w-full items-start justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${classFor(
         c.ok
       )}`}
     >
-      <span className="leading-none">{statusIcon(c.ok)}</span>
-      <span className="leading-none font-medium">{c.type}</span>
-      {c.detail ? (
-        <span className="leading-none text-xs opacity-80">· {c.detail}</span>
-      ) : null}
+      <div className="min-w-0">
+        <div className="font-medium leading-tight">{label}</div>
+        {c.detail ? (
+          <div className="mt-0.5 text-xs leading-tight opacity-80">{c.detail}</div>
+        ) : null}
+      </div>
+      <span className="shrink-0 text-lg leading-none">{statusIcon(c.ok)}</span>
     </div>
   );
 }
 
 function ItemCard({ item }: { item: Item }) {
   const sum = summarizeChecks(item.checks);
+  const summary = formatStatusSummary(sum);
   return (
     <div className="rounded-xl border p-3">
       <div className="mb-2 flex items-center justify-between">
         <div className="font-medium">{item.name ?? "Untitled item"}</div>
-        <div className="text-xs text-gray-600">
-          ✅ {sum.passed} • ❌ {sum.failed} • ⏳ {sum.pending} (of {sum.total})
+        <div
+          className={`text-xs ${summary ? "text-gray-600" : "italic text-gray-400"}`}
+        >
+          {summary ?? "No checks yet"}
         </div>
       </div>
 
       {sum.total === 0 ? (
         <div className="text-sm text-gray-500">No checks yet.</div>
       ) : (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid gap-2">
           {(item.checks ?? []).map((c, i) => (
             <CheckRow key={`${c.type}-${i}`} c={c} />
           ))}
@@ -218,12 +242,16 @@ function WeekCard({ week }: { week: Week }) {
     return { total, passed, failed, pending };
   }, [week]);
 
+  const summary = formatStatusSummary(rollup);
+
   return (
     <div className="rounded-2xl border p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-lg font-semibold">{week.title ?? "Untitled week"}</div>
-        <div className="text-sm text-gray-600">
-          ✅ {rollup.passed} • ❌ {rollup.failed} • ⏳ {rollup.pending} (of {rollup.total})
+        <div
+          className={`text-sm ${summary ? "text-gray-600" : "italic text-gray-400"}`}
+        >
+          {summary ?? "No checks yet"}
         </div>
       </div>
 
@@ -299,7 +327,6 @@ function PageFallback() {
       <p className="mt-1 text-sm text-gray-600">
         Onboard repos, view status, edit rc, and verify infra — safely.
       </p>
-
       <div className="mt-3 h-5 w-40 animate-pulse rounded-full bg-gray-200" />
 
       <div className="mt-6 animate-pulse rounded-2xl border p-6 text-gray-500">

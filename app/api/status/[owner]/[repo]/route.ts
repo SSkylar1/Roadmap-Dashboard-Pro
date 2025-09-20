@@ -1,13 +1,29 @@
 // app/api/status/[owner]/[repo]/route.ts
 import { NextResponse } from "next/server";
 import yaml from "js-yaml";
-import { getInstallationToken } from "@/lib/githubApp";
 
 export const runtime = "nodejs";
 
 const DEFAULT_BRANCH = process.env.DEFAULT_BRANCH || "main";
 const REVALIDATE_SECS = 15;
 const UA = "roadmap-dashboard-pro";
+
+function hasGitHubAppConfig() {
+  return Boolean(
+    process.env.GH_APP_ID &&
+      (process.env.GH_APP_PRIVATE_KEY_B64 || process.env.GH_APP_PRIVATE_KEY)
+  );
+}
+
+async function tryGetInstallationToken(): Promise<string | undefined> {
+  if (!hasGitHubAppConfig()) return undefined;
+  try {
+    const mod = await import("@/lib/githubApp");
+    return await mod.getInstallationToken();
+  } catch {
+    return undefined;
+  }
+}
 
 type Ctx = { params: { owner: string; repo: string } };
 type GHContentsResp = { content?: string; encoding?: string };
@@ -170,13 +186,137 @@ async function runCheck(
   return { status: "skip", note: `unknown type: ${type}` };
 }
 
+const PASS_STATUSES = new Set([
+  "pass",
+  "passed",
+  "ok",
+  "success",
+  "succeeded",
+  "complete",
+  "completed",
+  "done",
+  "✅",
+]);
+const FAIL_STATUSES = new Set(["fail", "failed", "error", "missing", "❌"]);
+
+function normalizeStatusValue(val: unknown) {
+  return typeof val === "string" ? val.trim().toLowerCase() : "";
+}
+
+function inferOk(status: unknown, fallback?: unknown): boolean | undefined {
+  if (typeof fallback === "boolean") return fallback;
+  const norm = normalizeStatusValue(status);
+  if (PASS_STATUSES.has(norm)) return true;
+  if (FAIL_STATUSES.has(norm)) return false;
+  if (norm === "skip" || norm === "skipped" || norm === "pending") return undefined;
+  return undefined;
+}
+
+function textOrNull(val: unknown) {
+  if (typeof val !== "string") return undefined;
+  const trimmed = val.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function mergeDetail(detail: unknown, note: unknown) {
+  const base = textOrNull(detail);
+  const extra = textOrNull(note);
+  if (base && extra && base !== extra) return `${base} – ${extra}`;
+  return extra ?? base;
+}
+
+function cloneCheck(check: any) {
+  if (check && typeof check === "object" && !Array.isArray(check)) {
+    return { ...check };
+  }
+  if (typeof check === "string") {
+    return { type: check };
+  }
+  return { type: "unknown" };
+}
+
+type EnrichMode = "live" | "artifact";
+
+async function enrichWeeks(
+  weeks: any,
+  ctx: {
+    owner: string;
+    repo: string;
+    branch: string;
+    token?: string;
+    rc: any;
+    mode: EnrichMode;
+  }
+) {
+  const sourceWeeks = Array.isArray(weeks) ? weeks : [];
+  const out: any[] = [];
+
+  for (const week of sourceWeeks) {
+    if (!week || typeof week !== "object") {
+      out.push(week);
+      continue;
+    }
+
+    const sourceItems = Array.isArray((week as any).items) ? (week as any).items : [];
+    const itemsOut: any[] = [];
+
+    for (const item of sourceItems) {
+      if (!item || typeof item !== "object") {
+        itemsOut.push(item);
+        continue;
+      }
+
+      const itemObj: any = { ...item };
+      const sourceChecks = Array.isArray(item.checks) ? item.checks : [];
+      const checksOut: any[] = [];
+
+      if (ctx.mode === "live") {
+        for (const check of sourceChecks) {
+          const base = cloneCheck(check);
+          // eslint-disable-next-line no-await-in-loop
+          const result = await runCheck(ctx.owner, ctx.repo, ctx.branch, ctx.token, ctx.rc, check);
+          base.status = result.status;
+          base.result = result.status;
+          if (result.note !== undefined) base.note = result.note;
+          const detail = mergeDetail(base.detail, result.note);
+          if (detail !== undefined) base.detail = detail;
+          base.ok = inferOk(result.status);
+          checksOut.push(base);
+        }
+      } else {
+        for (const check of sourceChecks) {
+          const base = cloneCheck(check);
+          const status = base.result ?? base.status;
+          base.result = status;
+          base.ok = inferOk(status, base.ok);
+          const detail = mergeDetail(base.detail, base.note);
+          if (detail !== undefined) base.detail = detail;
+          checksOut.push(base);
+        }
+      }
+
+      itemObj.checks = checksOut;
+
+      const computedDone = checksOut.length > 0 ? checksOut.every((c) => c.ok === true) : undefined;
+      const explicitDone = typeof item.done === "boolean" ? item.done : undefined;
+
+      if (computedDone !== undefined) itemObj.done = computedDone;
+      else if (explicitDone !== undefined) itemObj.done = explicitDone;
+      else delete itemObj.done;
+
+      itemsOut.push(itemObj);
+    }
+
+    out.push({ ...week, items: itemsOut });
+  }
+
+  return out;
+}
+
 export async function GET(_req: Request, { params }: Ctx) {
   const { owner, repo } = params;
 
-  let token: string | undefined;
-  try {
-    token = await getInstallationToken();
-  } catch {}
+  const token = await tryGetInstallationToken();
 
   const branch = (await detectDefaultBranch(owner, repo, token)) || DEFAULT_BRANCH;
 
@@ -185,7 +325,24 @@ export async function GET(_req: Request, { params }: Ctx) {
   if (statusTxt) {
     try {
       const json = JSON.parse(statusTxt);
-      return NextResponse.json(json, { headers: { "cache-control": "no-store", "x-status-route": "artifact" } });
+      const weeks = await enrichWeeks(json?.weeks, { owner, repo, branch, token, rc: null, mode: "artifact" });
+      const payload: any = {
+        ...json,
+        owner: json?.owner ?? owner,
+        repo: json?.repo ?? repo,
+        branch: json?.branch ?? branch,
+        weeks,
+      };
+
+      const sourceMeta =
+        payload?.source && typeof payload.source === "object" && !Array.isArray(payload.source)
+          ? payload.source
+          : {};
+      payload.source = { ...sourceMeta, artifact: statusPath };
+
+      return NextResponse.json(payload, {
+        headers: { "cache-control": "no-store", "x-status-route": "artifact" },
+      });
     } catch {}
   }
 
@@ -217,21 +374,7 @@ export async function GET(_req: Request, { params }: Ctx) {
     );
   }
 
-  const weeks = Array.isArray(doc?.weeks) ? doc.weeks : [];
-
-  for (const w of weeks) {
-    if (!Array.isArray(w.items)) continue;
-    for (const it of w.items) {
-      const checks = Array.isArray(it.checks) ? it.checks : [];
-      const results: Array<{ status: string; note?: string }> = [];
-      for (const c of checks) {
-        // eslint-disable-next-line no-await-in-loop
-        const r = await runCheck(owner, repo, branch, token, rc, c);
-        results.push(r);
-      }
-      it.results = results;
-    }
-  }
+  const weeks = await enrichWeeks(doc?.weeks, { owner, repo, branch, token, rc, mode: "live" });
 
   return NextResponse.json(
     {
