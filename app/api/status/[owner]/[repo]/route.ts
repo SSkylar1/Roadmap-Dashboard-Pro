@@ -223,13 +223,33 @@ export async function GET(_req: Request, { params }: Ctx) {
     if (!Array.isArray(w.items)) continue;
     for (const it of w.items) {
       const checks = Array.isArray(it.checks) ? it.checks : [];
-      const results: Array<{ status: string; note?: string }> = [];
+      const enrichedChecks: any[] = [];
       for (const c of checks) {
+        const base: Record<string, any> =
+          c && typeof c === "object"
+            ? { ...c }
+            : { type: typeof c === "string" ? c : "unknown" };
+
         // eslint-disable-next-line no-await-in-loop
-        const r = await runCheck(owner, repo, branch, token, rc, c);
-        results.push(r);
+        const result = await runCheck(owner, repo, branch, token, rc, c);
+
+        const ok = result.status === "pass" ? true : result.status === "fail" ? false : undefined;
+        const originalDetail = typeof base.detail === "string" ? base.detail : undefined;
+        const note = result.note;
+
+        base.ok = ok;
+        base.detail = note
+          ? originalDetail && note !== originalDetail
+            ? `${originalDetail} – ${note}`
+            : note
+          : originalDetail;
+        base.result = result.status;
+
+        enrichedChecks.push(base);
       }
-      it.results = results;
+
+      it.checks = enrichedChecks;
+      it.done = enrichedChecks.length > 0 && enrichedChecks.every((c) => c.ok === true);
     }
   }
 
