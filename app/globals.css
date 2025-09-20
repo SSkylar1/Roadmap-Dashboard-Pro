@@ -5,12 +5,12 @@
   --card:#121821;
   --accent:#4ea1ff;
   --success:#34d399;
-  --success-bg:rgba(52, 211, 153, 0.18);
+  --success-bg:rgba(17, 94, 89, 0.45);
   --danger:#f87171;
-  --danger-bg:rgba(248, 113, 113, 0.18);
+  --danger-bg:rgba(127, 29, 29, 0.45);
   --pending:#fbbf24;
-  --pending-bg:rgba(251, 191, 36, 0.18);
-  --neutral-bg:rgba(148, 163, 184, 0.16);
+  --pending-bg:rgba(133, 77, 14, 0.45);
+  --neutral-bg:rgba(71, 85, 105, 0.4);
 }
 *{ box-sizing:border-box }
 html,body{ margin:0; padding:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial }
@@ -48,10 +48,10 @@ textarea{ min-height:180px; font-family: ui-monospace, SFMono-Regular, Menlo, Mo
 .status-chip{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; border:1px solid rgba(148,163,184,0.45); background:rgba(15,21,32,0.8); color:var(--muted); font-size:12px; text-transform:none; white-space:nowrap }
 .status-chip-icon{ font-size:16px; line-height:1 }
 .status-chip-text{ font-size:12px }
-.status-chip.status-success{ border-color:rgba(52,211,153,0.5); background:var(--success-bg); color:#c0f8e0 }
-.status-chip.status-fail{ border-color:rgba(248,113,113,0.5); background:var(--danger-bg); color:#fecaca }
-.status-chip.status-pending{ border-color:rgba(251,191,36,0.5); background:var(--pending-bg); color:#fde68a }
-.status-chip.status-neutral{ border-color:rgba(148,163,184,0.4); background:var(--neutral-bg); color:var(--muted) }
+.status-chip.status-success{ border-color:rgba(52,211,153,0.65); background:var(--success-bg); color:var(--success) }
+.status-chip.status-fail{ border-color:rgba(248,113,113,0.65); background:var(--danger-bg); color:var(--danger) }
+.status-chip.status-pending{ border-color:rgba(251,191,36,0.65); background:var(--pending-bg); color:var(--pending) }
+.status-chip.status-neutral{ border-color:rgba(148,163,184,0.5); background:var(--neutral-bg); color:var(--muted) }
 
 .progress-card{ background:var(--card); border:1px solid #1f2732; border-radius:18px; padding:18px; display:grid; gap:12px }
 .progress-bar{ height:10px; border-radius:999px; border:1px solid #1f2732; overflow:hidden; display:flex; background:rgba(8,12,18,0.8) }
