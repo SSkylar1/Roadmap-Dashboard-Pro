@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type Check = {
@@ -58,19 +58,16 @@ type ManualState = Record<string, ManualWeekState>;
 
 type DecoratedItem = Item & { manualKey?: string; manual?: boolean };
 type DecoratedWeek = Week & { manualKey: string; manualState: ManualWeekState; items?: DecoratedItem[] };
-type IncompleteEntry = {
-  id: string;
-  weekTitle: string;
-  item: DecoratedItem;
-  statusLabel: string;
-  icon: string;
-  summary: string | null;
-  blockers: Check[];
-};
 
 const DEFAULT_REPOS: RepoRef[] = [{ owner: "SSkylar1", repo: "Roadmap-Kit-Starter" }];
 const REPO_STORAGE_KEY = "roadmap-dashboard.repos";
 const MANUAL_STORAGE_PREFIX = "roadmap-dashboard.manual.";
+
+const enum CopyState {
+  Idle = "idle",
+  Copied = "copied",
+  Error = "error",
+}
 
 function repoKey(owner: string, repo: string) {
   return `${owner.trim().toLowerCase()}/${repo.trim().toLowerCase()}`;
@@ -405,6 +402,137 @@ function formatResultLabel(result: unknown) {
     .join(" ");
 }
 
+function itemTitle(item: Item) {
+  const title = typeof item.name === "string" && item.name.trim() ? item.name.trim() : null;
+  const id = typeof item.id === "string" && item.id.trim() ? item.id.trim() : null;
+  if (title) return { title, meta: id && id !== title ? id : null };
+  if (id) return { title: id, meta: null };
+  return { title: "Untitled item", meta: null };
+}
+
+function weekTitle(week: Week | undefined) {
+  if (!week) return { title: "Untitled week", meta: null };
+  const title = typeof week.title === "string" && week.title.trim() ? week.title.trim() : null;
+  const id = typeof week.id === "string" && week.id.trim() ? week.id.trim() : null;
+  if (title) return { title, meta: id && id !== title ? id : null };
+  if (id) return { title: id, meta: null };
+  return { title: "Untitled week", meta: null };
+}
+
+function friendlyCheckResult(check: Check) {
+  const label = formatResultLabel(check.result ?? check.status);
+  if (label) return label;
+  if (check.ok === true) return "Complete";
+  if (check.ok === false) return "Failed";
+  return "Pending";
+}
+
+function checkLabel(check: Check) {
+  return check.name || check.id || check.type || "Check";
+}
+
+function checkDetail(check: Check) {
+  const detail = check.detail ?? check.note;
+  return typeof detail === "string" && detail.trim() ? detail.trim() : null;
+}
+
+function incompleteChecks(checks?: Check[]) {
+  return (checks ?? []).filter((c) => c.ok !== true);
+}
+
+function buildCheckSummary(check: Check) {
+  const label = checkLabel(check);
+  const status = friendlyCheckResult(check);
+  const detail = checkDetail(check);
+  const parts = [status];
+  if (detail) parts.push(detail);
+  return `${label}${parts.length ? ` — ${parts.join(" • ")}` : ""}`;
+}
+
+function buildItemCopyText(item: Item, week?: Week) {
+  const { title: itemHeading, meta: itemMeta } = itemTitle(item);
+  const { title: weekHeading, meta: weekMeta } = weekTitle(week);
+  const weekPart = weekHeading ? `${weekHeading}${weekMeta ? ` (${weekMeta})` : ""}` : null;
+  const itemPart = `${itemHeading}${itemMeta ? ` (${itemMeta})` : ""}`;
+
+  const lines: string[] = [weekPart ? `${weekPart} — ${itemPart}` : itemPart];
+  const checks = item.checks ?? [];
+  const hasChecks = checks.length > 0;
+  const status = itemStatus(item);
+  lines.push(`Status: ${statusText(status, hasChecks)}`);
+
+  const blockers = incompleteChecks(checks);
+  if (hasChecks && blockers.length > 0) {
+    lines.push("Blocked by:");
+    blockers.forEach((chk) => {
+      lines.push(`- ${buildCheckSummary(chk)}`);
+    });
+  } else if (!hasChecks) {
+    lines.push("Blocked by: No checks configured yet.");
+  } else {
+    lines.push("Blocked by: None");
+  }
+
+  return lines.join("\n");
+}
+
+type IncompleteEntry = {
+  key: string;
+  week: Week;
+  item: Item;
+  summary: string;
+  statusLabel: string;
+  weekLabel: string;
+  itemLabel: string;
+  itemMeta?: string | null;
+  blockers: string[];
+};
+
+function collectIncompleteEntries(weeks: Week[]): IncompleteEntry[] {
+  const entries: IncompleteEntry[] = [];
+  for (const week of weeks) {
+    const { title: wTitle, meta: wMeta } = weekTitle(week);
+    for (const item of week.items ?? []) {
+      const status = itemStatus(item);
+      const checks = item.checks ?? [];
+      const hasChecks = checks.length > 0;
+      if (status === true) continue;
+      const { title: itemHeading, meta: itemMeta } = itemTitle(item);
+      const blockers = hasChecks
+        ? incompleteChecks(checks).map((chk) => buildCheckSummary(chk))
+        : ["No checks configured yet."];
+      entries.push({
+        key: `${week.id ?? wTitle ?? "week"}::${item.id ?? itemHeading}`,
+        week,
+        item,
+        summary: buildItemCopyText(item, week),
+        statusLabel: statusText(status, hasChecks),
+        weekLabel: wMeta ? `${wTitle} (${wMeta})` : wTitle,
+        itemLabel: itemHeading,
+        itemMeta,
+        blockers,
+      });
+    }
+  }
+  return entries;
+}
+
+function buildOverallCopyText(entries: IncompleteEntry[]) {
+  if (entries.length === 0) return "All roadmap items are complete!";
+  const lines: string[] = [`Incomplete roadmap items (${entries.length}):`];
+  entries.forEach((entry, index) => {
+    const count = index + 1;
+    const meta = entry.itemMeta ? ` (${entry.itemMeta})` : "";
+    const weekPrefix = entry.weekLabel ? `${entry.weekLabel} — ` : "";
+    lines.push(`${count}. ${weekPrefix}${entry.itemLabel}${meta}`);
+    lines.push(`   Status: ${entry.statusLabel}`);
+    entry.blockers.forEach((blocker) => {
+      lines.push(`   - ${blocker}`);
+    });
+  });
+  return lines.join("\n");
+}
+
 type StatusCounts = {
   total: number;
   passed: number;
@@ -516,7 +644,9 @@ function WeekProgress({ weeks }: { weeks: Week[] }) {
         <div className="progress-fill failed" style={{ width: `${pct(failed)}%` }} title={`Failed: ${failed}`} />
         <div className="progress-fill pending" style={{ width: `${pct(pending)}%` }} title={`Pending: ${pending}`} />
       </div>
-      <div className="progress-legend">✅ {passed} · ❌ {failed} · ⏳ {pending}</div>
+      <div className="progress-legend">
+        ✅ {passed} · ❌ {failed} · ⏳ {pending}
+      </div>
     </div>
   );
 }
@@ -544,10 +674,12 @@ function CheckRow({ c }: { c: Check }) {
 
 function ItemCard({
   item,
+  week,
   onDelete,
   allowDelete,
 }: {
   item: DecoratedItem;
+  week: DecoratedWeek;
   onDelete?: () => void;
   allowDelete: boolean;
 }) {
@@ -560,6 +692,8 @@ function ItemCard({
   const note = item.note?.trim();
   const isManual = item.manual === true;
   const canDelete = allowDelete && Boolean(onDelete) && Boolean(item.manualKey);
+  const hasIncomplete = ok !== true;
+  const copyText = useMemo(() => buildItemCopyText(item, week), [item, week]);
 
   return (
     <div className={`item-card item-${tone}`}>
@@ -573,6 +707,9 @@ function ItemCard({
         </div>
         <div className="item-actions">
           <StatusBadge ok={ok} total={sum.total} summary={summary} />
+          {hasIncomplete ? (
+            <CopyButton label="Copy incomplete details" text={copyText} disabled={!hasIncomplete} size="small" />
+          ) : null}
           {canDelete ? (
             <button type="button" className="ghost-button compact" onClick={onDelete}>
               Remove
@@ -730,6 +867,7 @@ function WeekCard({
             <ItemCard
               key={`${it.manualKey ?? it.id ?? it.name ?? i}`}
               item={it}
+              week={week}
               allowDelete={manualReady}
               onDelete={it.manualKey ? () => onDeleteItem(week.manualKey, it) : undefined}
             />
@@ -744,151 +882,6 @@ function WeekCard({
         <ManualItemForm disabled={!manualReady} onAdd={(payload) => onAddManualItem(week.manualKey, payload)} />
         {!manualReady ? <div className="manual-hint">Manual items are loading…</div> : null}
       </details>
-    </section>
-  );
-}
-
-function IncompleteCard({ weeks }: { weeks: DecoratedWeek[] }) {
-  const incompleteItems = useMemo<IncompleteEntry[]>(() => {
-    const list: IncompleteEntry[] = [];
-    weeks.forEach((week, weekIndex) => {
-      const weekTitle = week.title || week.id || `Week ${weekIndex + 1}`;
-      const manualKey = week.manualKey || getWeekKey(week, weekIndex);
-      (week.items ?? []).forEach((item, itemIndex) => {
-        const status = itemStatus(item);
-        if (status === true) return;
-
-        const checks = item.checks ?? [];
-        const counts = summarizeChecks(checks);
-        const summary = formatStatusSummary(counts);
-        const hasChecks = counts.total > 0;
-        const statusLabel =
-          item.manual && status === undefined && !hasChecks
-            ? "Manual follow-up"
-            : statusText(status, hasChecks);
-        const icon = statusIcon(status);
-        const blockers = checks.filter((check) => check.ok === false);
-
-        list.push({
-          id: `${manualKey}::${item.manualKey ?? getItemKey(item, itemIndex)}`,
-          weekTitle,
-          item,
-          statusLabel,
-          icon,
-          summary,
-          blockers,
-        });
-      });
-    });
-    return list;
-  }, [weeks]);
-
-  const copyText = useMemo(() => {
-    if (incompleteItems.length === 0) return "";
-    return incompleteItems
-      .map(({ weekTitle, item, statusLabel }) => {
-        const title = item.name || item.id || "Untitled item";
-        const note = item.note?.trim();
-        const noteSuffix = note ? ` — ${note}` : "";
-        return `- [${weekTitle}] ${title} (${statusLabel})${noteSuffix}`;
-      })
-      .join("\n");
-  }, [incompleteItems]);
-
-  const [copyState, setCopyState] = useState<"idle" | "success" | "error">("idle");
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (copyState === "idle") return;
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-    }
-    timerRef.current = setTimeout(() => {
-      setCopyState("idle");
-      timerRef.current = null;
-    }, 2000);
-
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [copyState]);
-
-  const handleCopy = useCallback(async () => {
-    if (!copyText) return;
-    try {
-      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-        throw new Error("Clipboard not available");
-      }
-      await navigator.clipboard.writeText(copyText);
-      setCopyState("success");
-    } catch {
-      setCopyState("error");
-    }
-  }, [copyText]);
-
-  if (incompleteItems.length === 0) return null;
-
-  const buttonClass = ["copy-button", "copy-default"];
-  if (copyState === "success") buttonClass.push("copy-success");
-  if (copyState === "error") buttonClass.push("copy-error");
-
-  const buttonLabel =
-    copyState === "success" ? "Copied!" : copyState === "error" ? "Copy failed" : "Copy list";
-
-  return (
-    <section className="incomplete-card">
-      <div className="status-row">
-        <div className="section-title">Items needing attention</div>
-        <div className="incomplete-actions">
-          <button type="button" className={buttonClass.join(" ")} onClick={handleCopy} disabled={!copyText}>
-            <span className="copy-button-icon" aria-hidden>
-              📋
-            </span>
-            <span>{buttonLabel}</span>
-          </button>
-        </div>
-      </div>
-      <ul className="incomplete-list">
-        {incompleteItems.map(({ id, weekTitle, item, statusLabel, icon, summary, blockers }) => {
-          const title = item.name || item.id || "Untitled item";
-          const metaParts = [`Week: ${weekTitle}`];
-          if (summary) metaParts.push(summary);
-          const note = item.note?.trim();
-
-          return (
-            <li key={id} className="incomplete-item">
-              <div className="incomplete-item-header">
-                <div className="item-title-row">
-                  <div className="incomplete-item-title">{title}</div>
-                  {item.manual ? <span className="manual-pill">Manual</span> : null}
-                </div>
-                <div className="incomplete-item-status">
-                  {icon} {statusLabel}
-                </div>
-              </div>
-              <div className="incomplete-item-meta">{metaParts.join(" · ")}</div>
-              {note ? <div className="item-note">{note}</div> : null}
-              {blockers.length > 0 ? (
-                <ul className="incomplete-blockers">
-                  {blockers.map((check, idx) => {
-                    const checkLabel = check.name || check.id || check.type || "Check";
-                    const detail = check.detail || check.note || null;
-                    return (
-                      <li key={`${id}-blocker-${idx}`}>
-                        {checkLabel}
-                        {detail ? ` — ${detail}` : null}
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
     </section>
   );
 }
@@ -1023,6 +1016,121 @@ function ProjectSidebar({
   );
 }
 
+function CopyButton({
+  label,
+  text,
+  disabled,
+  size = "default",
+}: {
+  label: string;
+  text: string;
+  disabled?: boolean;
+  size?: "default" | "small";
+}) {
+  const [state, setState] = useState<CopyState>(CopyState.Idle);
+
+  useEffect(() => {
+    if (state === CopyState.Idle) return undefined;
+    const timer = setTimeout(() => setState(CopyState.Idle), 1800);
+    return () => clearTimeout(timer);
+  }, [state]);
+
+  const attemptCopy = useCallback(async () => {
+    if (disabled) return;
+    try {
+      const success = await copyTextToClipboard(text);
+      setState(success ? CopyState.Copied : CopyState.Error);
+    } catch {
+      setState(CopyState.Error);
+    }
+  }, [disabled, text]);
+
+  const classNames = ["copy-button", `copy-${size}`];
+  if (state === CopyState.Copied) classNames.push("copy-success");
+  if (state === CopyState.Error) classNames.push("copy-error");
+
+  const buttonLabel = state === CopyState.Copied ? "Copied!" : state === CopyState.Error ? "Copy failed" : label;
+
+  return (
+    <button
+      type="button"
+      className={classNames.join(" ")}
+      onClick={attemptCopy}
+      disabled={disabled}
+      aria-live="polite"
+    >
+      <span className="copy-button-icon" aria-hidden="true">
+        {state === CopyState.Copied ? "✅" : "📋"}
+      </span>
+      <span>{buttonLabel}</span>
+    </button>
+  );
+}
+
+function copyTextToClipboard(text: string) {
+  if (typeof navigator === "undefined") return Promise.resolve(false);
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard
+      .writeText(text)
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  if (typeof document === "undefined") return Promise.resolve(false);
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return Promise.resolve(ok);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+function IncompleteSummary({ entries }: { entries: IncompleteEntry[] }) {
+  const count = entries.length;
+  const copyText = useMemo(() => buildOverallCopyText(entries), [entries]);
+
+  return (
+    <div className="incomplete-card">
+      <div className="status-row">
+        <div className="section-title">Incomplete tasks</div>
+        <div className="incomplete-actions">
+          <CopyButton label={`Copy all (${count})`} text={copyText} disabled={count === 0} />
+        </div>
+      </div>
+      {count === 0 ? (
+        <div className="empty-subtasks">All roadmap items are complete. 🎉</div>
+      ) : (
+        <ul className="incomplete-list">
+          {entries.map((entry) => (
+            <li key={entry.key} className="incomplete-item">
+              <div className="incomplete-item-header">
+                <div className="incomplete-item-title">{entry.itemLabel}</div>
+                {entry.itemMeta ? <div className="incomplete-item-meta">{entry.itemMeta}</div> : null}
+              </div>
+              {entry.weekLabel ? <div className="incomplete-item-week">{entry.weekLabel}</div> : null}
+              <div className="incomplete-item-status">Status: {entry.statusLabel}</div>
+              <ul className="incomplete-blockers">
+                {entry.blockers.map((blocker, idx) => (
+                  <li key={`${entry.key}-blocker-${idx}`}>{blocker}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function DashboardPage() {
   const sp = useSearchParams();
   const searchString = sp.toString();
@@ -1127,6 +1235,8 @@ function DashboardPage() {
     return { added, removed };
   }, [manualState]);
 
+  const incompleteEntries = useMemo(() => collectIncompleteEntries(decoratedWeeks), [decoratedWeeks]);
+
   const hasManualChanges = manualReady && (manualTotals.added > 0 || manualTotals.removed > 0);
 
   const handleSelectRepo = useCallback((repo: RepoRef) => {
@@ -1221,7 +1331,7 @@ function DashboardPage() {
 
             {decoratedWeeks.length > 0 ? <WeekProgress weeks={decoratedWeeks} /> : null}
 
-            {decoratedWeeks.length > 0 ? <IncompleteCard weeks={decoratedWeeks} /> : null}
+            {decoratedWeeks.length > 0 ? <IncompleteSummary entries={incompleteEntries} /> : null}
 
             {data && decoratedWeeks.length > 0 ? (
               <div className="week-grid">
