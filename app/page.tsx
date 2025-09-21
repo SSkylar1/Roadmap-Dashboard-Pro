@@ -63,6 +63,157 @@ const DEFAULT_REPOS: RepoRef[] = [{ owner: "SSkylar1", repo: "Roadmap-Kit-Starte
 const REPO_STORAGE_KEY = "roadmap-dashboard.repos";
 const MANUAL_STORAGE_PREFIX = "roadmap-dashboard.manual.";
 
+const EDGE_FUNCTION_SNIPPET = [
+  "import { Pool, type PoolClient } from \"https://deno.land/x/postgres@v0.17.0/mod.ts\";",
+  "",
+  "const corsHeaders = {",
+  "  \"Access-Control-Allow-Origin\": \"*\",",
+  "  \"Access-Control-Allow-Headers\": \"authorization, x-client-info, apikey, content-type\",",
+  "};",
+  "",
+  "const connectionString = Deno.env.get(\"SUPABASE_DB_URL\") ?? Deno.env.get(\"DATABASE_URL\");",
+  "",
+  "if (!connectionString) {",
+  "  throw new Error(\"Set the SUPABASE_DB_URL secret before deploying this function.\");",
+  "}",
+  "",
+  "const pool = new Pool(connectionString, 1, true);",
+  "const READ_ROLES = [\"anon\", \"authenticated\"];",
+  "const READ_ROLES_SQL = READ_ROLES.map((role) => \"'\" + role + \"'\").join(\", \");",
+  "const allowed = /^(ext:[a-z0-9_]+|table:[a-z0-9_]+:[a-z0-9_]+|rls:[a-z0-9_]+:[a-z0-9_]+|policy:[a-z0-9_]+:[a-z0-9_]+:[a-z0-9_]+)$/;",
+  "",
+  "async function withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {",
+  "  const client = await pool.connect();",
+  "  try {",
+  "    return await fn(client);",
+  "  } finally {",
+  "    client.release();",
+  "  }",
+  "}",
+  "",
+  "async function checkExtension(ext: string): Promise<boolean> {",
+  "  const result = await withClient((client) =>",
+  "    client.queryObject<{ exists: boolean }>(",
+  "      \"select exists(select 1 from pg_extension where extname = $1) as exists\",",
+  "      ext,",
+  "    )",
+  "  );",
+  "  return result.rows[0]?.exists ?? false;",
+  "}",
+  "",
+  "async function checkTable(schema: string, table: string): Promise<boolean> {",
+  "  const sql =",
+  "    \"select coalesce(bool_or(privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE')), false) as has_write \" +",
+  "    \"from information_schema.role_table_grants where table_schema = $1 and table_name = $2 and grantee in (\" +",
+  "    READ_ROLES_SQL +",
+  "    \")\";",
+  "  const result = await withClient((client) => client.queryObject<{ has_write: boolean }>(sql, schema, table));",
+  "  return !(result.rows[0]?.has_write ?? false);",
+  "}",
+  "",
+  "async function checkRls(schema: string, table: string): Promise<boolean> {",
+  "  const identifier = schema + \".\" + table;",
+  "  const result = await withClient((client) =>",
+  "    client.queryObject<{ enabled: boolean }>(",
+  "      \"select relrowsecurity as enabled from pg_class where oid = to_regclass($1)\",",
+  "      identifier,",
+  "    )",
+  "  );",
+  "  return result.rows[0]?.enabled ?? false;",
+  "}",
+  "",
+  "async function checkPolicy(schema: string, table: string, policy: string): Promise<boolean> {",
+  "  const result = await withClient((client) =>",
+  "    client.queryObject<{ count: number }>(",
+  "      \"select count(*)::int as count from pg_policies where schemaname = $1 and tablename = $2 and policyname = $3 and command = 'SELECT'\",",
+  "      schema,",
+  "      table,",
+  "      policy,",
+  "    )",
+  "  );",
+  "  return (result.rows[0]?.count ?? 0) > 0;",
+  "}",
+  "",
+  "async function runCheck(symbol: string): Promise<boolean> {",
+  "  const parts = symbol.split(\":\");",
+  "  const kind = parts[0];",
+  "  if (kind === \"ext\" && parts.length === 2) return checkExtension(parts[1]);",
+  "  if (kind === \"table\" && parts.length === 3) return checkTable(parts[1], parts[2]);",
+  "  if (kind === \"rls\" && parts.length === 3) return checkRls(parts[1], parts[2]);",
+  "  if (kind === \"policy\" && parts.length === 4) return checkPolicy(parts[1], parts[2], parts[3]);",
+  "  return false;",
+  "}",
+  "",
+  "Deno.serve(async (req) => {",
+  "  if (req.method === \"OPTIONS\") {",
+  "    return new Response(null, { status: 204, headers: corsHeaders });",
+  "  }",
+  "",
+  "  if (req.method !== \"POST\") {",
+  "    return new Response(\"Method Not Allowed\", { status: 405, headers: corsHeaders });",
+  "  }",
+  "",
+  "  let body: unknown;",
+  "  try {",
+  "    body = await req.json();",
+  "  } catch {",
+  "    return new Response(JSON.stringify({ ok: false, error: \"invalid payload\" }), {",
+  "      status: 400,",
+  "      headers: Object.assign({ \"Content-Type\": \"application/json\" }, corsHeaders),",
+  "    });",
+  "  }",
+  "",
+  "  const symbol = (body as { query?: unknown })?.query;",
+  "  if (typeof symbol !== \"string\" || !allowed.test(symbol)) {",
+  "    return new Response(JSON.stringify({ ok: false, error: \"invalid symbol\" }), {",
+  "      status: 400,",
+  "      headers: Object.assign({ \"Content-Type\": \"application/json\" }, corsHeaders),",
+  "    });",
+  "  }",
+  "",
+  "  try {",
+  "    const ok = await runCheck(symbol);",
+  "    return new Response(JSON.stringify({ ok }), {",
+  "      status: 200,",
+  "      headers: Object.assign({ \"Content-Type\": \"application/json\" }, corsHeaders),",
+  "    });",
+  "  } catch (error) {",
+  "    console.error(error);",
+  "    return new Response(JSON.stringify({ ok: false, error: \"check failed\" }), {",
+  "      status: 500,",
+  "      headers: Object.assign({ \"Content-Type\": \"application/json\" }, corsHeaders),",
+  "    });",
+  "  }",
+  "});",
+].join("\n");
+
+const EDGE_FUNCTION_COMMANDS = [
+  "# Authenticate Supabase CLI and link your project",
+  "supabase login",
+  "supabase link --project-ref <project-ref>",
+  "",
+  "# Scaffold the edge function (creates supabase/functions/read_only_checks)",
+  "supabase functions new read_only_checks --no-verify-jwt",
+  "",
+  "# Store the Postgres connection string as a secret for deploys",
+  "supabase secrets set SUPABASE_DB_URL=\"postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres\"",
+  "",
+  "# Optional: run locally once you add SUPABASE_DB_URL to supabase/.env",
+  "supabase functions serve read_only_checks --env-file supabase/.env",
+  "",
+  "# Deploy and smoke test from the CLI",
+  "supabase functions deploy read_only_checks --no-verify-jwt",
+  "supabase functions list",
+  "supabase secrets list",
+  "supabase functions invoke read_only_checks --project-ref <project-ref> --no-verify-jwt --body '{\"query\":\"ext:pgcrypto\"}'",
+].join("\n");
+
+const EDGE_FUNCTION_CURL = [
+  "curl -X POST https://<project-ref>.functions.supabase.co/read_only_checks \\",
+  "  -H \"Content-Type: application/json\" \\",
+  "  -d '{\"query\":\"ext:pgcrypto\"}'",
+].join("\n");
+
 const enum CopyState {
   Idle = "idle",
   Copied = "copied",
@@ -1131,6 +1282,99 @@ function IncompleteSummary({ entries }: { entries: IncompleteEntry[] }) {
   );
 }
 
+function CreateEdgeFunctionGuide() {
+  return (
+    <section className="card guide-card">
+      <div>
+        <h2>Create Edge Function</h2>
+        <p className="guide-summary">
+          <strong>Where to obtain it (Supabase example).</strong> The template assumes you deploy a Supabase Edge Function named{" "}
+          <code>read_only_checks</code>. Once the function is live, its public URL is{" "}
+          <code>https://{"<project-ref>"}.functions.supabase.co/read_only_checks</code>{" "}
+          where <code>{"<project-ref>"}</code> is the identifier shown in the Supabase dashboard under
+          <strong> Settings → API</strong>. Add that URL to <code>.env.local</code> or <code>.roadmaprc.json</code> to wire the
+          dashboard up.
+        </p>
+      </div>
+
+      <ol className="guide-steps">
+        <li>
+          <strong>Collect your Supabase identifiers.</strong>
+          <ul className="guide-list">
+            <li>
+              In the Supabase dashboard, open <strong>Settings → API</strong> to copy the <em>Project reference</em>,
+              <em>Project URL</em>, <em>anon</em>, and <em>service_role</em> keys. The project reference is the value used in the
+              function URL above.
+            </li>
+            <li>
+              Under <strong>Settings → Database</strong>, grab the <em>Connection string (URI)</em>. If you have not generated a
+              password yet, click <em>Reset database password</em>; the resulting password is the <code>{"<db-password>"}</code>
+              placeholder in the commands below.
+            </li>
+            <li>Store the service role key securely—it grants full database access and should never ship to clients.</li>
+          </ul>
+        </li>
+        <li>
+          <strong>Supabase CLI workflow.</strong>
+          <p className="guide-inline">
+            Install the <code>supabase</code> CLI (<code>npm install -g supabase</code>) and run these commands from the
+            repository root. Replace <code>{"<project-ref>"}</code> and <code>{"<db-password>"}</code> with the values gathered
+            above.
+          </p>
+          <div className="guide-actions">
+            <CopyButton label="Copy CLI commands" text={EDGE_FUNCTION_COMMANDS} />
+          </div>
+          <pre>
+            <code>{EDGE_FUNCTION_COMMANDS}</code>
+          </pre>
+          <p className="guide-inline">
+            Create a <code>supabase/.env</code> file with <code>SUPABASE_DB_URL=postgresql://postgres:{"<db-password>"}@db.
+            {"<project-ref>"}.supabase.co:5432/postgres</code> before running <code>supabase functions serve</code> locally.
+          </p>
+        </li>
+        <li>
+          <strong>Paste the edge function source.</strong>
+          <p className="guide-inline">
+            The CLI scaffolds <code>supabase/functions/read_only_checks/index.ts</code>. Replace its contents with the snippet
+            below—the logic mirrors the dashboard’s <code>/api/verify</code> endpoint and only allows safe symbol checks.
+          </p>
+          <div className="guide-actions">
+            <CopyButton label="Copy edge function" text={EDGE_FUNCTION_SNIPPET} />
+          </div>
+          <pre>
+            <code>{EDGE_FUNCTION_SNIPPET}</code>
+          </pre>
+        </li>
+        <li>
+          <strong>Verify the deployed endpoint.</strong>
+          <p className="guide-inline">After deploying, smoke-test the function directly:</p>
+          <div className="guide-actions">
+            <CopyButton label="Copy curl example" text={EDGE_FUNCTION_CURL} />
+          </div>
+          <pre>
+            <code>{EDGE_FUNCTION_CURL}</code>
+          </pre>
+          <p className="guide-inline">
+            A response of <code>{'{"ok":true}'}</code> confirms the check passed. Adjust the payload for the tables, RLS
+            policies, or extensions you need to audit.
+          </p>
+        </li>
+        <li>
+          <strong>Connect the dashboard.</strong>
+          <p className="guide-inline">Update your environment so the app knows where to call:</p>
+          <pre>
+            <code>READ_ONLY_CHECKS_URL=https://{"<project-ref>"}.functions.supabase.co/read_only_checks</code>
+          </pre>
+          <p className="guide-inline">
+            Add the same value to <code>.roadmaprc.json</code> (<code>envs.dev.READ_ONLY_CHECKS_URL</code> and
+            <code>envs.prod</code> if applicable) so the onboarding wizard and API stay in sync.
+          </p>
+        </li>
+      </ol>
+    </section>
+  );
+}
+
 function DashboardPage() {
   const sp = useSearchParams();
   const searchString = sp.toString();
@@ -1390,6 +1634,7 @@ function DashboardPage() {
             Add a project from the sidebar to load its roadmap and weekly progress.
           </div>
         )}
+        <CreateEdgeFunctionGuide />
       </section>
     </main>
   );
