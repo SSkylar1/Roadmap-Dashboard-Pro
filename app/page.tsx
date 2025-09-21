@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type Check = {
@@ -1143,17 +1143,42 @@ function DashboardPage() {
 
   const { repos, initialized, addRepo, removeRepo } = useStoredRepos();
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const lastSearchKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!initialized) return;
-    if (searchKey && searchOwner && searchRepo) {
-      setActiveKey(searchKey);
-      const exists = repos.some((repo) => repoKey(repo.owner, repo.repo) === searchKey);
-      if (!exists) {
-        addRepo({ owner: searchOwner, repo: searchRepo });
-      }
+
+    if (!searchKey || !searchOwner || !searchRepo) {
+      lastSearchKeyRef.current = null;
+      setActiveKey((prev) => {
+        if (prev && repos.some((repo) => repoKey(repo.owner, repo.repo) === prev)) {
+          return prev;
+        }
+        return repos.length > 0 ? repoKey(repos[0].owner, repos[0].repo) : null;
+      });
       return;
     }
+
+    if (lastSearchKeyRef.current === searchKey) {
+      return;
+    }
+
+    lastSearchKeyRef.current = searchKey;
+
+    const exists = repos.some((repo) => repoKey(repo.owner, repo.repo) === searchKey);
+    if (!exists) {
+      const added = addRepo({ owner: searchOwner, repo: searchRepo });
+      if (added) {
+        setActiveKey(repoKey(added.owner, added.repo));
+        return;
+      }
+    }
+
+    setActiveKey(searchKey);
+  }, [initialized, searchKey, repos, addRepo, searchOwner, searchRepo]);
+
+  useEffect(() => {
+    if (!initialized) return;
 
     setActiveKey((prev) => {
       if (prev && repos.some((repo) => repoKey(repo.owner, repo.repo) === prev)) {
@@ -1161,7 +1186,7 @@ function DashboardPage() {
       }
       return repos.length > 0 ? repoKey(repos[0].owner, repos[0].repo) : null;
     });
-  }, [initialized, searchKey, repos, addRepo, searchOwner, searchRepo]);
+  }, [initialized, repos]);
 
   const activeRepo = useMemo(() => {
     if (!activeKey) return null;
