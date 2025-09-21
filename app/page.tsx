@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type Check = {
@@ -58,6 +58,15 @@ type ManualState = Record<string, ManualWeekState>;
 
 type DecoratedItem = Item & { manualKey?: string; manual?: boolean };
 type DecoratedWeek = Week & { manualKey: string; manualState: ManualWeekState; items?: DecoratedItem[] };
+type IncompleteEntry = {
+  id: string;
+  weekTitle: string;
+  item: DecoratedItem;
+  statusLabel: string;
+  icon: string;
+  summary: string | null;
+  blockers: Check[];
+};
 
 const DEFAULT_REPOS: RepoRef[] = [{ owner: "SSkylar1", repo: "Roadmap-Kit-Starter" }];
 const REPO_STORAGE_KEY = "roadmap-dashboard.repos";
@@ -739,6 +748,151 @@ function WeekCard({
   );
 }
 
+function IncompleteCard({ weeks }: { weeks: DecoratedWeek[] }) {
+  const incompleteItems = useMemo<IncompleteEntry[]>(() => {
+    const list: IncompleteEntry[] = [];
+    weeks.forEach((week, weekIndex) => {
+      const weekTitle = week.title || week.id || `Week ${weekIndex + 1}`;
+      const manualKey = week.manualKey || getWeekKey(week, weekIndex);
+      (week.items ?? []).forEach((item, itemIndex) => {
+        const status = itemStatus(item);
+        if (status === true) return;
+
+        const checks = item.checks ?? [];
+        const counts = summarizeChecks(checks);
+        const summary = formatStatusSummary(counts);
+        const hasChecks = counts.total > 0;
+        const statusLabel =
+          item.manual && status === undefined && !hasChecks
+            ? "Manual follow-up"
+            : statusText(status, hasChecks);
+        const icon = statusIcon(status);
+        const blockers = checks.filter((check) => check.ok === false);
+
+        list.push({
+          id: `${manualKey}::${item.manualKey ?? getItemKey(item, itemIndex)}`,
+          weekTitle,
+          item,
+          statusLabel,
+          icon,
+          summary,
+          blockers,
+        });
+      });
+    });
+    return list;
+  }, [weeks]);
+
+  const copyText = useMemo(() => {
+    if (incompleteItems.length === 0) return "";
+    return incompleteItems
+      .map(({ weekTitle, item, statusLabel }) => {
+        const title = item.name || item.id || "Untitled item";
+        const note = item.note?.trim();
+        const noteSuffix = note ? ` — ${note}` : "";
+        return `- [${weekTitle}] ${title} (${statusLabel})${noteSuffix}`;
+      })
+      .join("\n");
+  }, [incompleteItems]);
+
+  const [copyState, setCopyState] = useState<"idle" | "success" | "error">("idle");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (copyState === "idle") return;
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+    timerRef.current = setTimeout(() => {
+      setCopyState("idle");
+      timerRef.current = null;
+    }, 2000);
+
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [copyState]);
+
+  const handleCopy = useCallback(async () => {
+    if (!copyText) return;
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+        throw new Error("Clipboard not available");
+      }
+      await navigator.clipboard.writeText(copyText);
+      setCopyState("success");
+    } catch {
+      setCopyState("error");
+    }
+  }, [copyText]);
+
+  if (incompleteItems.length === 0) return null;
+
+  const buttonClass = ["copy-button", "copy-default"];
+  if (copyState === "success") buttonClass.push("copy-success");
+  if (copyState === "error") buttonClass.push("copy-error");
+
+  const buttonLabel =
+    copyState === "success" ? "Copied!" : copyState === "error" ? "Copy failed" : "Copy list";
+
+  return (
+    <section className="incomplete-card">
+      <div className="status-row">
+        <div className="section-title">Items needing attention</div>
+        <div className="incomplete-actions">
+          <button type="button" className={buttonClass.join(" ")} onClick={handleCopy} disabled={!copyText}>
+            <span className="copy-button-icon" aria-hidden>
+              📋
+            </span>
+            <span>{buttonLabel}</span>
+          </button>
+        </div>
+      </div>
+      <ul className="incomplete-list">
+        {incompleteItems.map(({ id, weekTitle, item, statusLabel, icon, summary, blockers }) => {
+          const title = item.name || item.id || "Untitled item";
+          const metaParts = [`Week: ${weekTitle}`];
+          if (summary) metaParts.push(summary);
+          const note = item.note?.trim();
+
+          return (
+            <li key={id} className="incomplete-item">
+              <div className="incomplete-item-header">
+                <div className="item-title-row">
+                  <div className="incomplete-item-title">{title}</div>
+                  {item.manual ? <span className="manual-pill">Manual</span> : null}
+                </div>
+                <div className="incomplete-item-status">
+                  {icon} {statusLabel}
+                </div>
+              </div>
+              <div className="incomplete-item-meta">{metaParts.join(" · ")}</div>
+              {note ? <div className="item-note">{note}</div> : null}
+              {blockers.length > 0 ? (
+                <ul className="incomplete-blockers">
+                  {blockers.map((check, idx) => {
+                    const checkLabel = check.name || check.id || check.type || "Check";
+                    const detail = check.detail || check.note || null;
+                    return (
+                      <li key={`${id}-blocker-${idx}`}>
+                        {checkLabel}
+                        {detail ? ` — ${detail}` : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function ProjectSidebar({
   repos,
   activeKey,
@@ -1066,6 +1220,8 @@ function DashboardPage() {
             ) : null}
 
             {decoratedWeeks.length > 0 ? <WeekProgress weeks={decoratedWeeks} /> : null}
+
+            {decoratedWeeks.length > 0 ? <IncompleteCard weeks={decoratedWeeks} /> : null}
 
             {data && decoratedWeeks.length > 0 ? (
               <div className="week-grid">
