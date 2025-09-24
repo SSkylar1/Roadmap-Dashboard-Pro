@@ -1436,6 +1436,13 @@ function DashboardPage() {
     if (!activeKey) return null;
     return repos.find((repo) => repoKey(repo.owner, repo.repo) === activeKey) ?? null;
   }, [repos, activeKey]);
+  const wizardHref = useMemo(() => {
+    if (!activeRepo) return "/new";
+    const params = new URLSearchParams();
+    params.set("owner", activeRepo.owner);
+    params.set("repo", activeRepo.repo);
+    return `/new?${params.toString()}`;
+  }, [activeRepo]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -1567,6 +1574,9 @@ function DashboardPage() {
               <code>
                 {activeRepo.owner}/{activeRepo.repo}
               </code>
+              <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
+                Create setup PR ↗
+              </a>
               <a href={`/api/status/${activeRepo.owner}/${activeRepo.repo}`} target="_blank" rel="noreferrer">
                 View status JSON ↗
               </a>
