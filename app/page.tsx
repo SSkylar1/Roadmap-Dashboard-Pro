@@ -1574,7 +1574,7 @@ function DashboardPage() {
               <code>
                 {activeRepo.owner}/{activeRepo.repo}
               </code>
-              <a href={wizardHref} target="_blank" rel="noreferrer">
+              <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
                 Create setup PR ↗
               </a>
               <a href={`/api/status/${activeRepo.owner}/${activeRepo.repo}`} target="_blank" rel="noreferrer">
