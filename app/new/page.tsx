@@ -1,11 +1,15 @@
 'use client';
 import React, { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 export default function Wizard() {
-  const [owner, setOwner] = useState('acme');
-  const [repo, setRepo] = useState('roadmap-kit-starter');
-  const [branch, setBranch] = useState('chore/roadmap-setup');
-  const [readOnlyUrl, setReadOnlyUrl] = useState('https://<ref>.functions.supabase.co/read_only_checks');
+  const search = useSearchParams();
+  const [owner, setOwner] = useState(() => search.get('owner') ?? 'acme');
+  const [repo, setRepo] = useState(() => search.get('repo') ?? 'roadmap-kit-starter');
+  const [branch, setBranch] = useState(() => search.get('branch') ?? 'chore/roadmap-setup');
+  const [readOnlyUrl, setReadOnlyUrl] = useState(
+    () => search.get('readOnlyUrl') ?? 'https://<ref>.functions.supabase.co/read_only_checks'
+  );
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
 
