@@ -12,6 +12,10 @@ type Check = {
   note?: string;
   status?: string;
   result?: string;
+  globs?: string[];
+  url?: string;
+  must_match?: string[];
+  query?: string;
 };
 
 type Item = {
@@ -213,6 +217,134 @@ const EDGE_FUNCTION_CURL = [
   "  -H \"Content-Type: application/json\" \\",
   "  -d '{\"query\":\"ext:pgcrypto\"}'",
 ].join("\n");
+
+const ROADMAP_CHECKER_SNIPPET = [
+  "#!/usr/bin/env node",
+  "// Minimal roadmap checker for the dashboard.",
+  "// Reads docs/roadmap.yml and writes docs/roadmap-status.json",
+  "",
+  "import fs from \"node:fs\";",
+  "import path from \"node:path\";",
+  "import yaml from \"js-yaml\";",
+  "",
+  "const ROOT = process.cwd();",
+  "const ROADMAP_YML = path.join(ROOT, \"docs\", \"roadmap.yml\");",
+  "const STATUS_JSON = path.join(ROOT, \"docs\", \"roadmap-status.json\");",
+  "",
+  "function readYaml(p) {",
+  "  if (!fs.existsSync(p)) throw new Error(`Missing ${p}`);",
+  "  return yaml.load(fs.readFileSync(p, \"utf8\"));",
+  "}",
+  "",
+  "async function http_ok({ url, must_match = [] }) {",
+  "  const r = await fetch(url, { cache: \"no-store\" });",
+  "  if (!r.ok) return { ok: false, code: r.status };",
+  "  const text = await r.text();",
+  "  const matched = must_match.every((m) => text.includes(m));",
+  "  return { ok: matched, code: r.status };",
+  "}",
+  "",
+  "async function files_exist({ globs }) {",
+  "  // minimal: treat globs as literal paths",
+  "  const ok = globs.every((g) => fs.existsSync(path.join(ROOT, g)));",
+  "  return { ok };",
+  "}",
+  "",
+  "async function sql_exists({ query }) {",
+  "  const url = process.env.READ_ONLY_CHECKS_URL;",
+  "  if (!url) return { ok: false, error: \"READ_ONLY_CHECKS_URL not set\" };",
+  "  const r = await fetch(url, {",
+  "    method: \"POST\",",
+  "    headers: { \"content-type\": \"application/json\" },",
+  "    body: JSON.stringify({ queries: [query] })",
+  "  });",
+  "  if (!r.ok) return { ok: false, code: r.status };",
+  "  const j = await r.json();",
+  "  // expect { results: [{ q, ok }] }",
+  "  const res = Array.isArray(j.results) ? j.results[0] : null;",
+  "  return { ok: !!res?.ok };",
+  "}",
+  "",
+  "async function runCheck(chk) {",
+  "  if (chk.type === \"files_exist\") return files_exist(chk);",
+  "  if (chk.type === \"http_ok\")",
+  "    return http_ok(chk);",
+  "  if (chk.type === \"sql_exists\")",
+  "    return sql_exists(chk);",
+  "  return { ok: false, error: `unknown check type: ${chk.type}` };",
+  "}",
+  "",
+  "async function main() {",
+  "  const rm = readYaml(ROADMAP_YML);",
+  "  const out = { generated_at: new Date().toISOString(), weeks: [] };",
+  "",
+  "  for (const w of rm.weeks ?? []) {",
+  "    const wOut = { id: w.id, title: w.title, items: [] };",
+  "    for (const it of w.items ?? []) {",
+  "      let passed = true;",
+  "      const results = [];",
+  "      for (const chk of it.checks ?? []) {",
+  "        const res = await runCheck(chk);",
+  "        results.push({ ...chk, ...res });",
+  "        if (!res.ok) passed = false;",
+  "      }",
+  "      wOut.items.push({ id: it.id, name: it.name, done: passed, results });",
+  "    }",
+  "    out.weeks.push(wOut);",
+  "  }",
+  "",
+  "  fs.mkdirSync(path.dirname(STATUS_JSON), { recursive: true });",
+  "  fs.writeFileSync(STATUS_JSON, JSON.stringify(out, null, 2));",
+  "  console.log(`Wrote ${STATUS_JSON}`);",
+  "}",
+  "",
+  "main().catch((e) => {",
+  "  console.error(e);",
+  "  process.exit(1);",
+  "});",
+].join("\n");
+
+const ROADMAP_YAML_SNIPPET = [
+  "version: 1",
+  "weeks:",
+  "  - id: w01",
+  "    title: \"Weeks 1–2 — Foundations\"",
+  "    items:",
+  "      - id: infra-ci",
+  "        name: \"CI & status scaffolding\"",
+  "        checks:",
+  "          - type: files_exist",
+  "            globs: ['.github/workflows/roadmap.yml']",
+  "          - type: http_ok",
+  "            url: \"https://api.github.com/rate_limit\"",
+  "            must_match: ['resources']",
+  "  - id: w02",
+  "    title: \"Weeks 3–4 — Auth & DB\"",
+  "    items:",
+  "      - id: db-ext",
+  "        name: \"Required extension enabled\"",
+  "        checks:",
+  "          - type: sql_exists",
+  "            query: \"ext:pgcrypto\"",
+].join("\n");
+
+const PACKAGE_JSON_SNIPPET = [
+  "\"scripts\": {",
+  "  \"roadmap:check\": \"node scripts/roadmap-check.mjs\"",
+  "}",
+].join("\n");
+
+const WORKFLOW_STEP_SNIPPET = [
+  "- name: Run roadmap checks",
+  "  env:",
+  "    READ_ONLY_CHECKS_URL: ${{ secrets.READ_ONLY_CHECKS_URL }}",
+  "  run: node scripts/roadmap-check.mjs",
+].join("\n");
+
+const NPM_INSTALL_SNIPPET = "npm install --save-dev js-yaml";
+
+const SECRET_SNIPPET =
+  "READ_ONLY_CHECKS_URL=https://<your-supabase-ref>.functions.supabase.co/read_only_checks";
 
 const enum CopyState {
   Idle = "idle",
@@ -638,6 +770,19 @@ type IncompleteEntry = {
   itemMeta?: string | null;
   blockers: string[];
 };
+
+function collectChecks(status: StatusResponse | null): Check[] {
+  if (!status) return [];
+  const checks: Check[] = [];
+  for (const week of status.weeks ?? []) {
+    for (const item of week.items ?? []) {
+      for (const check of item.checks ?? []) {
+        checks.push(check);
+      }
+    }
+  }
+  return checks;
+}
 
 function collectIncompleteEntries(weeks: Week[]): IncompleteEntry[] {
   const entries: IncompleteEntry[] = [];
@@ -1282,6 +1427,241 @@ function IncompleteSummary({ entries }: { entries: IncompleteEntry[] }) {
   );
 }
 
+type ChecklistStatus = {
+  ok: boolean | undefined;
+  summary: string;
+  hasCheck: boolean;
+};
+
+function summarizeChecklist(check: Check | undefined, fallback: string): ChecklistStatus {
+  if (!check) {
+    return { ok: undefined, summary: fallback, hasCheck: false };
+  }
+  return { ok: check.ok, summary: buildCheckSummary(check), hasCheck: true };
+}
+
+function OnboardingChecklist({
+  status,
+  projectSlug,
+}: {
+  status: StatusResponse | null;
+  projectSlug?: string | null;
+}) {
+  const checks = useMemo(() => collectChecks(status), [status]);
+  const hasStatusFeed = Boolean(status?.weeks && status.weeks.length > 0);
+
+  const scriptCheck = useMemo(
+    () =>
+      checks.find(
+        (chk) =>
+          chk.type === "files_exist" &&
+          (chk.globs ?? []).some((glob) => glob.includes("scripts/roadmap-check.mjs"))
+      ),
+    [checks]
+  );
+
+  const workflowCheck = useMemo(
+    () =>
+      checks.find(
+        (chk) =>
+          chk.type === "files_exist" &&
+          (chk.globs ?? []).some((glob) => glob.includes(".github/workflows/roadmap.yml"))
+      ),
+    [checks]
+  );
+
+  const httpCheck = useMemo(() => checks.find((chk) => chk.type === "http_ok"), [checks]);
+  const sqlCheck = useMemo(() => checks.find((chk) => chk.type === "sql_exists"), [checks]);
+
+  const statusFeedStatus: ChecklistStatus = hasStatusFeed
+    ? { ok: true, summary: "Status feed detected", hasCheck: false }
+    : { ok: undefined, summary: "Waiting for first status run", hasCheck: false };
+
+  const scriptStatus = summarizeChecklist(scriptCheck, "Add scripts/roadmap-check.mjs");
+  const workflowStatus = summarizeChecklist(
+    workflowCheck,
+    "Add .github/workflows/roadmap.yml"
+  );
+  const httpStatus = summarizeChecklist(httpCheck, "Connect your read_only_checks endpoint");
+  const sqlStatus = summarizeChecklist(sqlCheck, "Add at least one sql_exists check");
+
+  const httpUrl = httpCheck?.url;
+  const sqlQuery = sqlCheck?.query;
+
+  return (
+    <section className="card onboarding-card">
+      <div className="onboarding-header">
+        <h2>Project onboarding checklist</h2>
+        <p className="onboarding-summary">
+          {projectSlug
+            ? `You're looking at ${projectSlug}. Use these steps to keep its status feed healthy.`
+            : "Use this checklist to wire any repository into the roadmap dashboard."}
+        </p>
+      </div>
+
+      <ol className="onboarding-list">
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">1. Bootstrap roadmap data</div>
+              <p className="onboarding-step-description">
+                Create <code>docs/roadmap.yml</code> so the checker knows which weeks and tasks to
+                evaluate. Each workflow run will emit <code>docs/roadmap-status.json</code>, which the
+                dashboard reads automatically.
+              </p>
+            </div>
+            <StatusBadge
+              ok={statusFeedStatus.ok}
+              total={statusFeedStatus.hasCheck ? 1 : 0}
+              summary={statusFeedStatus.summary}
+            />
+          </div>
+          <details className="onboarding-details">
+            <summary>Show sample docs/roadmap.yml</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy docs/roadmap.yml" text={ROADMAP_YAML_SNIPPET} />
+            </div>
+            <pre>
+              <code>{ROADMAP_YAML_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            Commit <code>docs/roadmap.yml</code>. The generated <code>docs/roadmap-status.json</code>
+            can be added to <code>.gitignore</code> if you prefer not to commit build artifacts.
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">2. Add the checker script</div>
+              <p className="onboarding-step-description">
+                Drop <code>scripts/roadmap-check.mjs</code> into the repository and install the
+                <code>js-yaml</code> dev dependency so the script can parse your roadmap definition.
+              </p>
+            </div>
+            <StatusBadge
+              ok={scriptStatus.ok}
+              total={scriptStatus.hasCheck ? 1 : 0}
+              summary={scriptStatus.summary}
+            />
+          </div>
+          <details className="onboarding-details">
+            <summary>Show scripts/roadmap-check.mjs</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy script" text={ROADMAP_CHECKER_SNIPPET} />
+            </div>
+            <pre>
+              <code>{ROADMAP_CHECKER_SNIPPET}</code>
+            </pre>
+          </details>
+          <details className="onboarding-details">
+            <summary>Install dependencies &amp; package script</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy npm install" text={NPM_INSTALL_SNIPPET} />
+              <CopyButton label="Copy package.json snippet" text={PACKAGE_JSON_SNIPPET} />
+            </div>
+            <pre>
+              <code>{NPM_INSTALL_SNIPPET}</code>
+            </pre>
+            <pre>
+              <code>{PACKAGE_JSON_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            When the workflow runs it will execute <code>npm install</code> automatically, so keep the
+            script in source control to avoid missing-file failures.
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">3. Wire GitHub Actions</div>
+              <p className="onboarding-step-description">
+                Update <code>.github/workflows/roadmap.yml</code> to call the checker. The example step
+                below assumes the workflow already checks out your repo and installs dependencies.
+              </p>
+            </div>
+            <StatusBadge
+              ok={workflowStatus.ok}
+              total={workflowStatus.hasCheck ? 1 : 0}
+              summary={workflowStatus.summary}
+            />
+          </div>
+          <details className="onboarding-details">
+            <summary>Show workflow step</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy workflow step" text={WORKFLOW_STEP_SNIPPET} />
+            </div>
+            <pre>
+              <code>{WORKFLOW_STEP_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            Keep the workflow on the default branch so status updates land in the dashboard without
+            manual intervention.
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">4. Expose a read-only database checker</div>
+              <p className="onboarding-step-description">
+                Deploy the <code>read_only_checks</code> Supabase Edge Function (or an equivalent API)
+                and store its URL in the <code>READ_ONLY_CHECKS_URL</code> repository secret. The
+                roadmap checks call this endpoint to validate database state without full credentials.
+              </p>
+            </div>
+            <StatusBadge
+              ok={httpStatus.ok}
+              total={httpStatus.hasCheck ? 1 : 0}
+              summary={httpStatus.summary}
+            />
+          </div>
+          <details className="onboarding-details">
+            <summary>Show secret value format</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy secret format" text={SECRET_SNIPPET} />
+            </div>
+            <pre>
+              <code>{SECRET_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            {httpUrl
+              ? `Latest run checked ${httpUrl}. Verify that the GitHub secret still points to this URL.`
+              : "Add the secret under Settings → Secrets and variables → Actions → New repository secret."}
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">5. Confirm database coverage</div>
+              <p className="onboarding-step-description">
+                Add at least one <code>sql_exists</code> check so the dashboard verifies your critical
+                database extensions, tables, or policies each run.
+              </p>
+            </div>
+            <StatusBadge
+              ok={sqlStatus.ok}
+              total={sqlStatus.hasCheck ? 1 : 0}
+              summary={sqlStatus.summary}
+            />
+          </div>
+          <p className="onboarding-note">
+            {sqlQuery
+              ? `Your roadmap currently checks: ${sqlQuery}. Add more symbols (ext:, table:, rls:, policy:) as needed.`
+              : "Use ext:, table:, rls:, or policy: symbols to describe the invariants your team cares about."}
+          </p>
+        </li>
+      </ol>
+    </section>
+  );
+}
+
 function CreateEdgeFunctionGuide() {
   return (
     <section className="card guide-card">
@@ -1644,6 +2024,10 @@ function DashboardPage() {
             Add a project from the sidebar to load its roadmap and weekly progress.
           </div>
         )}
+        <OnboardingChecklist
+          status={activeRepo ? data ?? null : null}
+          projectSlug={activeRepo ? `${activeRepo.owner}/${activeRepo.repo}` : null}
+        />
         <CreateEdgeFunctionGuide />
       </section>
     </main>
