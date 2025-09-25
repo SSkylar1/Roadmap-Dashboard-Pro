@@ -2120,13 +2120,11 @@ function DashboardPage() {
                     ))}
                   </div>
                 ) : null}
-
                 {data ? (
                   <div className="timestamp">
                     Generated at: {data.generated_at ?? "unknown"} · env: {data.env ?? "unknown"}
                   </div>
                 ) : null}
-
                 {!loading && !err && (!data || decoratedWeeks.length === 0) ? (
                   <div className="card muted">
                     No weeks found. Make sure your <code>.roadmaprc.json</code> or status API is populated.
