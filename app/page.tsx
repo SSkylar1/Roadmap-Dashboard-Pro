@@ -63,9 +63,17 @@ type ManualState = Record<string, ManualWeekState>;
 type DecoratedItem = Item & { manualKey?: string; manual?: boolean };
 type DecoratedWeek = Week & { manualKey: string; manualState: ManualWeekState; items?: DecoratedItem[] };
 
+type TabKey = "projects" | "onboarding" | "add";
+
 const DEFAULT_REPOS: RepoRef[] = [{ owner: "SSkylar1", repo: "Roadmap-Kit-Starter" }];
 const REPO_STORAGE_KEY = "roadmap-dashboard.repos";
 const MANUAL_STORAGE_PREFIX = "roadmap-dashboard.manual.";
+const TAB_LABELS: Record<TabKey, string> = {
+  projects: "Projects",
+  onboarding: "Onboarding Checklist",
+  add: "Add New Project",
+};
+const TAB_KEYS: TabKey[] = ["projects", "onboarding", "add"];
 
 const EDGE_FUNCTION_SNIPPET = [
   "import { Pool, type PoolClient } from \"https://deno.land/x/postgres@v0.17.0/mod.ts\";",
@@ -1182,20 +1190,16 @@ function WeekCard({
   );
 }
 
-function ProjectSidebar({
-  repos,
-  activeKey,
-  initializing,
-  onSelect,
-  onRemove,
+function ProjectForm({
   onAdd,
+  onSelect,
+  className = "project-form",
+  submitLabel = "Add project",
 }: {
-  repos: RepoRef[];
-  activeKey: string | null;
-  initializing: boolean;
-  onSelect: (repo: RepoRef) => void;
-  onRemove: (repo: RepoRef) => void;
   onAdd: (repo: RepoRef) => RepoRef | null;
+  onSelect?: (repo: RepoRef) => void;
+  className?: string;
+  submitLabel?: string;
 }) {
   const [ownerInput, setOwnerInput] = useState("");
   const [repoInput, setRepoInput] = useState("");
@@ -1221,16 +1225,65 @@ function ProjectSidebar({
 
     const added = onAdd({ owner, repo });
     if (!added) {
-      setError("Both owner and repo are required.");
+      setError("Unable to add project. Check the owner and repo name.");
       return;
     }
 
-    onSelect(added);
+    onSelect?.(added);
     setOwnerInput("");
     setRepoInput("");
     setError(null);
   };
 
+  return (
+    <form className={className} onSubmit={handleSubmit}>
+      <div className="project-form-row">
+        <div>
+          <label>Owner or owner/repo</label>
+          <input
+            value={ownerInput}
+            onChange={(e) => {
+              setOwnerInput(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="acme-co"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label>Repository</label>
+          <input
+            value={repoInput}
+            onChange={(e) => {
+              setRepoInput(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="dashboard"
+            autoComplete="off"
+          />
+        </div>
+      </div>
+      {error ? <div className="project-error">{error}</div> : null}
+      <button type="submit">{submitLabel}</button>
+    </form>
+  );
+}
+
+function ProjectSidebar({
+  repos,
+  activeKey,
+  initializing,
+  onSelect,
+  onRemove,
+  onAdd,
+}: {
+  repos: RepoRef[];
+  activeKey: string | null;
+  initializing: boolean;
+  onSelect: (repo: RepoRef) => void;
+  onRemove: (repo: RepoRef) => void;
+  onAdd: (repo: RepoRef) => RepoRef | null;
+}) {
   return (
     <aside className="project-panel">
       <div className="project-header">
@@ -1278,37 +1331,44 @@ function ProjectSidebar({
         </ul>
       )}
 
-      <form className="project-form" onSubmit={handleSubmit}>
-        <div className="project-form-row">
-          <div>
-            <label>Owner or owner/repo</label>
-            <input
-              value={ownerInput}
-              onChange={(e) => {
-                setOwnerInput(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder="acme-co"
-              autoComplete="off"
-            />
-          </div>
-          <div>
-            <label>Repository</label>
-            <input
-              value={repoInput}
-              onChange={(e) => {
-                setRepoInput(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder="dashboard"
-              autoComplete="off"
-            />
-          </div>
-        </div>
-        {error ? <div className="project-error">{error}</div> : null}
-        <button type="submit">Add project</button>
-      </form>
+      <ProjectForm onAdd={onAdd} onSelect={onSelect} />
     </aside>
+  );
+}
+
+function AddProjectTab({
+  onAdd,
+  onSelect,
+  wizardHref,
+  hasProjects,
+}: {
+  onAdd: (repo: RepoRef) => RepoRef | null;
+  onSelect?: (repo: RepoRef) => void;
+  wizardHref: string;
+  hasProjects: boolean;
+}) {
+  return (
+    <section className="card add-project-card">
+      <div className="add-project-header">
+        <h2>Connect a new project</h2>
+        <p>
+          Add a repository to track its roadmap status here in the dashboard. Paste the owner and repository name, or launch the
+          guided wizard to scaffold the required files automatically.
+        </p>
+      </div>
+      <div className="add-project-actions">
+        <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
+          Launch onboarding wizard ↗
+        </a>
+        <p className="hint">The wizard walks through secrets, workflows, and Supabase setup for a fresh project.</p>
+      </div>
+      <ProjectForm onAdd={onAdd} onSelect={onSelect} className="project-form" submitLabel="Save project" />
+      <ul className="add-project-hints">
+        <li>Use owner/repo to add quickly, e.g. <code>acme-co/roadmap</code>.</li>
+        <li>Once saved, switch back to the Projects tab to monitor roadmap progress.</li>
+        {hasProjects ? null : <li>Your first project will also appear in the sidebar for quick access.</li>}
+      </ul>
+    </section>
   );
 }
 
@@ -1760,6 +1820,7 @@ function DashboardPage() {
   const searchString = sp.toString();
   const searchOwner = sp.get("owner");
   const searchRepo = sp.get("repo");
+  const searchTab = sp.get("tab");
   const searchKey = searchOwner && searchRepo ? repoKey(searchOwner, searchRepo) : null;
 
   const router = useRouter();
@@ -1767,7 +1828,14 @@ function DashboardPage() {
 
   const { repos, initialized, addRepo, removeRepo } = useStoredRepos();
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const initialTab: TabKey = searchTab === "onboarding" ? "onboarding" : searchTab === "add" ? "add" : "projects";
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const lastSearchKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const normalized: TabKey = searchTab === "onboarding" ? "onboarding" : searchTab === "add" ? "add" : "projects";
+    setActiveTab((prev) => (prev === normalized ? prev : normalized));
+  }, [searchTab]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -1811,6 +1879,20 @@ function DashboardPage() {
       return repos.length > 0 ? repoKey(repos[0].owner, repos[0].repo) : null;
     });
   }, [initialized, repos]);
+
+  const handleTabChange = useCallback(
+    (tab: TabKey) => {
+      setActiveTab(tab);
+      const params = new URLSearchParams(searchString);
+      if (tab === "projects") {
+        params.delete("tab");
+      } else {
+        params.set("tab", tab);
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchString]
+  );
 
   const activeRepo = useMemo(() => {
     if (!activeKey) return null;
@@ -1895,19 +1977,24 @@ function DashboardPage() {
 
   const hasManualChanges = manualReady && (manualTotals.added > 0 || manualTotals.removed > 0);
 
-  const handleSelectRepo = useCallback((repo: RepoRef) => {
-    setActiveKey(repoKey(repo.owner, repo.repo));
-  }, []);
+  const handleSelectRepo = useCallback(
+    (repo: RepoRef) => {
+      setActiveKey(repoKey(repo.owner, repo.repo));
+      handleTabChange("projects");
+    },
+    [handleTabChange]
+  );
 
   const handleAddRepo = useCallback(
     (repo: RepoRef) => {
       const added = addRepo(repo);
       if (added) {
         setActiveKey(repoKey(added.owner, added.repo));
+        handleTabChange("projects");
       }
       return added;
     },
-    [addRepo]
+    [addRepo, handleTabChange]
   );
 
   const handleRemoveRepo = useCallback(
@@ -1947,88 +2034,130 @@ function DashboardPage() {
         onAdd={handleAddRepo}
       />
       <section className="dashboard">
-        {activeRepo ? (
-          <>
-            <div className="repo-line">
-              <span className="repo-label">Repo:</span>
-              <code>
-                {activeRepo.owner}/{activeRepo.repo}
-              </code>
-              <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
-                Create setup PR ↗
-              </a>
-              <a href={`/api/status/${activeRepo.owner}/${activeRepo.repo}`} target="_blank" rel="noreferrer">
-                View status JSON ↗
-              </a>
-            </div>
+        <div className="tab-bar" role="tablist" aria-label="Dashboard sections">
+          {TAB_KEYS.map((key) => {
+            const label = TAB_LABELS[key];
+            const selected = activeTab === key;
+            return (
+              <button
+                key={key}
+                id={`tab-${key}`}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                aria-controls={`panel-${key}`}
+                className={`tab-button${selected ? " active" : ""}`}
+                onClick={() => {
+                  if (!selected) handleTabChange(key);
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
 
-            {hasManualChanges ? (
-              <div className="card manual-project-banner">
-                <div>
-                  <div className="banner-title">Manual adjustments in this project</div>
-                  <div className="banner-subtitle">
-                    {manualTotals.added} added · {manualTotals.removed} hidden
+        {activeTab === "projects" ? (
+          <div id="panel-projects" role="tabpanel" aria-labelledby="tab-projects" className="tab-panel">
+            {activeRepo ? (
+              <>
+                <div className="repo-line">
+                  <span className="repo-label">Repo:</span>
+                  <code>
+                    {activeRepo.owner}/{activeRepo.repo}
+                  </code>
+                  <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
+                    Create setup PR ↗
+                  </a>
+                  <a href={`/api/status/${activeRepo.owner}/${activeRepo.repo}`} target="_blank" rel="noreferrer">
+                    View status JSON ↗
+                  </a>
+                </div>
+
+                {hasManualChanges ? (
+                  <div className="card manual-project-banner">
+                    <div>
+                      <div className="banner-title">Manual adjustments in this project</div>
+                      <div className="banner-subtitle">
+                        {manualTotals.added} added · {manualTotals.removed} hidden
+                      </div>
+                    </div>
+                    <button type="button" className="ghost-button danger" onClick={resetAll} disabled={!manualReady}>
+                      Reset all manual items
+                    </button>
                   </div>
-                </div>
-                <button type="button" className="ghost-button danger" onClick={resetAll} disabled={!manualReady}>
-                  Reset all manual items
-                </button>
-              </div>
-            ) : null}
+                ) : null}
 
-            {loading ? <div className="card muted">Loading status…</div> : null}
+                {loading ? <div className="card muted">Loading status…</div> : null}
 
-            {err && !loading ? (
-              <div className="card error">
-                <div className="card-title">Failed to load status</div>
-                <div className="card-subtitle">{err}</div>
-                <div className="card-subtitle">
-                  Try running the onboarding wizard at <code>/new</code>.
-                </div>
-              </div>
-            ) : null}
+                {err && !loading ? (
+                  <div className="card error">
+                    <div className="card-title">Failed to load status</div>
+                    <div className="card-subtitle">{err}</div>
+                    <div className="card-subtitle">
+                      Try running the onboarding wizard at <code>/new</code>.
+                    </div>
+                  </div>
+                ) : null}
 
-            {decoratedWeeks.length > 0 ? <WeekProgress weeks={decoratedWeeks} /> : null}
+                {decoratedWeeks.length > 0 ? <WeekProgress weeks={decoratedWeeks} /> : null}
 
-            {decoratedWeeks.length > 0 ? <IncompleteSummary entries={incompleteEntries} /> : null}
+                {decoratedWeeks.length > 0 ? <IncompleteSummary entries={incompleteEntries} /> : null}
 
-            {data && decoratedWeeks.length > 0 ? (
-              <div className="week-grid">
-                {decoratedWeeks.map((week, i) => (
-                  <WeekCard
-                    key={`${week.manualKey ?? week.id ?? i}`}
-                    week={week}
-                    manualReady={manualReady}
-                    onAddManualItem={handleAddManualItem}
-                    onDeleteItem={handleDeleteItem}
-                    onResetManual={resetWeek}
-                  />
-                ))}
-              </div>
-            ) : null}
+                {data && decoratedWeeks.length > 0 ? (
+                  <div className="week-grid">
+                    {decoratedWeeks.map((week, i) => (
+                      <WeekCard
+                        key={`${week.manualKey ?? week.id ?? i}`}
+                        week={week}
+                        manualReady={manualReady}
+                        onAddManualItem={handleAddManualItem}
+                        onDeleteItem={handleDeleteItem}
+                        onResetManual={resetWeek}
+                      />
+                    ))}
+                  </div>
+                ) : null}
 
-            {data ? (
-              <div className="timestamp">
-                Generated at: {data.generated_at ?? "unknown"} · env: {data.env ?? "unknown"}
-              </div>
-            ) : null}
+                {data ? (
+                  <div className="timestamp">
+                    Generated at: {data.generated_at ?? "unknown"} · env: {data.env ?? "unknown"}
+                  </div>
+                ) : null}
 
-            {!loading && !err && (!data || decoratedWeeks.length === 0) ? (
+                {!loading && !err && (!data || decoratedWeeks.length === 0) ? (
+                  <div className="card muted">
+                    No weeks found. Make sure your <code>.roadmaprc.json</code> or status API is populated.
+                  </div>
+                ) : null}
+              </>
+            ) : (
               <div className="card muted">
-                No weeks found. Make sure your <code>.roadmaprc.json</code> or status API is populated.
+                Add a project from the sidebar to load its roadmap and weekly progress.
               </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="card muted">
-            Add a project from the sidebar to load its roadmap and weekly progress.
+            )}
           </div>
-        )}
-        <OnboardingChecklist
-          status={activeRepo ? data ?? null : null}
-          projectSlug={activeRepo ? `${activeRepo.owner}/${activeRepo.repo}` : null}
-        />
-        <CreateEdgeFunctionGuide />
+        ) : null}
+
+        {activeTab === "onboarding" ? (
+          <div id="panel-onboarding" role="tabpanel" aria-labelledby="tab-onboarding" className="tab-panel">
+            <OnboardingChecklist
+              status={activeRepo ? data ?? null : null}
+              projectSlug={activeRepo ? `${activeRepo.owner}/${activeRepo.repo}` : null}
+            />
+            <CreateEdgeFunctionGuide />
+          </div>
+        ) : null}
+
+        {activeTab === "add" ? (
+          <div id="panel-add" role="tabpanel" aria-labelledby="tab-add" className="tab-panel">
+            <AddProjectTab
+              onAdd={handleAddRepo}
+              wizardHref={wizardHref}
+              hasProjects={repos.length > 0}
+            />
+          </div>
+        ) : null}
       </section>
     </main>
   );
