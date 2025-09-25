@@ -12,6 +12,10 @@ type Check = {
   note?: string;
   status?: string;
   result?: string;
+  globs?: string[];
+  url?: string;
+  must_match?: string[];
+  query?: string;
 };
 
 type Item = {
@@ -59,9 +63,17 @@ type ManualState = Record<string, ManualWeekState>;
 type DecoratedItem = Item & { manualKey?: string; manual?: boolean };
 type DecoratedWeek = Week & { manualKey: string; manualState: ManualWeekState; items?: DecoratedItem[] };
 
+type TabKey = "projects" | "onboarding" | "add";
+
 const DEFAULT_REPOS: RepoRef[] = [{ owner: "SSkylar1", repo: "Roadmap-Kit-Starter" }];
 const REPO_STORAGE_KEY = "roadmap-dashboard.repos";
 const MANUAL_STORAGE_PREFIX = "roadmap-dashboard.manual.";
+const TAB_LABELS: Record<TabKey, string> = {
+  projects: "Projects",
+  onboarding: "Onboarding Checklist",
+  add: "Add New Project",
+};
+const TAB_KEYS: TabKey[] = ["projects", "onboarding", "add"];
 
 const EDGE_FUNCTION_SNIPPET = [
   "import { Pool, type PoolClient } from \"https://deno.land/x/postgres@v0.17.0/mod.ts\";",
@@ -213,6 +225,134 @@ const EDGE_FUNCTION_CURL = [
   "  -H \"Content-Type: application/json\" \\",
   "  -d '{\"query\":\"ext:pgcrypto\"}'",
 ].join("\n");
+
+const ROADMAP_CHECKER_SNIPPET = [
+  "#!/usr/bin/env node",
+  "// Minimal roadmap checker for the dashboard.",
+  "// Reads docs/roadmap.yml and writes docs/roadmap-status.json",
+  "",
+  "import fs from \"node:fs\";",
+  "import path from \"node:path\";",
+  "import yaml from \"js-yaml\";",
+  "",
+  "const ROOT = process.cwd();",
+  "const ROADMAP_YML = path.join(ROOT, \"docs\", \"roadmap.yml\");",
+  "const STATUS_JSON = path.join(ROOT, \"docs\", \"roadmap-status.json\");",
+  "",
+  "function readYaml(p) {",
+  "  if (!fs.existsSync(p)) throw new Error(`Missing ${p}`);",
+  "  return yaml.load(fs.readFileSync(p, \"utf8\"));",
+  "}",
+  "",
+  "async function http_ok({ url, must_match = [] }) {",
+  "  const r = await fetch(url, { cache: \"no-store\" });",
+  "  if (!r.ok) return { ok: false, code: r.status };",
+  "  const text = await r.text();",
+  "  const matched = must_match.every((m) => text.includes(m));",
+  "  return { ok: matched, code: r.status };",
+  "}",
+  "",
+  "async function files_exist({ globs }) {",
+  "  // minimal: treat globs as literal paths",
+  "  const ok = globs.every((g) => fs.existsSync(path.join(ROOT, g)));",
+  "  return { ok };",
+  "}",
+  "",
+  "async function sql_exists({ query }) {",
+  "  const url = process.env.READ_ONLY_CHECKS_URL;",
+  "  if (!url) return { ok: false, error: \"READ_ONLY_CHECKS_URL not set\" };",
+  "  const r = await fetch(url, {",
+  "    method: \"POST\",",
+  "    headers: { \"content-type\": \"application/json\" },",
+  "    body: JSON.stringify({ queries: [query] })",
+  "  });",
+  "  if (!r.ok) return { ok: false, code: r.status };",
+  "  const j = await r.json();",
+  "  // expect { results: [{ q, ok }] }",
+  "  const res = Array.isArray(j.results) ? j.results[0] : null;",
+  "  return { ok: !!res?.ok };",
+  "}",
+  "",
+  "async function runCheck(chk) {",
+  "  if (chk.type === \"files_exist\") return files_exist(chk);",
+  "  if (chk.type === \"http_ok\")",
+  "    return http_ok(chk);",
+  "  if (chk.type === \"sql_exists\")",
+  "    return sql_exists(chk);",
+  "  return { ok: false, error: `unknown check type: ${chk.type}` };",
+  "}",
+  "",
+  "async function main() {",
+  "  const rm = readYaml(ROADMAP_YML);",
+  "  const out = { generated_at: new Date().toISOString(), weeks: [] };",
+  "",
+  "  for (const w of rm.weeks ?? []) {",
+  "    const wOut = { id: w.id, title: w.title, items: [] };",
+  "    for (const it of w.items ?? []) {",
+  "      let passed = true;",
+  "      const results = [];",
+  "      for (const chk of it.checks ?? []) {",
+  "        const res = await runCheck(chk);",
+  "        results.push({ ...chk, ...res });",
+  "        if (!res.ok) passed = false;",
+  "      }",
+  "      wOut.items.push({ id: it.id, name: it.name, done: passed, results });",
+  "    }",
+  "    out.weeks.push(wOut);",
+  "  }",
+  "",
+  "  fs.mkdirSync(path.dirname(STATUS_JSON), { recursive: true });",
+  "  fs.writeFileSync(STATUS_JSON, JSON.stringify(out, null, 2));",
+  "  console.log(`Wrote ${STATUS_JSON}`);",
+  "}",
+  "",
+  "main().catch((e) => {",
+  "  console.error(e);",
+  "  process.exit(1);",
+  "});",
+].join("\n");
+
+const ROADMAP_YAML_SNIPPET = [
+  "version: 1",
+  "weeks:",
+  "  - id: w01",
+  "    title: \"Weeks 1–2 — Foundations\"",
+  "    items:",
+  "      - id: infra-ci",
+  "        name: \"CI & status scaffolding\"",
+  "        checks:",
+  "          - type: files_exist",
+  "            globs: ['.github/workflows/roadmap.yml']",
+  "          - type: http_ok",
+  "            url: \"https://api.github.com/rate_limit\"",
+  "            must_match: ['resources']",
+  "  - id: w02",
+  "    title: \"Weeks 3–4 — Auth & DB\"",
+  "    items:",
+  "      - id: db-ext",
+  "        name: \"Required extension enabled\"",
+  "        checks:",
+  "          - type: sql_exists",
+  "            query: \"ext:pgcrypto\"",
+].join("\n");
+
+const PACKAGE_JSON_SNIPPET = [
+  "\"scripts\": {",
+  "  \"roadmap:check\": \"node scripts/roadmap-check.mjs\"",
+  "}",
+].join("\n");
+
+const WORKFLOW_STEP_SNIPPET = [
+  "- name: Run roadmap checks",
+  "  env:",
+  "    READ_ONLY_CHECKS_URL: ${{ secrets.READ_ONLY_CHECKS_URL }}",
+  "  run: node scripts/roadmap-check.mjs",
+].join("\n");
+
+const NPM_INSTALL_SNIPPET = "npm install --save-dev js-yaml";
+
+const SECRET_SNIPPET =
+  "READ_ONLY_CHECKS_URL=https://<your-supabase-ref>.functions.supabase.co/read_only_checks";
 
 const enum CopyState {
   Idle = "idle",
@@ -639,6 +779,19 @@ type IncompleteEntry = {
   blockers: string[];
 };
 
+function collectChecks(status: StatusResponse | null): Check[] {
+  if (!status) return [];
+  const checks: Check[] = [];
+  for (const week of status.weeks ?? []) {
+    for (const item of week.items ?? []) {
+      for (const check of item.checks ?? []) {
+        checks.push(check);
+      }
+    }
+  }
+  return checks;
+}
+
 function collectIncompleteEntries(weeks: Week[]): IncompleteEntry[] {
   const entries: IncompleteEntry[] = [];
   for (const week of weeks) {
@@ -1037,20 +1190,16 @@ function WeekCard({
   );
 }
 
-function ProjectSidebar({
-  repos,
-  activeKey,
-  initializing,
-  onSelect,
-  onRemove,
+function ProjectForm({
   onAdd,
+  onSelect,
+  className = "project-form",
+  submitLabel = "Add project",
 }: {
-  repos: RepoRef[];
-  activeKey: string | null;
-  initializing: boolean;
-  onSelect: (repo: RepoRef) => void;
-  onRemove: (repo: RepoRef) => void;
   onAdd: (repo: RepoRef) => RepoRef | null;
+  onSelect?: (repo: RepoRef) => void;
+  className?: string;
+  submitLabel?: string;
 }) {
   const [ownerInput, setOwnerInput] = useState("");
   const [repoInput, setRepoInput] = useState("");
@@ -1076,16 +1225,65 @@ function ProjectSidebar({
 
     const added = onAdd({ owner, repo });
     if (!added) {
-      setError("Both owner and repo are required.");
+      setError("Unable to add project. Check the owner and repo name.");
       return;
     }
 
-    onSelect(added);
+    onSelect?.(added);
     setOwnerInput("");
     setRepoInput("");
     setError(null);
   };
 
+  return (
+    <form className={className} onSubmit={handleSubmit}>
+      <div className="project-form-row">
+        <div>
+          <label>Owner or owner/repo</label>
+          <input
+            value={ownerInput}
+            onChange={(e) => {
+              setOwnerInput(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="acme-co"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label>Repository</label>
+          <input
+            value={repoInput}
+            onChange={(e) => {
+              setRepoInput(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="dashboard"
+            autoComplete="off"
+          />
+        </div>
+      </div>
+      {error ? <div className="project-error">{error}</div> : null}
+      <button type="submit">{submitLabel}</button>
+    </form>
+  );
+}
+
+function ProjectSidebar({
+  repos,
+  activeKey,
+  initializing,
+  onSelect,
+  onRemove,
+  onAdd,
+}: {
+  repos: RepoRef[];
+  activeKey: string | null;
+  initializing: boolean;
+  onSelect: (repo: RepoRef) => void;
+  onRemove: (repo: RepoRef) => void;
+  onAdd: (repo: RepoRef) => RepoRef | null;
+}) {
   return (
     <aside className="project-panel">
       <div className="project-header">
@@ -1133,37 +1331,44 @@ function ProjectSidebar({
         </ul>
       )}
 
-      <form className="project-form" onSubmit={handleSubmit}>
-        <div className="project-form-row">
-          <div>
-            <label>Owner or owner/repo</label>
-            <input
-              value={ownerInput}
-              onChange={(e) => {
-                setOwnerInput(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder="acme-co"
-              autoComplete="off"
-            />
-          </div>
-          <div>
-            <label>Repository</label>
-            <input
-              value={repoInput}
-              onChange={(e) => {
-                setRepoInput(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder="dashboard"
-              autoComplete="off"
-            />
-          </div>
-        </div>
-        {error ? <div className="project-error">{error}</div> : null}
-        <button type="submit">Add project</button>
-      </form>
+      <ProjectForm onAdd={onAdd} onSelect={onSelect} />
     </aside>
+  );
+}
+
+function AddProjectTab({
+  onAdd,
+  onSelect,
+  wizardHref,
+  hasProjects,
+}: {
+  onAdd: (repo: RepoRef) => RepoRef | null;
+  onSelect?: (repo: RepoRef) => void;
+  wizardHref: string;
+  hasProjects: boolean;
+}) {
+  return (
+    <section className="card add-project-card">
+      <div className="add-project-header">
+        <h2>Connect a new project</h2>
+        <p>
+          Add a repository to track its roadmap status here in the dashboard. Paste the owner and repository name, or launch the
+          guided wizard to scaffold the required files automatically.
+        </p>
+      </div>
+      <div className="add-project-actions">
+        <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
+          Launch onboarding wizard ↗
+        </a>
+        <p className="hint">The wizard walks through secrets, workflows, and Supabase setup for a fresh project.</p>
+      </div>
+      <ProjectForm onAdd={onAdd} onSelect={onSelect} className="project-form" submitLabel="Save project" />
+      <ul className="add-project-hints">
+        <li>Use owner/repo to add quickly, e.g. <code>acme-co/roadmap</code>.</li>
+        <li>Once saved, switch back to the Projects tab to monitor roadmap progress.</li>
+        {hasProjects ? null : <li>Your first project will also appear in the sidebar for quick access.</li>}
+      </ul>
+    </section>
   );
 }
 
@@ -1282,6 +1487,241 @@ function IncompleteSummary({ entries }: { entries: IncompleteEntry[] }) {
   );
 }
 
+type ChecklistStatus = {
+  ok: boolean | undefined;
+  summary: string;
+  hasCheck: boolean;
+};
+
+function summarizeChecklist(check: Check | undefined, fallback: string): ChecklistStatus {
+  if (!check) {
+    return { ok: undefined, summary: fallback, hasCheck: false };
+  }
+  return { ok: check.ok, summary: buildCheckSummary(check), hasCheck: true };
+}
+
+function OnboardingChecklist({
+  status,
+  projectSlug,
+}: {
+  status: StatusResponse | null;
+  projectSlug?: string | null;
+}) {
+  const checks = useMemo(() => collectChecks(status), [status]);
+  const hasStatusFeed = Boolean(status?.weeks && status.weeks.length > 0);
+
+  const scriptCheck = useMemo(
+    () =>
+      checks.find(
+        (chk) =>
+          chk.type === "files_exist" &&
+          (chk.globs ?? []).some((glob) => glob.includes("scripts/roadmap-check.mjs"))
+      ),
+    [checks]
+  );
+
+  const workflowCheck = useMemo(
+    () =>
+      checks.find(
+        (chk) =>
+          chk.type === "files_exist" &&
+          (chk.globs ?? []).some((glob) => glob.includes(".github/workflows/roadmap.yml"))
+      ),
+    [checks]
+  );
+
+  const httpCheck = useMemo(() => checks.find((chk) => chk.type === "http_ok"), [checks]);
+  const sqlCheck = useMemo(() => checks.find((chk) => chk.type === "sql_exists"), [checks]);
+
+  const statusFeedStatus: ChecklistStatus = hasStatusFeed
+    ? { ok: true, summary: "Status feed detected", hasCheck: false }
+    : { ok: undefined, summary: "Waiting for first status run", hasCheck: false };
+
+  const scriptStatus = summarizeChecklist(scriptCheck, "Add scripts/roadmap-check.mjs");
+  const workflowStatus = summarizeChecklist(
+    workflowCheck,
+    "Add .github/workflows/roadmap.yml"
+  );
+  const httpStatus = summarizeChecklist(httpCheck, "Connect your read_only_checks endpoint");
+  const sqlStatus = summarizeChecklist(sqlCheck, "Add at least one sql_exists check");
+
+  const httpUrl = httpCheck?.url;
+  const sqlQuery = sqlCheck?.query;
+
+  return (
+    <section className="card onboarding-card">
+      <div className="onboarding-header">
+        <h2>Project onboarding checklist</h2>
+        <p className="onboarding-summary">
+          {projectSlug
+            ? `You're looking at ${projectSlug}. Use these steps to keep its status feed healthy.`
+            : "Use this checklist to wire any repository into the roadmap dashboard."}
+        </p>
+      </div>
+
+      <ol className="onboarding-list">
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">1. Bootstrap roadmap data</div>
+              <p className="onboarding-step-description">
+                Create <code>docs/roadmap.yml</code> so the checker knows which weeks and tasks to
+                evaluate. Each workflow run will emit <code>docs/roadmap-status.json</code>, which the
+                dashboard reads automatically.
+              </p>
+            </div>
+            <StatusBadge
+              ok={statusFeedStatus.ok}
+              total={statusFeedStatus.hasCheck ? 1 : 0}
+              summary={statusFeedStatus.summary}
+            />
+          </div>
+          <details className="onboarding-details">
+            <summary>Show sample docs/roadmap.yml</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy docs/roadmap.yml" text={ROADMAP_YAML_SNIPPET} />
+            </div>
+            <pre>
+              <code>{ROADMAP_YAML_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            Commit <code>docs/roadmap.yml</code>. The generated <code>docs/roadmap-status.json</code>
+            can be added to <code>.gitignore</code> if you prefer not to commit build artifacts.
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">2. Add the checker script</div>
+              <p className="onboarding-step-description">
+                Drop <code>scripts/roadmap-check.mjs</code> into the repository and install the
+                <code>js-yaml</code> dev dependency so the script can parse your roadmap definition.
+              </p>
+            </div>
+            <StatusBadge
+              ok={scriptStatus.ok}
+              total={scriptStatus.hasCheck ? 1 : 0}
+              summary={scriptStatus.summary}
+            />
+          </div>
+          <details className="onboarding-details">
+            <summary>Show scripts/roadmap-check.mjs</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy script" text={ROADMAP_CHECKER_SNIPPET} />
+            </div>
+            <pre>
+              <code>{ROADMAP_CHECKER_SNIPPET}</code>
+            </pre>
+          </details>
+          <details className="onboarding-details">
+            <summary>Install dependencies &amp; package script</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy npm install" text={NPM_INSTALL_SNIPPET} />
+              <CopyButton label="Copy package.json snippet" text={PACKAGE_JSON_SNIPPET} />
+            </div>
+            <pre>
+              <code>{NPM_INSTALL_SNIPPET}</code>
+            </pre>
+            <pre>
+              <code>{PACKAGE_JSON_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            When the workflow runs it will execute <code>npm install</code> automatically, so keep the
+            script in source control to avoid missing-file failures.
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">3. Wire GitHub Actions</div>
+              <p className="onboarding-step-description">
+                Update <code>.github/workflows/roadmap.yml</code> to call the checker. The example step
+                below assumes the workflow already checks out your repo and installs dependencies.
+              </p>
+            </div>
+            <StatusBadge
+              ok={workflowStatus.ok}
+              total={workflowStatus.hasCheck ? 1 : 0}
+              summary={workflowStatus.summary}
+            />
+          </div>
+          <details className="onboarding-details">
+            <summary>Show workflow step</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy workflow step" text={WORKFLOW_STEP_SNIPPET} />
+            </div>
+            <pre>
+              <code>{WORKFLOW_STEP_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            Keep the workflow on the default branch so status updates land in the dashboard without
+            manual intervention.
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">4. Expose a read-only database checker</div>
+              <p className="onboarding-step-description">
+                Deploy the <code>read_only_checks</code> Supabase Edge Function (or an equivalent API)
+                and store its URL in the <code>READ_ONLY_CHECKS_URL</code> repository secret. The
+                roadmap checks call this endpoint to validate database state without full credentials.
+              </p>
+            </div>
+            <StatusBadge
+              ok={httpStatus.ok}
+              total={httpStatus.hasCheck ? 1 : 0}
+              summary={httpStatus.summary}
+            />
+          </div>
+          <details className="onboarding-details">
+            <summary>Show secret value format</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy secret format" text={SECRET_SNIPPET} />
+            </div>
+            <pre>
+              <code>{SECRET_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            {httpUrl
+              ? `Latest run checked ${httpUrl}. Verify that the GitHub secret still points to this URL.`
+              : "Add the secret under Settings → Secrets and variables → Actions → New repository secret."}
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">5. Confirm database coverage</div>
+              <p className="onboarding-step-description">
+                Add at least one <code>sql_exists</code> check so the dashboard verifies your critical
+                database extensions, tables, or policies each run.
+              </p>
+            </div>
+            <StatusBadge
+              ok={sqlStatus.ok}
+              total={sqlStatus.hasCheck ? 1 : 0}
+              summary={sqlStatus.summary}
+            />
+          </div>
+          <p className="onboarding-note">
+            {sqlQuery
+              ? `Your roadmap currently checks: ${sqlQuery}. Add more symbols (ext:, table:, rls:, policy:) as needed.`
+              : "Use ext:, table:, rls:, or policy: symbols to describe the invariants your team cares about."}
+          </p>
+        </li>
+      </ol>
+    </section>
+  );
+}
+
 function CreateEdgeFunctionGuide() {
   return (
     <section className="card guide-card">
@@ -1380,6 +1820,7 @@ function DashboardPage() {
   const searchString = sp.toString();
   const searchOwner = sp.get("owner");
   const searchRepo = sp.get("repo");
+  const searchTab = sp.get("tab");
   const searchKey = searchOwner && searchRepo ? repoKey(searchOwner, searchRepo) : null;
 
   const router = useRouter();
@@ -1387,7 +1828,14 @@ function DashboardPage() {
 
   const { repos, initialized, addRepo, removeRepo } = useStoredRepos();
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const initialTab: TabKey = searchTab === "onboarding" ? "onboarding" : searchTab === "add" ? "add" : "projects";
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const lastSearchKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const normalized: TabKey = searchTab === "onboarding" ? "onboarding" : searchTab === "add" ? "add" : "projects";
+    setActiveTab((prev) => (prev === normalized ? prev : normalized));
+  }, [searchTab]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -1431,6 +1879,20 @@ function DashboardPage() {
       return repos.length > 0 ? repoKey(repos[0].owner, repos[0].repo) : null;
     });
   }, [initialized, repos]);
+
+  const handleTabChange = useCallback(
+    (tab: TabKey) => {
+      setActiveTab(tab);
+      const params = new URLSearchParams(searchString);
+      if (tab === "projects") {
+        params.delete("tab");
+      } else {
+        params.set("tab", tab);
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [pathname, router, searchString]
+  );
 
   const activeRepo = useMemo(() => {
     if (!activeKey) return null;
@@ -1515,19 +1977,24 @@ function DashboardPage() {
 
   const hasManualChanges = manualReady && (manualTotals.added > 0 || manualTotals.removed > 0);
 
-  const handleSelectRepo = useCallback((repo: RepoRef) => {
-    setActiveKey(repoKey(repo.owner, repo.repo));
-  }, []);
+  const handleSelectRepo = useCallback(
+    (repo: RepoRef) => {
+      setActiveKey(repoKey(repo.owner, repo.repo));
+      handleTabChange("projects");
+    },
+    [handleTabChange]
+  );
 
   const handleAddRepo = useCallback(
     (repo: RepoRef) => {
       const added = addRepo(repo);
       if (added) {
         setActiveKey(repoKey(added.owner, added.repo));
+        handleTabChange("projects");
       }
       return added;
     },
-    [addRepo]
+    [addRepo, handleTabChange]
   );
 
   const handleRemoveRepo = useCallback(
@@ -1567,84 +2034,130 @@ function DashboardPage() {
         onAdd={handleAddRepo}
       />
       <section className="dashboard">
-        {activeRepo ? (
-          <>
-            <div className="repo-line">
-              <span className="repo-label">Repo:</span>
-              <code>
-                {activeRepo.owner}/{activeRepo.repo}
-              </code>
-              <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
-                Create setup PR ↗
-              </a>
-              <a href={`/api/status/${activeRepo.owner}/${activeRepo.repo}`} target="_blank" rel="noreferrer">
-                View status JSON ↗
-              </a>
-            </div>
+        <div className="tab-bar" role="tablist" aria-label="Dashboard sections">
+          {TAB_KEYS.map((key) => {
+            const label = TAB_LABELS[key];
+            const selected = activeTab === key;
+            return (
+              <button
+                key={key}
+                id={`tab-${key}`}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                aria-controls={`panel-${key}`}
+                className={`tab-button${selected ? " active" : ""}`}
+                onClick={() => {
+                  if (!selected) handleTabChange(key);
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
 
-            {hasManualChanges ? (
-              <div className="card manual-project-banner">
-                <div>
-                  <div className="banner-title">Manual adjustments in this project</div>
-                  <div className="banner-subtitle">
-                    {manualTotals.added} added · {manualTotals.removed} hidden
+        {activeTab === "projects" ? (
+          <div id="panel-projects" role="tabpanel" aria-labelledby="tab-projects" className="tab-panel">
+            {activeRepo ? (
+              <>
+                <div className="repo-line">
+                  <span className="repo-label">Repo:</span>
+                  <code>
+                    {activeRepo.owner}/{activeRepo.repo}
+                  </code>
+                  <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
+                    Create setup PR ↗
+                  </a>
+                  <a href={`/api/status/${activeRepo.owner}/${activeRepo.repo}`} target="_blank" rel="noreferrer">
+                    View status JSON ↗
+                  </a>
+                </div>
+
+                {hasManualChanges ? (
+                  <div className="card manual-project-banner">
+                    <div>
+                      <div className="banner-title">Manual adjustments in this project</div>
+                      <div className="banner-subtitle">
+                        {manualTotals.added} added · {manualTotals.removed} hidden
+                      </div>
+                    </div>
+                    <button type="button" className="ghost-button danger" onClick={resetAll} disabled={!manualReady}>
+                      Reset all manual items
+                    </button>
                   </div>
-                </div>
-                <button type="button" className="ghost-button danger" onClick={resetAll} disabled={!manualReady}>
-                  Reset all manual items
-                </button>
-              </div>
-            ) : null}
+                ) : null}
 
-            {loading ? <div className="card muted">Loading status…</div> : null}
+                {loading ? <div className="card muted">Loading status…</div> : null}
 
-            {err && !loading ? (
-              <div className="card error">
-                <div className="card-title">Failed to load status</div>
-                <div className="card-subtitle">{err}</div>
-                <div className="card-subtitle">
-                  Try running the onboarding wizard at <code>/new</code>.
-                </div>
-              </div>
-            ) : null}
+                {err && !loading ? (
+                  <div className="card error">
+                    <div className="card-title">Failed to load status</div>
+                    <div className="card-subtitle">{err}</div>
+                    <div className="card-subtitle">
+                      Try running the onboarding wizard at <code>/new</code>.
+                    </div>
+                  </div>
+                ) : null}
 
-            {decoratedWeeks.length > 0 ? <WeekProgress weeks={decoratedWeeks} /> : null}
+                {decoratedWeeks.length > 0 ? <WeekProgress weeks={decoratedWeeks} /> : null}
 
-            {decoratedWeeks.length > 0 ? <IncompleteSummary entries={incompleteEntries} /> : null}
+                {decoratedWeeks.length > 0 ? <IncompleteSummary entries={incompleteEntries} /> : null}
 
-            {data && decoratedWeeks.length > 0 ? (
-              <div className="week-grid">
-                {decoratedWeeks.map((week, i) => (
-                  <WeekCard
-                    key={`${week.manualKey ?? week.id ?? i}`}
-                    week={week}
-                    manualReady={manualReady}
-                    onAddManualItem={handleAddManualItem}
-                    onDeleteItem={handleDeleteItem}
-                    onResetManual={resetWeek}
-                  />
-                ))}
-              </div>
-            ) : null}
+                {data && decoratedWeeks.length > 0 ? (
+                  <div className="week-grid">
+                    {decoratedWeeks.map((week, i) => (
+                      <WeekCard
+                        key={`${week.manualKey ?? week.id ?? i}`}
+                        week={week}
+                        manualReady={manualReady}
+                        onAddManualItem={handleAddManualItem}
+                        onDeleteItem={handleDeleteItem}
+                        onResetManual={resetWeek}
+                      />
+                    ))}
+                  </div>
+                ) : null}
 
-            {data ? (
-              <div className="timestamp">
-                Generated at: {data.generated_at ?? "unknown"} · env: {data.env ?? "unknown"}
-              </div>
-            ) : null}
+                {data ? (
+                  <div className="timestamp">
+                    Generated at: {data.generated_at ?? "unknown"} · env: {data.env ?? "unknown"}
+                  </div>
+                ) : null}
 
-            {!loading && !err && (!data || decoratedWeeks.length === 0) ? (
+                {!loading && !err && (!data || decoratedWeeks.length === 0) ? (
+                  <div className="card muted">
+                    No weeks found. Make sure your <code>.roadmaprc.json</code> or status API is populated.
+                  </div>
+                ) : null}
+              </>
+            ) : (
               <div className="card muted">
-                No weeks found. Make sure your <code>.roadmaprc.json</code> or status API is populated.
+                Add a project from the sidebar to load its roadmap and weekly progress.
               </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="card muted">
-            Add a project from the sidebar to load its roadmap and weekly progress.
+            )}
           </div>
-        )}
-        <CreateEdgeFunctionGuide />
+        ) : null}
+
+        {activeTab === "onboarding" ? (
+          <div id="panel-onboarding" role="tabpanel" aria-labelledby="tab-onboarding" className="tab-panel">
+            <OnboardingChecklist
+              status={activeRepo ? data ?? null : null}
+              projectSlug={activeRepo ? `${activeRepo.owner}/${activeRepo.repo}` : null}
+            />
+            <CreateEdgeFunctionGuide />
+          </div>
+        ) : null}
+
+        {activeTab === "add" ? (
+          <div id="panel-add" role="tabpanel" aria-labelledby="tab-add" className="tab-panel">
+            <AddProjectTab
+              onAdd={handleAddRepo}
+              wizardHref={wizardHref}
+              hasProjects={repos.length > 0}
+            />
+          </div>
+        ) : null}
       </section>
     </main>
   );
