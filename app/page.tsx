@@ -354,6 +354,13 @@ const NPM_INSTALL_SNIPPET = "npm install --save-dev js-yaml";
 const SECRET_SNIPPET =
   "READ_ONLY_CHECKS_URL=https://<your-supabase-ref>.functions.supabase.co/read_only_checks";
 
+const GITHUB_APP_ENV_SNIPPET = [
+  "GH_APP_ID=<your-app-id>",
+  'GH_APP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n..."',
+  "# optional when multiple installations exist",
+  "GH_APP_INSTALLATION_ID=<installation-id>",
+].join("\n");
+
 const enum CopyState {
   Idle = "idle",
   Copied = "copied",
@@ -1512,6 +1519,12 @@ function OnboardingChecklist({
   const checks = useMemo(() => collectChecks(status), [status]);
   const hasStatusFeed = Boolean(status?.weeks && status.weeks.length > 0);
 
+  const authStatus: ChecklistStatus = {
+    ok: undefined,
+    summary: "Provide GitHub App credentials",
+    hasCheck: false,
+  };
+
   const scriptCheck = useMemo(
     () =>
       checks.find(
@@ -1565,7 +1578,37 @@ function OnboardingChecklist({
         <li className="onboarding-step">
           <div className="onboarding-step-header">
             <div>
-              <div className="onboarding-step-title">1. Bootstrap roadmap data</div>
+              <div className="onboarding-step-title">1. Configure dashboard credentials</div>
+              <p className="onboarding-step-description">
+                Supply the GitHub App environment variables so the dashboard can fetch roadmap
+                files from private repositories. Without them the server falls back to anonymous
+                requests that cannot read <code>docs/roadmap.yml</code> or
+                <code>docs/roadmap-status.json</code>.
+              </p>
+            </div>
+            <StatusBadge ok={authStatus.ok} total={authStatus.hasCheck ? 1 : 0} summary={authStatus.summary} />
+          </div>
+          <details className="onboarding-details">
+            <summary>Required GitHub App variables</summary>
+            <div className="guide-actions">
+              <CopyButton label="Copy env vars" text={GITHUB_APP_ENV_SNIPPET} />
+            </div>
+            <pre>
+              <code>{GITHUB_APP_ENV_SNIPPET}</code>
+            </pre>
+          </details>
+          <p className="onboarding-note">
+            Long term, deploy with the GitHub App credentials (and
+            <code>GH_APP_INSTALLATION_ID</code> if needed). For short tests you can temporarily make
+            the repository public or commit a generated <code>docs/roadmap-status.json</code>, but
+            those approaches leave the status API unable to reach private content.
+          </p>
+        </li>
+
+        <li className="onboarding-step">
+          <div className="onboarding-step-header">
+            <div>
+              <div className="onboarding-step-title">2. Bootstrap roadmap data</div>
               <p className="onboarding-step-description">
                 Create <code>docs/roadmap.yml</code> so the checker knows which weeks and tasks to
                 evaluate. Each workflow run will emit <code>docs/roadmap-status.json</code>, which the
@@ -1596,7 +1639,7 @@ function OnboardingChecklist({
         <li className="onboarding-step">
           <div className="onboarding-step-header">
             <div>
-              <div className="onboarding-step-title">2. Add the checker script</div>
+              <div className="onboarding-step-title">3. Add the checker script</div>
               <p className="onboarding-step-description">
                 Drop <code>scripts/roadmap-check.mjs</code> into the repository and install the
                 <code>js-yaml</code> dev dependency so the script can parse your roadmap definition.
@@ -1639,7 +1682,7 @@ function OnboardingChecklist({
         <li className="onboarding-step">
           <div className="onboarding-step-header">
             <div>
-              <div className="onboarding-step-title">3. Wire GitHub Actions</div>
+              <div className="onboarding-step-title">4. Wire GitHub Actions</div>
               <p className="onboarding-step-description">
                 Update <code>.github/workflows/roadmap.yml</code> to call the checker. The example step
                 below assumes the workflow already checks out your repo and installs dependencies.
@@ -1669,7 +1712,7 @@ function OnboardingChecklist({
         <li className="onboarding-step">
           <div className="onboarding-step-header">
             <div>
-              <div className="onboarding-step-title">4. Expose a read-only database checker</div>
+              <div className="onboarding-step-title">5. Expose a read-only database checker</div>
               <p className="onboarding-step-description">
                 Deploy the <code>read_only_checks</code> Supabase Edge Function (or an equivalent API)
                 and store its URL in the <code>READ_ONLY_CHECKS_URL</code> repository secret. The
@@ -1701,7 +1744,7 @@ function OnboardingChecklist({
         <li className="onboarding-step">
           <div className="onboarding-step-header">
             <div>
-              <div className="onboarding-step-title">5. Confirm database coverage</div>
+              <div className="onboarding-step-title">6. Confirm database coverage</div>
               <p className="onboarding-step-description">
                 Add at least one <code>sql_exists</code> check so the dashboard verifies your critical
                 database extensions, tables, or policies each run.
