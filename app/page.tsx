@@ -1292,46 +1292,48 @@ function ProjectSidebar({
           Open wizard ↗
         </a>
       </div>
-      {initializing ? <div className="project-hint">Loading saved projects…</div> : null}
-      {repos.length === 0 ? (
-        <div className="project-empty">
-          No projects yet. Add one below or run the onboarding wizard to connect a repository.
-        </div>
-      ) : (
-        <ul className="project-list">
-          {repos.map((repo) => {
-            const key = repoKey(repo.owner, repo.repo);
-            const slug = `${repo.owner}/${repo.repo}`;
-            const active = key === activeKey;
-            return (
-              <li key={key} className="project-item">
-                <button
-                  type="button"
-                  className={`project-button${active ? " active" : ""}`}
-                  onClick={() => onSelect(repo)}
-                >
-                  <span className="project-slug">{slug}</span>
-                  {active ? <span className="project-active">Viewing</span> : null}
-                </button>
-                <button
-                  type="button"
-                  className="icon-button danger"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRemove(repo);
-                  }}
-                  aria-label={`Remove ${slug}`}
-                  title="Remove project"
-                >
-                  ×
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <div className="project-panel-body">
+        {initializing ? <div className="project-hint">Loading saved projects…</div> : null}
+        {repos.length === 0 ? (
+          <div className="project-empty">
+            No projects yet. Add one below or run the onboarding wizard to connect a repository.
+          </div>
+        ) : (
+          <ul className="project-list">
+            {repos.map((repo) => {
+              const key = repoKey(repo.owner, repo.repo);
+              const slug = `${repo.owner}/${repo.repo}`;
+              const active = key === activeKey;
+              return (
+                <li key={key} className="project-item">
+                  <button
+                    type="button"
+                    className={`project-button${active ? " active" : ""}`}
+                    onClick={() => onSelect(repo)}
+                  >
+                    <span className="project-slug">{slug}</span>
+                    {active ? <span className="project-active">Viewing</span> : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button danger"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRemove(repo);
+                    }}
+                    aria-label={`Remove ${slug}`}
+                    title="Remove project"
+                  >
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
 
-      <ProjectForm onAdd={onAdd} onSelect={onSelect} />
+        <ProjectForm onAdd={onAdd} onSelect={onSelect} />
+      </div>
     </aside>
   );
 }
@@ -2118,13 +2120,11 @@ function DashboardPage() {
                     ))}
                   </div>
                 ) : null}
-
                 {data ? (
                   <div className="timestamp">
                     Generated at: {data.generated_at ?? "unknown"} · env: {data.env ?? "unknown"}
                   </div>
                 ) : null}
-
                 {!loading && !err && (!data || decoratedWeeks.length === 0) ? (
                   <div className="card muted">
                     No weeks found. Make sure your <code>.roadmaprc.json</code> or status API is populated.
@@ -2170,7 +2170,9 @@ function PageFallback() {
         <div className="project-header">
           <h2>Projects</h2>
         </div>
-        <div className="project-hint">Loading saved projects…</div>
+        <div className="project-panel-body">
+          <div className="project-hint">Loading saved projects…</div>
+        </div>
       </aside>
       <section className="dashboard">
         <div className="card muted">Loading dashboard…</div>
