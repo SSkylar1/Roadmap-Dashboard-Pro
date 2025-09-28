@@ -15,13 +15,22 @@ function hasGitHubAppConfig() {
   );
 }
 
-async function tryGetInstallationToken(): Promise<string | undefined> {
-  if (!hasGitHubAppConfig()) return undefined;
+type TokenResult =
+  | { token: string; status: "ok" }
+  | { token: undefined; status: "missing" | "error"; message?: string };
+
+async function tryGetInstallationToken(): Promise<TokenResult> {
+  if (!hasGitHubAppConfig()) {
+    return { token: undefined, status: "missing", message: "GH_APP_ID/GH_APP_PRIVATE_KEY not set" };
+  }
   try {
     const mod = await import("@/lib/githubApp");
-    return await mod.getInstallationToken();
-  } catch {
-    return undefined;
+    const token = await mod.getInstallationToken();
+    return { token, status: "ok" };
+  } catch (error: any) {
+    const message = error?.message ? String(error.message) : undefined;
+    console.error("github-app-token", message ?? error);
+    return { token: undefined, status: "error", message };
   }
 }
 
@@ -316,7 +325,8 @@ async function enrichWeeks(
 export async function GET(_req: Request, { params }: Ctx) {
   const { owner, repo } = params;
 
-  const token = await tryGetInstallationToken();
+  const tokenResult = await tryGetInstallationToken();
+  const token = tokenResult.token;
 
   const branch = (await detectDefaultBranch(owner, repo, token)) || DEFAULT_BRANCH;
 
@@ -358,10 +368,31 @@ export async function GET(_req: Request, { params }: Ctx) {
 
   const roadmapTxt = await loadFile(owner, repo, roadmapPath, branch, token);
   if (!roadmapTxt) {
-    return NextResponse.json(
-      { ok: false, error: "STATUS_NOT_FOUND", owner, repo, branch },
-      { status: 404, headers: { "cache-control": "no-store", "x-status-route": "missing" } }
-    );
+    const missingPayload: Record<string, unknown> = {
+      ok: false,
+      error: "STATUS_NOT_FOUND",
+      owner,
+      repo,
+      branch,
+    };
+
+    if (!token && tokenResult.status !== "ok") {
+      missingPayload.error = "GITHUB_APP_TOKEN_UNAVAILABLE";
+      missingPayload.message =
+        tokenResult.status === "missing"
+          ? "Set GH_APP_ID and GH_APP_PRIVATE_KEY(_B64) so the dashboard can read private repos."
+          : "Failed to mint a GitHub App installation token. Check the private key formatting and installation access.";
+      if (tokenResult.message) missingPayload.details = tokenResult.message;
+    }
+
+    return NextResponse.json(missingPayload, {
+      status: 404,
+      headers: {
+        "cache-control": "no-store",
+        "x-status-route": "missing",
+        "x-github-app": tokenResult.status,
+      },
+    });
   }
 
   let doc: any = {};
