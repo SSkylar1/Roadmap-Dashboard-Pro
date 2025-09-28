@@ -15,11 +15,12 @@
 }
 *{ box-sizing:border-box; scrollbar-width:thin; scrollbar-color:rgba(78,161,255,0.35) transparent }
 html,body{ margin:0; padding:0; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; -webkit-tap-highlight-color:rgba(78,161,255,0.15) }
-:where(a,button,input,textarea,select,summary,[role="button"],[tabindex]:not([tabindex="-1"])):focus-visible{
+:where(:not(html,body)):focus-visible{
   outline:none;
   box-shadow:0 0 0 2px rgba(78,161,255,0.6);
+  border-radius:8px;
 }
-:where(a,button,input,textarea,select,summary,[role="button"],[tabindex]:not([tabindex="-1"])):focus:not(:focus-visible){
+:where(:not(html,body)):focus:not(:focus-visible){
   outline:none;
   box-shadow:none;
 }
