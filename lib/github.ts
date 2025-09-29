@@ -35,6 +35,27 @@ export async function getFileRaw({
   path: string;
   ref?: string;
 }) {
-  const auth = await getTokenForRepo(owner, repo);
-  return fetchRepoFile({ owner, repo, path, ref, auth });
+  let auth: RepoAuth | undefined;
+  try {
+    auth = await getTokenForRepo(owner, repo);
+  } catch (error: any) {
+    const message = error?.message ? String(error.message) : "";
+    const missingCreds = message.includes("No GitHub credentials configured");
+    if (!missingCreds) throw error;
+  }
+
+  if (auth) {
+    const viaApi = await fetchRepoFile({ owner, repo, path, ref, auth });
+    if (viaApi !== null) return viaApi;
+  }
+
+  const branch = ref ?? "main";
+  const encodedPath = path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${encodedPath}`;
+  const r = await fetch(url, { headers: RAW_ACCEPT_HEADER, cache: "no-store" });
+  if (!r.ok) return null;
+  return await r.text();
 }
