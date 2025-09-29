@@ -29,23 +29,27 @@ export async function getFileRaw({
   repo,
   path,
   ref,
+  auth,
 }: {
   owner: string;
   repo: string;
   path: string;
   ref?: string;
+  auth?: RepoAuth;
 }) {
-  let auth: RepoAuth | undefined;
-  try {
-    auth = await getTokenForRepo(owner, repo);
-  } catch (error: any) {
-    const message = error?.message ? String(error.message) : "";
-    const missingCreds = message.includes("No GitHub credentials configured");
-    if (!missingCreds) throw error;
+  let repoAuth = auth;
+  if (!repoAuth) {
+    try {
+      repoAuth = await getTokenForRepo(owner, repo);
+    } catch (error: any) {
+      const message = error?.message ? String(error.message) : "";
+      const missingCreds = message.includes("No GitHub credentials configured");
+      if (!missingCreds) throw error;
+    }
   }
 
-  if (auth) {
-    const viaApi = await fetchRepoFile({ owner, repo, path, ref, auth });
+  if (repoAuth) {
+    const viaApi = await fetchRepoFile({ owner, repo, path, ref, auth: repoAuth });
     if (viaApi !== null) return viaApi;
   }
 

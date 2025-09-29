@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import yaml from "js-yaml";
 
+import { getFileRaw } from "@/lib/github";
 import { authHeaders, getTokenForRepo, type RepoAuth } from "@/lib/token";
 
 export const runtime = "nodejs";
@@ -29,8 +30,6 @@ async function resolveRepoAuth(owner: string, repo: string): Promise<TokenResult
 }
 
 type Ctx = { params: { owner: string; repo: string } };
-type GHContentsResp = { content?: string; encoding?: string };
-
 function ghHeaders(auth?: RepoAuth) {
   const base = { Accept: "application/vnd.github+json", "User-Agent": UA };
   return auth ? authHeaders(auth, base) : base;
@@ -60,51 +59,24 @@ async function detectDefaultBranch(owner: string, repo: string, auth?: RepoAuth)
   }
 }
 
-/** Contents API → decode base64 if present */
-async function fetchViaContentsAPI(owner: string, repo: string, path: string, ref: string, auth?: RepoAuth) {
-  if (!auth) return null;
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(
-    path
-  )}?ref=${encodeURIComponent(ref)}`;
-  const r = await fetch(url, { headers: ghHeaders(auth), next: { revalidate: REVALIDATE_SECS } });
-  if (!r.ok) return null;
-
-  try {
-    const data = (await r.json()) as GHContentsResp;
-    if (data?.content && data.encoding === "base64") {
-      return Buffer.from(data.content, "base64").toString("utf8");
-    }
-    return await r.text();
-  } catch {
-    return await r.text();
-  }
-}
-/** raw.githubusercontent.com (unauth) */
-async function fetchViaRaw(owner: string, repo: string, path: string, ref: string) {
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${path}`;
-  const r = await fetch(url, { headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
-  if (!r.ok) return null;
-  return r.text();
-}
-/** Try API then raw */
 async function loadFile(owner: string, repo: string, path: string, ref: string, auth?: RepoAuth) {
-  const viaApi = await fetchViaContentsAPI(owner, repo, path, ref, auth);
-  if (viaApi !== null) return viaApi;
-  const viaRaw = await fetchViaRaw(owner, repo, path, ref);
-  if (viaRaw !== null) return viaRaw;
-  return null;
+  return getFileRaw({ owner, repo, path, ref, auth });
 }
 
 /** HEAD/GET presence check for a repo path */
 async function fileExists(owner: string, repo: string, path: string, ref: string, auth?: RepoAuth) {
+  const encodedPath = path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
   if (auth) {
-    const u = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(
-      path
-    )}?ref=${encodeURIComponent(ref)}`;
+    const u = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(
+      ref
+    )}`;
     const r = await fetch(u, { headers: ghHeaders(auth), next: { revalidate: REVALIDATE_SECS } });
     if (r.ok) return true;
   }
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${path}`;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
   const r = await fetch(url, { method: "GET", headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
   return r.ok;
 }
