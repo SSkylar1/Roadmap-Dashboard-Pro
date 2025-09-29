@@ -2,63 +2,55 @@
 import { NextResponse } from "next/server";
 import yaml from "js-yaml";
 
+import { getFileRaw, encodeRepoPath } from "@/lib/github";
+import { authHeaders, getTokenForRepo, type RepoAuth } from "@/lib/token";
+
 export const runtime = "nodejs";
 
 const DEFAULT_BRANCH = process.env.DEFAULT_BRANCH || "main";
 const REVALIDATE_SECS = 15;
 const UA = "roadmap-dashboard-pro";
 
-function hasGitHubAppConfig() {
-  return Boolean(
-    process.env.GH_APP_ID &&
-      (process.env.GH_APP_PRIVATE_KEY_B64 || process.env.GH_APP_PRIVATE_KEY)
-  );
-}
-
 type TokenResult =
-  | { token: string; status: "ok" }
-  | { token: undefined; status: "missing" | "error"; message?: string };
+  | { status: "ok"; auth: RepoAuth }
+  | { status: "missing" | "error"; auth: undefined; message?: string };
 
-async function tryGetInstallationToken(): Promise<TokenResult> {
-  if (!hasGitHubAppConfig()) {
-    return { token: undefined, status: "missing", message: "GH_APP_ID/GH_APP_PRIVATE_KEY not set" };
-  }
+async function resolveRepoAuth(owner: string, repo: string): Promise<TokenResult> {
   try {
-    const mod = await import("@/lib/githubApp");
-    const token = await mod.getInstallationToken();
-    return { token, status: "ok" };
+    const auth = await getTokenForRepo(owner, repo);
+    return { status: "ok", auth };
   } catch (error: any) {
     const message = error?.message ? String(error.message) : undefined;
-    console.error("github-app-token", message ?? error);
-    return { token: undefined, status: "error", message };
+    const missing = message?.includes("No GitHub credentials configured");
+    if (!missing) {
+      console.error("github-token", message ?? error);
+    }
+    return { status: missing ? "missing" : "error", auth: undefined, message };
   }
 }
 
 type Ctx = { params: { owner: string; repo: string } };
-type GHContentsResp = { content?: string; encoding?: string };
-
-function ghHeaders(token?: string) {
-  const h: Record<string, string> = { Accept: "application/vnd.github+json", "User-Agent": UA };
-  if (token) h.Authorization = `Bearer ${token}`;
-  return h;
+function ghHeaders(auth?: RepoAuth) {
+  const base = { Accept: "application/vnd.github+json", "User-Agent": UA };
+  return auth ? authHeaders(auth, base) : base;
 }
 
-async function fetchJSON(url: string, token?: string) {
-  const r = await fetch(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
+async function fetchJSON(url: string, auth?: RepoAuth) {
+  const r = await fetch(url, { headers: ghHeaders(auth), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`);
   return r.json();
 }
-async function fetchText(url: string, token?: string) {
-  const r = await fetch(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
+async function fetchText(url: string, auth?: RepoAuth) {
+  const r = await fetch(url, { headers: ghHeaders(auth), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`);
   return r.text();
 }
 
 /** Repo default branch (best-effort) */
-async function detectDefaultBranch(owner: string, repo: string, token?: string) {
-  if (!token) return null;
+async function detectDefaultBranch(owner: string, repo: string, auth?: RepoAuth) {
+  if (!auth) return null;
   try {
-    const j = (await fetchJSON(`https://api.github.com/repos/${owner}/${repo}`, token)) as {
+    const j = (await fetchJSON(`https://api.github.com/repos/${owner}/${repo}`, auth)) as {
       default_branch?: string;
     };
     return j.default_branch ?? null;
@@ -67,51 +59,27 @@ async function detectDefaultBranch(owner: string, repo: string, token?: string) 
   }
 }
 
-/** Contents API → decode base64 if present */
-async function fetchViaContentsAPI(owner: string, repo: string, path: string, ref: string, token?: string) {
-  if (!token) return null;
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(
-    path
-  )}?ref=${encodeURIComponent(ref)}`;
-  const r = await fetch(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
-  if (!r.ok) return null;
-
-  try {
-    const data = (await r.json()) as GHContentsResp;
-    if (data?.content && data.encoding === "base64") {
-      return Buffer.from(data.content, "base64").toString("utf8");
-    }
-    return await r.text();
-  } catch {
-    return await r.text();
-  }
-}
-/** raw.githubusercontent.com (unauth) */
-async function fetchViaRaw(owner: string, repo: string, path: string, ref: string) {
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${path}`;
-  const r = await fetch(url, { headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
-  if (!r.ok) return null;
-  return r.text();
-}
-/** Try API then raw */
-async function loadFile(owner: string, repo: string, path: string, ref: string, token?: string) {
-  const viaApi = await fetchViaContentsAPI(owner, repo, path, ref, token);
-  if (viaApi !== null) return viaApi;
-  const viaRaw = await fetchViaRaw(owner, repo, path, ref);
-  if (viaRaw !== null) return viaRaw;
-  return null;
+async function loadFile(
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+  auth?: RepoAuth
+): Promise<string | null> {
+  return getFileRaw({ owner, repo, path, ref, auth });
 }
 
 /** HEAD/GET presence check for a repo path */
-async function fileExists(owner: string, repo: string, path: string, ref: string, token?: string) {
-  if (token) {
-    const u = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(
-      path
-    )}?ref=${encodeURIComponent(ref)}`;
-    const r = await fetch(u, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
+async function fileExists(owner: string, repo: string, path: string, ref: string, auth?: RepoAuth) {
+  const encodedPath = encodeRepoPath(path);
+  if (auth) {
+    const u = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(
+      ref
+    )}`;
+    const r = await fetch(u, { headers: ghHeaders(auth), next: { revalidate: REVALIDATE_SECS } });
     if (r.ok) return true;
   }
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${path}`;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
   const r = await fetch(url, { method: "GET", headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
   return r.ok;
 }
@@ -125,7 +93,7 @@ async function runCheck(
   owner: string,
   repo: string,
   branch: string,
-  token: string | undefined,
+  auth: RepoAuth | undefined,
   rc: any,
   check: any
 ): Promise<{ status: "pass" | "fail" | "skip"; note?: string }> {
@@ -147,7 +115,7 @@ async function runCheck(
 
     for (const p of paths) {
       // eslint-disable-next-line no-await-in-loop
-      const ok = await fileExists(owner, repo, p, branch, token);
+      const ok = await fileExists(owner, repo, p, branch, auth);
       if (!ok) return { status: "fail", note: `missing: ${p}` };
     }
     return { status: "pass", note: `${paths.length} file(s) present` };
@@ -252,7 +220,7 @@ async function enrichWeeks(
     owner: string;
     repo: string;
     branch: string;
-    token?: string;
+    auth?: RepoAuth;
     rc: any;
     mode: EnrichMode;
   }
@@ -283,7 +251,7 @@ async function enrichWeeks(
         for (const check of sourceChecks) {
           const base = cloneCheck(check);
           // eslint-disable-next-line no-await-in-loop
-          const result = await runCheck(ctx.owner, ctx.repo, ctx.branch, ctx.token, ctx.rc, check);
+          const result = await runCheck(ctx.owner, ctx.repo, ctx.branch, ctx.auth, ctx.rc, check);
           base.status = result.status;
           base.result = result.status;
           if (result.note !== undefined) base.note = result.note;
@@ -325,17 +293,17 @@ async function enrichWeeks(
 export async function GET(_req: Request, { params }: Ctx) {
   const { owner, repo } = params;
 
-  const tokenResult = await tryGetInstallationToken();
-  const token = tokenResult.token;
+  const tokenResult = await resolveRepoAuth(owner, repo);
+  const auth = tokenResult.status === "ok" ? tokenResult.auth : undefined;
 
-  const branch = (await detectDefaultBranch(owner, repo, token)) || DEFAULT_BRANCH;
+  const branch = (await detectDefaultBranch(owner, repo, auth)) || DEFAULT_BRANCH;
 
   const statusPath = "docs/roadmap-status.json";
-  const statusTxt = await loadFile(owner, repo, statusPath, branch, token);
-  if (statusTxt) {
+  const statusTxt = await loadFile(owner, repo, statusPath, branch, auth);
+  if (statusTxt !== null) {
     try {
       const json = JSON.parse(statusTxt);
-      const weeks = await enrichWeeks(json?.weeks, { owner, repo, branch, token, rc: null, mode: "artifact" });
+      const weeks = await enrichWeeks(json?.weeks, { owner, repo, branch, auth, rc: null, mode: "artifact" });
       const payload: any = {
         ...json,
         owner: json?.owner ?? owner,
@@ -351,23 +319,27 @@ export async function GET(_req: Request, { params }: Ctx) {
       payload.source = { ...sourceMeta, artifact: statusPath };
 
       return NextResponse.json(payload, {
-        headers: { "cache-control": "no-store", "x-status-route": "artifact" },
+        headers: {
+          "cache-control": "no-store",
+          "x-status-route": "artifact",
+          ...(auth ? { "x-github-auth-source": auth.source } : {}),
+        },
       });
     } catch {}
   }
 
   let rc: any = null;
   let roadmapPath = "docs/roadmap.yml";
-  const rcTxt = await loadFile(owner, repo, ".roadmaprc.json", branch, token);
-  if (rcTxt) {
+  const rcTxt = await loadFile(owner, repo, ".roadmaprc.json", branch, auth);
+  if (rcTxt !== null) {
     try {
       rc = JSON.parse(rcTxt);
       if (rc?.roadmapFile && typeof rc.roadmapFile === "string") roadmapPath = rc.roadmapFile;
     } catch {}
   }
 
-  const roadmapTxt = await loadFile(owner, repo, roadmapPath, branch, token);
-  if (!roadmapTxt) {
+  const roadmapTxt = await loadFile(owner, repo, roadmapPath, branch, auth);
+  if (roadmapTxt === null) {
     const missingPayload: Record<string, unknown> = {
       ok: false,
       error: "STATUS_NOT_FOUND",
@@ -376,7 +348,7 @@ export async function GET(_req: Request, { params }: Ctx) {
       branch,
     };
 
-    if (!token && tokenResult.status !== "ok") {
+    if (!auth && tokenResult.status !== "ok") {
       missingPayload.error = "GITHUB_APP_TOKEN_UNAVAILABLE";
       missingPayload.message =
         tokenResult.status === "missing"
@@ -391,6 +363,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         "cache-control": "no-store",
         "x-status-route": "missing",
         "x-github-app": tokenResult.status,
+        ...(auth ? { "x-github-auth-source": auth.source } : {}),
       },
     });
   }
@@ -401,11 +374,17 @@ export async function GET(_req: Request, { params }: Ctx) {
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: "YAML_PARSE_FAILED", message: e?.message || String(e) },
-      { status: 500, headers: { "cache-control": "no-store" } }
+      {
+        status: 500,
+        headers: {
+          "cache-control": "no-store",
+          ...(auth ? { "x-github-auth-source": auth.source } : {}),
+        },
+      }
     );
   }
 
-  const weeks = await enrichWeeks(doc?.weeks, { owner, repo, branch, token, rc, mode: "live" });
+  const weeks = await enrichWeeks(doc?.weeks, { owner, repo, branch, auth, rc, mode: "live" });
 
   return NextResponse.json(
     {
@@ -418,6 +397,12 @@ export async function GET(_req: Request, { params }: Ctx) {
       source: { rc: !!rcTxt, roadmap: roadmapPath },
       weeks,
     },
-    { headers: { "cache-control": "no-store", "x-status-route": "yaml-live" } }
+    {
+      headers: {
+        "cache-control": "no-store",
+        "x-status-route": "yaml-live",
+        ...(auth ? { "x-github-auth-source": auth.source } : {}),
+      },
+    }
   );
 }
