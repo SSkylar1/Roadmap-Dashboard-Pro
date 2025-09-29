@@ -1,4 +1,4 @@
-import { RepoAuth, authHeaders, getTokenForRepo } from "./token";
+ import { RepoAuth, authHeaders, getTokenForRepo } from "./token";
 
 const USER_AGENT = "roadmap-dashboard-pro";
 const RAW_ACCEPT_HEADER: Record<string, string> = { Accept: "application/vnd.github.v3.raw" };
@@ -40,8 +40,30 @@ export async function fetchRepoFile({
     headers: authHeaders(auth, API_HEADERS),
     cache: "no-store",
   });
-  if (!r.ok) return null;
-  return await r.text();
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`GET ${owner}/${repo}:${path} failed: ${r.status}`);
+  return r.text();
+}
+
+export async function putFile(owner: string, repo: string, path: string, content: string, branch: string, message: string, token?: string) {
+  const t = token || await ghToken();
+  // get sha if exists
+  const meta = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${branch}`, {
+    headers: { Authorization: `Bearer ${t}`, Accept: "application/vnd.github+json" },
+  });
+  let sha: string | undefined;
+  if (meta.ok) { const j = await meta.json(); sha = j.sha; }
+
+  const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${t}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      message, branch, sha,
+      content: Buffer.from(content).toString("base64"),
+    }),
+  });
+  if (!r.ok) throw new Error(`PUT ${owner}/${repo}:${path} failed: ${r.status}`);
+  return r.json();
 }
 
 export async function getFileRaw({
