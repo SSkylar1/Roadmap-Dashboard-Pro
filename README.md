@@ -13,7 +13,7 @@ Next.js dashboard for roadmap-kit projects with **GitHub App auth** (PAT fallbac
 npm install
 cp .env.example .env.local
 # Fill ONE of the auth paths:
-# - GitHub App: GH_APP_ID, GH_APP_PRIVATE_KEY, (optional) GH_APP_INSTALLATION_ID
+# - GitHub App: GH_APP_ID, GH_APP_PRIVATE_KEY (GH_APP_INSTALLATION_ID optional; the wizard auto-detects when omitted)
 # - OR PAT: GITHUB_TOKEN with repo scope
 npm run dev
 ```
@@ -36,7 +36,7 @@ npm run dev
 ## Deploy (Vercel)
 
 Add env vars (Production + Preview):
-- **GitHub App**: `GH_APP_ID`, `GH_APP_PRIVATE_KEY`, `GH_APP_INSTALLATION_ID` (optional)
+- **GitHub App**: `GH_APP_ID`, `GH_APP_PRIVATE_KEY` (`GH_APP_INSTALLATION_ID` optional; the setup wizard will look it up)
 - or **PAT**: `GITHUB_TOKEN`
 - `READ_ONLY_CHECKS_URL` for the verify API
 - (optional) `GITHUB_WEBHOOK_SECRET` if you add a webhook
