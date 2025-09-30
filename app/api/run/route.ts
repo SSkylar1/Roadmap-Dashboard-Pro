@@ -1,4 +1,8 @@
 // app/api/run/route.ts
+// Node runtime + no caching to ensure commits always reflect current state
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 import yaml from "js-yaml";
 import { getFileRaw, putFile } from "@/lib/github";
@@ -46,13 +50,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
 
+    // Load roadmap spec
     const rmRaw = await getFileRaw(owner, repo, "docs/roadmap.yml", branch);
     if (rmRaw === null) {
       return NextResponse.json({ error: "docs/roadmap.yml missing" }, { status: 404 });
     }
     const rm: any = yaml.load(rmRaw);
 
-    const status: any = { generated_at: new Date().toISOString(), weeks: [] as any[] };
+    // Execute checks
+    const status: any = { generated_at: new Date().toISOString(), owner, repo, branch, weeks: [] as any[] };
     for (const w of rm.weeks ?? []) {
       const W: any = { id: w.id, title: w.title, items: [] as any[] };
       for (const it of w.items ?? []) {
@@ -74,7 +80,7 @@ export async function POST(req: NextRequest) {
       status.weeks.push(W);
     }
 
-    // --- commit artifacts ---
+    // Commit artifacts (write both root docs/* and legacy docs/roadmap/*)
     const pretty = JSON.stringify(status, null, 2);
     const wrote: string[] = [];
 
@@ -87,11 +93,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // status files
+    // 1) machine artifact(s)
     await safePut("docs/roadmap-status.json", pretty, "chore(roadmap): update status [skip ci]");
     await safePut("docs/roadmap/roadmap-status.json", pretty, "chore(roadmap): mirror status [skip ci]");
 
-    // human plan
+    // 2) human-readable plan
     let plan = `# Project Plan\nGenerated: ${status.generated_at}\n\n`;
     for (const w of status.weeks) {
       plan += `## ${w.title}\n\n`;
@@ -101,7 +107,7 @@ export async function POST(req: NextRequest) {
     await safePut("docs/project-plan.md", plan, "chore(roadmap): update plan [skip ci]");
     await safePut("docs/roadmap/project-plan.md", plan, "chore(roadmap): update plan [skip ci]");
 
-    return NextResponse.json({ ok: true, wrote });
+    return NextResponse.json({ ok: true, wrote }, { headers: { "cache-control": "no-store" } });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
   }
