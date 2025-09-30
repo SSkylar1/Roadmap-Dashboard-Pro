@@ -5,9 +5,17 @@ export async function ghToken(): Promise<string> {
   return t;
 }
 
+function encodeGitHubPath(path: string) {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 export async function getFileRaw(owner: string, repo: string, path: string, ref?: string, token?: string) {
   const t = token || await ghToken();
-  const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}${ref ? `?ref=${ref}` : ""}`, {
+  const encodedPath = encodeGitHubPath(path);
+  const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}${ref ? `?ref=${ref}` : ""}`, {
     headers: { Authorization: `Bearer ${t}`, Accept: "application/vnd.github.v3.raw" },
     cache: "no-store",
   });
@@ -18,14 +26,15 @@ export async function getFileRaw(owner: string, repo: string, path: string, ref?
 
 export async function putFile(owner: string, repo: string, path: string, content: string, branch: string, message: string, token?: string) {
   const t = token || await ghToken();
+  const encodedPath = encodeGitHubPath(path);
   // get sha if exists
-  const meta = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${branch}`, {
+  const meta = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${branch}`, {
     headers: { Authorization: `Bearer ${t}`, Accept: "application/vnd.github+json" },
   });
   let sha: string | undefined;
   if (meta.ok) { const j = await meta.json(); sha = j.sha; }
 
-  const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`, {
+  const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${t}`, "content-type": "application/json" },
     body: JSON.stringify({
