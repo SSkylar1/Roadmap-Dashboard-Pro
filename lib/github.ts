@@ -16,8 +16,8 @@ function ghHeaders(token?: string) {
   }
   return h;
 }
-
-function encodePath(path: string) {
+ 
+export function encodeGitHubPath(path: string) {
   return path
     .split("/")
     .map((part) => encodeURIComponent(part))
@@ -25,8 +25,8 @@ function encodePath(path: string) {
 }
 
 export async function getFileRaw(owner: string, repo: string, path: string, ref?: string, token?: string) {
-  const t = token || (await ghToken());
-  const encodedPath = encodePath(path);
+  const t = token || (await ghToken()); 
+  const encodedPath = encodeGitHubPath(path);
   const url =
     `https://api.github.com/repos/${owner}/${repo}/contents/` +
     `${encodedPath}` +
@@ -48,8 +48,8 @@ export async function putFile(
   token?: string
 ) {
   const t = token || (await ghToken());
-  // fetch current sha (if any)
-  const encodedPath = encodePath(path);
+  // fetch current sha (if any) 
+  const encodedPath = encodeGitHubPath(path);
   const metaUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`;
   const meta = await fetch(metaUrl, { headers: ghHeaders(t) });
   let sha: string | undefined;

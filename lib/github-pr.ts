@@ -1,5 +1,6 @@
 // lib/github-pr.ts
 import { RepoAuth, authHeaders } from "./token";
+import { encodeGitHubPath } from "./github";
 
 type FileSpec = { path: string; content: string };
 
@@ -72,12 +73,13 @@ async function upsertFile({ owner, repo, auth, branch, path, content }: {
   content: string;
 }) {
   const contentB64 = Buffer.from(content).toString("base64");
+  const encodedPath = encodeGitHubPath(path);
 
   // get current sha on the target branch (if file exists)
   let sha: string | undefined;
   try {
     const existing = await gh(
-      `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`,
+      `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`,
       auth
     );
     sha = existing?.sha;
@@ -87,7 +89,7 @@ async function upsertFile({ owner, repo, auth, branch, path, content }: {
   }
 
   const put = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`,
+    `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}`,
     {
       method: "PUT",
       headers: authHeaders(auth, { ...H_BASE, "content-type": "application/json" }),
