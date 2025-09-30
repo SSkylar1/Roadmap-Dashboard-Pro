@@ -17,11 +17,19 @@ function ghHeaders(token?: string) {
   return h;
 }
 
+function encodePath(path: string) {
+  return path
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
 export async function getFileRaw(owner: string, repo: string, path: string, ref?: string, token?: string) {
   const t = token || (await ghToken());
+  const encodedPath = encodePath(path);
   const url =
     `https://api.github.com/repos/${owner}/${repo}/contents/` +
-    `${encodeURIComponent(path)}` +
+    `${encodedPath}` +
     (ref ? `?ref=${encodeURIComponent(ref)}` : "");
   const r = await fetch(url, { headers: ghHeaders(t), cache: "no-store" });
   if (r.status === 404) return null;
@@ -41,7 +49,8 @@ export async function putFile(
 ) {
   const t = token || (await ghToken());
   // fetch current sha (if any)
-  const metaUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${branch}`;
+  const encodedPath = encodePath(path);
+  const metaUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`;
   const meta = await fetch(metaUrl, { headers: ghHeaders(t) });
   let sha: string | undefined;
   if (meta.ok) {
@@ -51,7 +60,7 @@ export async function putFile(
     } catch {}
   }
 
-  const putUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
+  const putUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}`;
   const body = JSON.stringify({
     message,
     branch,
