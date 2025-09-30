@@ -1,6 +1,7 @@
 // app/api/setup/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { openSetupPR } from "@/lib/github-pr";
+import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { getTokenForRepo } from "@/lib/token";
 
 // Ensure Node.js runtime (Octokit/jsonwebtoken need Node, not Edge)
@@ -26,6 +27,81 @@ function isLikelyUrl(s: string) {
     return false;
   }
 }
+
+const ROADMAP_PACKAGE_JSON =
+  JSON.stringify(
+    {
+      name: "roadmap-kit",
+      version: "0.0.0",
+      private: true,
+      scripts: {
+        "roadmap:check": "node scripts/roadmap-check.mjs",
+      },
+      devDependencies: {
+        "js-yaml": "^4.1.0",
+      },
+    },
+    null,
+    2
+  ) + "\n";
+
+const ROADMAP_PACKAGE_LOCK =
+  JSON.stringify(
+    {
+      name: "roadmap-kit",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "roadmap-kit",
+          version: "0.0.0",
+          private: true,
+          devDependencies: {
+            "js-yaml": "^4.1.0",
+          },
+        },
+        "node_modules/argparse": {
+          version: "2.0.1",
+          resolved: "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz",
+          integrity: "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==",
+          dev: true,
+          license: "Python-2.0",
+        },
+        "node_modules/js-yaml": {
+          version: "4.1.0",
+          resolved: "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.0.tgz",
+          integrity: "sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==",
+          dev: true,
+          license: "MIT",
+          dependencies: {
+            argparse: "^2.0.1",
+          },
+          bin: {
+            "js-yaml": "bin/js-yaml.js",
+          },
+        },
+      },
+      dependencies: {
+        argparse: {
+          version: "2.0.1",
+          resolved: "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz",
+          integrity: "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==",
+          dev: true,
+        },
+        "js-yaml": {
+          version: "4.1.0",
+          resolved: "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.0.tgz",
+          integrity: "sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==",
+          dev: true,
+          requires: {
+            argparse: "^2.0.1",
+          },
+        },
+      },
+    },
+    null,
+    2
+  ) + "\n";
 
 // -- Route -------------------------------------------------------------------
 export async function POST(req: NextRequest) {
@@ -110,6 +186,19 @@ export async function POST(req: NextRequest) {
         ].join("\n"),
       },
       {
+        path: "scripts/roadmap-check.mjs",
+        mode: "100755",
+        content: ROADMAP_CHECKER_SNIPPET + "\n",
+      },
+      {
+        path: "package.json",
+        content: ROADMAP_PACKAGE_JSON,
+      },
+      {
+        path: "package-lock.json",
+        content: ROADMAP_PACKAGE_LOCK,
+      },
+      {
         path: ".github/workflows/roadmap.yml",
         content: [
           "name: Roadmap Sync",
@@ -127,10 +216,12 @@ export async function POST(req: NextRequest) {
           "      - uses: actions/checkout@v4",
           "      - uses: actions/setup-node@v4",
           "        with: { node-version: '20' }",
-          "      - run: npm ci || true",
-          "      - name: Run checks",
-          "        run: |",
-          "          node scripts/roadmap-check.mjs",
+          "      - name: Install dependencies",
+          "        run: npm install",
+          "      - name: Run roadmap checks",
+          "        env:",
+          "          READ_ONLY_CHECKS_URL: ${{ secrets.READ_ONLY_CHECKS_URL }}",
+          "        run: npm run roadmap:check",
           "",
         ].join("\n"),
       },
@@ -143,7 +234,8 @@ export async function POST(req: NextRequest) {
       branch, // e.g. "chore/roadmap-setup"
       files,
       title: "chore(setup): roadmap-kit bootstrap",
-      body: "Adds .roadmaprc.json, minimal roadmap, and CI workflow.",
+      body:
+        "Adds .roadmaprc.json, minimal roadmap, roadmap checker script, npm metadata, and CI workflow.",
     });
 
     return NextResponse.json({ ok: true, url: pr?.html_url ?? null, number: pr?.number ?? null });
