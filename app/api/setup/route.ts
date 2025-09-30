@@ -59,7 +59,6 @@ export async function POST(req: NextRequest) {
   try {
     // If your getTokenForRepo reads different names, adjust here
     needEnv("GH_APP_ID");
-    needEnv("GH_APP_INSTALLATION_ID");
     // Accept either multiline PEM or base64
     if (!process.env.GH_APP_PRIVATE_KEY && !process.env.GH_APP_PRIVATE_KEY_B64) {
       throw new Error("Missing env: GH_APP_PRIVATE_KEY (or GH_APP_PRIVATE_KEY_B64)");
@@ -160,7 +159,8 @@ export async function POST(req: NextRequest) {
     } else if (/Not Found/i.test(msg) && /repos\/.*\/.*\/git/.test(msg)) {
       hint = "Owner/repo or branch is wrong, or the token doesn't have access.";
     } else if (/Bad credentials|401/i.test(msg)) {
-      hint = "App JWT or installation token failed—check GH_APP_ID / GH_APP_INSTALLATION_ID / private key.";
+      hint =
+        "App JWT or installation token failed—check GH_APP_ID / private key and make sure the app is installed on the repo.";
     } else if (/rate limit/i.test(msg)) {
       hint = "You’ve hit GitHub’s rate limit. Try again in a minute or use an App token instead of PAT.";
     }

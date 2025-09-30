@@ -357,7 +357,7 @@ const SECRET_SNIPPET =
 const GITHUB_APP_ENV_SNIPPET = [
   "GH_APP_ID=<your-app-id>",
   'GH_APP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n..."',
-  "# optional when multiple installations exist",
+  "# optional if you want to pin a specific installation",
   "GH_APP_INSTALLATION_ID=<installation-id>",
 ].join("\n");
 
@@ -1598,10 +1598,11 @@ function OnboardingChecklist({
             </pre>
           </details>
           <p className="onboarding-note">
-            Long term, deploy with the GitHub App credentials (and
-            <code>GH_APP_INSTALLATION_ID</code> if needed). For short tests you can temporarily make
-            the repository public or commit a generated <code>docs/roadmap-status.json</code>, but
-            those approaches leave the status API unable to reach private content.
+            Long term, deploy with the GitHub App credentials. The setup flow will auto-detect the
+            installation ID when <code>GH_APP_INSTALLATION_ID</code> is omitted, but you can provide
+            it to pin a specific installation. For short tests you can temporarily make the
+            repository public or commit a generated <code>docs/roadmap-status.json</code>, but those
+            approaches leave the status API unable to reach private content.
           </p>
         </li>
 
