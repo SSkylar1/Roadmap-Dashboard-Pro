@@ -28,6 +28,110 @@ function isLikelyUrl(s: string) {
     return false;
   }
 }
+ 
+const ROADMAP_STATUS_JSON =
+  JSON.stringify(
+    {
+      generated_at: null,
+      weeks: [
+        {
+          id: "w01",
+          title: "Weeks 1–2 — Foundations",
+          items: [
+            {
+              id: "repo-ci",
+              name: "Repo + CI scaffolding",
+              done: false,
+              results: [
+                {
+                  type: "files_exist",
+                  globs: [".github/workflows/roadmap.yml"],
+                  ok: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    null,
+    2,
+  ) + "\n";
+
+const ROADMAP_PACKAGE_JSON =
+  JSON.stringify(
+    {
+      name: "roadmap-kit",
+      version: "0.0.0",
+      private: true,
+      scripts: {
+        "roadmap:check": "node scripts/roadmap-check.mjs",
+      },
+      devDependencies: {
+        "js-yaml": "^4.1.0",
+      },
+    },
+    null,
+    2
+  ) + "\n";
+
+const ROADMAP_PACKAGE_LOCK =
+  JSON.stringify(
+    {
+      name: "roadmap-kit",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "roadmap-kit",
+          version: "0.0.0",
+          private: true,
+          devDependencies: {
+            "js-yaml": "^4.1.0",
+          },
+        },
+        "node_modules/argparse": {
+          version: "2.0.1",
+          resolved: "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz",
+          integrity: "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==",
+          dev: true,
+          license: "Python-2.0",
+        },
+        "node_modules/js-yaml": {
+          version: "4.1.0",
+          resolved: "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.0.tgz",
+          integrity: "sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==",
+          dev: true,
+          license: "MIT",
+          dependencies: {
+            argparse: "^2.0.1",
+          },
+          bin: {
+            "js-yaml": "bin/js-yaml.js",
+          },
+        },
+      },
+      dependencies: {
+        argparse: {
+          version: "2.0.1",
+          resolved: "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz",
+          integrity: "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==",
+          dev: true,
+        },
+        "js-yaml": {
+          version: "4.1.0",
+          resolved: "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.0.tgz",
+          integrity: "sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==",
+          dev: true,
+          requires: {
+            argparse: "^2.0.1",
+          },
+        },
+      },
+    },
+    null,
+    2
+  ) + "\n";
 
 const ROADMAP_STATUS_STUB =
   JSON.stringify(
@@ -302,6 +406,23 @@ export async function POST(req: NextRequest) {
           "            globs: [\".github/workflows/roadmap.yml\"]",
           "",
         ].join("\n"),
+      },
+      { 
+        path: "docs/roadmap-status.json",
+        content: ROADMAP_STATUS_JSON,
+      },
+      {
+        path: "scripts/roadmap-check.mjs",
+        mode: "100755",
+        content: ROADMAP_CHECKER_SNIPPET + "\n",
+      },
+      {
+        path: "package.json",
+        content: ROADMAP_PACKAGE_JSON,
+      },
+      {
+        path: "package-lock.json",
+        content: ROADMAP_PACKAGE_LOCK,
       },
       {
         path: "docs/roadmap-status.json",
