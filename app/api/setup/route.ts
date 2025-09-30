@@ -27,6 +27,35 @@ function isLikelyUrl(s: string) {
     return false;
   }
 }
+ 
+const ROADMAP_STATUS_JSON =
+  JSON.stringify(
+    {
+      generated_at: null,
+      weeks: [
+        {
+          id: "w01",
+          title: "Weeks 1–2 — Foundations",
+          items: [
+            {
+              id: "repo-ci",
+              name: "Repo + CI scaffolding",
+              done: false,
+              results: [
+                {
+                  type: "files_exist",
+                  globs: [".github/workflows/roadmap.yml"],
+                  ok: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    null,
+    2,
+  ) + "\n";
 
 const ROADMAP_PACKAGE_JSON =
   JSON.stringify(
@@ -185,6 +214,10 @@ export async function POST(req: NextRequest) {
           "",
         ].join("\n"),
       },
+      { 
+        path: "docs/roadmap-status.json",
+        content: ROADMAP_STATUS_JSON,
+      },
       {
         path: "scripts/roadmap-check.mjs",
         mode: "100755",
@@ -217,7 +250,7 @@ export async function POST(req: NextRequest) {
           "      - uses: actions/setup-node@v4",
           "        with: { node-version: '20' }",
           "      - name: Install dependencies",
-          "        run: npm install",
+          "        run: npm ci",
           "      - name: Run roadmap checks",
           "        env:",
           "          READ_ONLY_CHECKS_URL: ${{ secrets.READ_ONLY_CHECKS_URL }}",
@@ -234,8 +267,8 @@ export async function POST(req: NextRequest) {
       branch, // e.g. "chore/roadmap-setup"
       files,
       title: "chore(setup): roadmap-kit bootstrap",
-      body:
-        "Adds .roadmaprc.json, minimal roadmap, roadmap checker script, npm metadata, and CI workflow.",
+      body: 
+        "Adds .roadmaprc.json, roadmap + status stub, roadmap checker script, npm metadata, and CI workflow.",
     });
 
     return NextResponse.json({ ok: true, url: pr?.html_url ?? null, number: pr?.number ?? null });
