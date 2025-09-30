@@ -8,11 +8,16 @@ async function repoAuth(owner: string, repo: string, overrideToken?: string): Pr
   return getTokenForRepo(owner, repo);
 }
 
-function encodeGitHubPath(path: string) {
-  return path
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+function ghHeaders(token?: string) {
+  const h: Record<string, string> = {
+    Accept: "application/vnd.github.v3.raw",
+    "User-Agent": "roadmap-dashboard-pro",
+  };
+  if (token) {
+    // Use "token <PAT>" for classic PATs (works everywhere)
+    h.Authorization = `token ${token}`;
+  }
+  return h;
 }
 
 export async function getFileRaw(owner: string, repo: string, path: string, ref?: string, token?: string) {
@@ -25,7 +30,9 @@ export async function getFileRaw(owner: string, repo: string, path: string, ref?
       cache: "no-store",
     }
   );
+  
   if (r.status === 404) return null;
+  if (r.status === 401) throw new Error(`GitHub 401 (check PAT scope/access for ${owner}/${repo})`);
   if (!r.ok) throw new Error(`GET ${owner}/${repo}:${path} failed: ${r.status}`);
   return r.text();
 }
@@ -54,7 +61,14 @@ export async function putFile(
     sha = j.sha;
   }
 
-  const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}`, {
+  const putUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
+  const body = JSON.stringify({
+    message,
+    branch,
+    sha,
+    content: Buffer.from(content).toString("base64"),
+  });
+  const r = await fetch(putUrl, {
     method: "PUT",
     headers: authHeaders(auth, { "content-type": "application/json" }),
     body: JSON.stringify({
@@ -64,6 +78,7 @@ export async function putFile(
       content: Buffer.from(content).toString("base64"),
     }),
   });
+  if (r.status === 401) throw new Error(`GitHub 401 on PUT (check PAT scope/access for ${owner}/${repo})`);
   if (!r.ok) throw new Error(`PUT ${owner}/${repo}:${path} failed: ${r.status}`);
   return r.json();
 }
