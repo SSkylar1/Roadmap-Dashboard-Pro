@@ -1,7 +1,9 @@
 // app/api/setup/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { openSetupPR } from "@/lib/github-pr";
-import { getTokenForRepo } from "@/lib/token";
+import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
+import { authHeaders, getTokenForRepo, type RepoAuth } from "@/lib/token";
+import { encodeGitHubPath } from "@/lib/github";
 
 // Ensure Node.js runtime (Octokit/jsonwebtoken need Node, not Edge)
 export const runtime = "nodejs";
@@ -25,6 +27,159 @@ function isLikelyUrl(s: string) {
   } catch {
     return false;
   }
+}
+
+const ROADMAP_STATUS_JSON =
+  JSON.stringify(
+    {
+      generated_at: null,
+      weeks: [
+        {
+          id: "w01",
+          title: "Weeks 1–2 — Foundations",
+          items: [
+            {
+              id: "repo-ci",
+              name: "Repo + CI scaffolding",
+              done: false,
+              results: [
+                {
+                  type: "files_exist",
+                  globs: [".github/workflows/roadmap.yml"],
+                  ok: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    null,
+    2,
+  ) + "\n";
+
+const JS_YAML_VERSION = "^4.1.0";
+const LOCK_JS_YAML_VERSION = "4.1.0";
+const LOCK_ARGPARSE_VERSION = "2.0.1";
+
+const LOCK_JS_YAML_META = {
+  version: LOCK_JS_YAML_VERSION,
+  resolved: "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.0.tgz",
+  integrity: "sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==",
+  dev: true,
+  requires: { argparse: "^2.0.1" },
+};
+
+const LOCK_ARGPARSE_META = {
+  version: LOCK_ARGPARSE_VERSION,
+  resolved: "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz",
+  integrity: "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==",
+  dev: true,
+};
+
+function jsonStringify(value: any) {
+  return JSON.stringify(value, null, 2) + "\n";
+}
+
+async function fetchRepoJson({
+  owner,
+  repo,
+  auth,
+  path,
+  ref,
+}: {
+  owner: string;
+  repo: string;
+  auth: RepoAuth;
+  path: string;
+  ref: string;
+}) {
+  const encodedPath = encodeGitHubPath(path);
+  const url =
+    `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}` +
+    (ref ? `?ref=${encodeURIComponent(ref)}` : "");
+  const r = await fetch(url, {
+    headers: authHeaders(auth, {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    }),
+    cache: "no-store",
+  });
+
+  if (r.status === 404) return null;
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`GET ${path} failed: ${r.status} ${text}`);
+  }
+
+  const j = await r.json();
+  const { content, encoding } = j ?? {};
+  if (typeof content !== "string" || encoding !== "base64") {
+    throw new Error(`Unexpected GitHub content payload for ${path}`);
+  }
+  return Buffer.from(content, "base64").toString("utf8");
+}
+
+function ensureRoadmapScripts(pkg: any) {
+  const next = { ...pkg };
+  next.scripts = { ...(pkg?.scripts ?? {}) };
+  next.scripts["roadmap:check"] = "node scripts/roadmap-check.mjs";
+
+  if (!next.devDependencies && !next.dependencies) {
+    next.devDependencies = { "js-yaml": JS_YAML_VERSION };
+  } else {
+    next.devDependencies = { ...(pkg?.devDependencies ?? {}) };
+    next.devDependencies["js-yaml"] = JS_YAML_VERSION;
+  }
+
+  return next;
+}
+
+function ensureLockDependency(lock: any) {
+  if (!lock || typeof lock !== "object") return lock;
+
+  const mutated = { ...lock };
+  const lockfileVersion = Number(mutated.lockfileVersion ?? 0);
+  const canMutatePackages = lockfileVersion >= 2 || mutated.packages !== undefined;
+
+  if (canMutatePackages) {
+    const packages: Record<string, any> = { ...(mutated.packages ?? {}) };
+    const rootPkg = { ...(packages[""] ?? {}) };
+    const rootDevDeps = { ...(rootPkg.devDependencies ?? {}) };
+    rootDevDeps["js-yaml"] = JS_YAML_VERSION;
+    rootPkg.devDependencies = rootDevDeps;
+    packages[""] = rootPkg;
+
+    packages["node_modules/js-yaml"] = {
+      ...(packages["node_modules/js-yaml"] ?? {}),
+      ...LOCK_JS_YAML_META,
+      dependencies: { argparse: "^2.0.1" },
+      license: packages["node_modules/js-yaml"]?.license ?? "MIT",
+      bin: { "js-yaml": "bin/js-yaml.js" },
+    };
+
+    packages["node_modules/argparse"] = {
+      ...(packages["node_modules/argparse"] ?? {}),
+      ...LOCK_ARGPARSE_META,
+      license: packages["node_modules/argparse"]?.license ?? "Python-2.0",
+    };
+
+    mutated.packages = packages;
+  }
+
+  const dependencies: Record<string, any> = { ...(mutated.dependencies ?? {}) };
+  dependencies["js-yaml"] = {
+    ...(dependencies["js-yaml"] ?? {}),
+    ...LOCK_JS_YAML_META,
+  };
+  dependencies.argparse = {
+    ...(dependencies.argparse ?? {}),
+    ...LOCK_ARGPARSE_META,
+  };
+  dependencies["js-yaml"].requires = { argparse: "^2.0.1" };
+  mutated.dependencies = dependencies;
+
+  return mutated;
 }
 
 // -- Route -------------------------------------------------------------------
@@ -71,6 +226,45 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await getTokenForRepo(owner, repo);
 
+    const repoMetaResp = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: authHeaders(auth, {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      }),
+      cache: "no-store",
+    });
+
+    if (!repoMetaResp.ok) {
+      const txt = await repoMetaResp.text();
+      throw new Error(`Repo lookup failed: ${repoMetaResp.status} ${txt}`);
+    }
+
+    const repoMeta = await repoMetaResp.json();
+    const baseBranch: string = repoMeta?.default_branch || "main";
+
+    let packageJsonContent: string | undefined;
+    let packageLockContent: string | undefined;
+
+    try {
+      const raw = await fetchRepoJson({ owner, repo, auth, path: "package.json", ref: baseBranch });
+      const basePkg = raw ? JSON.parse(raw) : { name: "roadmap-kit", version: "0.0.0", private: true };
+      const updatedPkg = ensureRoadmapScripts(basePkg);
+      packageJsonContent = jsonStringify(updatedPkg);
+    } catch (err: any) {
+      throw new Error(`Failed to prepare package.json: ${err?.message || String(err)}`);
+    }
+
+    try {
+      const rawLock = await fetchRepoJson({ owner, repo, auth, path: "package-lock.json", ref: baseBranch });
+      if (rawLock) {
+        const parsed = JSON.parse(rawLock);
+        const updated = ensureLockDependency(parsed);
+        packageLockContent = jsonStringify(updated);
+      }
+    } catch (err: any) {
+      throw new Error(`Failed to prepare package-lock.json: ${err?.message || String(err)}`);
+    }
+
     const files = [
       {
         path: ".roadmaprc.json",
@@ -110,6 +304,31 @@ export async function POST(req: NextRequest) {
         ].join("\n"),
       },
       {
+        path: "docs/roadmap-status.json",
+        content: ROADMAP_STATUS_JSON,
+      },
+      {
+        path: "scripts/roadmap-check.mjs",
+        mode: "100755",
+        content: ROADMAP_CHECKER_SNIPPET + "\n",
+      },
+      ...(packageJsonContent
+        ? [
+            {
+              path: "package.json",
+              content: packageJsonContent,
+            },
+          ]
+        : []),
+      ...(packageLockContent
+        ? [
+            {
+              path: "package-lock.json",
+              content: packageLockContent,
+            },
+          ]
+        : []),
+      {
         path: ".github/workflows/roadmap.yml",
         content: [
           "name: Roadmap Sync",
@@ -127,10 +346,12 @@ export async function POST(req: NextRequest) {
           "      - uses: actions/checkout@v4",
           "      - uses: actions/setup-node@v4",
           "        with: { node-version: '20' }",
-          "      - run: npm ci || true",
-          "      - name: Run checks",
-          "        run: |",
-          "          node scripts/roadmap-check.mjs",
+          "      - name: Install dependencies",
+          "        run: npm ci",
+          "      - name: Run roadmap checks",
+          "        env:",
+          "          READ_ONLY_CHECKS_URL: ${{ secrets.READ_ONLY_CHECKS_URL }}",
+          "        run: npm run roadmap:check",
           "",
         ].join("\n"),
       },
@@ -143,7 +364,8 @@ export async function POST(req: NextRequest) {
       branch, // e.g. "chore/roadmap-setup"
       files,
       title: "chore(setup): roadmap-kit bootstrap",
-      body: "Adds .roadmaprc.json, minimal roadmap, and CI workflow.",
+      body:
+        "Adds .roadmaprc.json, roadmap + status stub, roadmap checker script, npm metadata, and CI workflow.",
     });
 
     return NextResponse.json({ ok: true, url: pr?.html_url ?? null, number: pr?.number ?? null });
