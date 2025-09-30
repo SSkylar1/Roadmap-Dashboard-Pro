@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import yaml from "js-yaml";
+import { encodeGitHubPath } from "@/lib/github";
 
 export const runtime = "nodejs";
 
@@ -69,9 +70,8 @@ async function detectDefaultBranch(owner: string, repo: string, token?: string) 
 /** Contents API → decode base64 if present */
 async function fetchViaContentsAPI(owner: string, repo: string, path: string, ref: string, token?: string) {
   if (!token) return null;
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(
-    path
-  )}?ref=${encodeURIComponent(ref)}`;
+  const encodedPath = encodeGitHubPath(path);
+  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
   const r = await fetch(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) return null;
 
@@ -87,7 +87,8 @@ async function fetchViaContentsAPI(owner: string, repo: string, path: string, re
 }
 /** raw.githubusercontent.com (unauth) */
 async function fetchViaRaw(owner: string, repo: string, path: string, ref: string) {
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${path}`;
+  const encodedPath = encodeGitHubPath(path);
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
   const r = await fetch(url, { headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) return null;
   return r.text();
@@ -103,14 +104,13 @@ async function loadFile(owner: string, repo: string, path: string, ref: string, 
 
 /** HEAD/GET presence check for a repo path */
 async function fileExists(owner: string, repo: string, path: string, ref: string, token?: string) {
+  const encodedPath = encodeGitHubPath(path);
   if (token) {
-    const u = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(
-      path
-    )}?ref=${encodeURIComponent(ref)}`;
+    const u = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
     const r = await fetch(u, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
     if (r.ok) return true;
   }
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${path}`;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
   const r = await fetch(url, { method: "GET", headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
   return r.ok;
 }
