@@ -1,0 +1,169 @@
+{
+  "generated_at": "2025-10-01T19:15:04.540Z",
+  "weeks": [
+    {
+      "id": "w01",
+      "title": "Weeks 1–2 — Foundations",
+      "items": [
+        {
+          "id": "roadmap-config",
+          "name": "Roadmap configuration committed",
+          "done": true,
+          "results": [
+            {
+              "type": "files_exist",
+              "note": "2 file(s) present",
+              "ok": true,
+              "detail": null,
+              "files": [
+                ".roadmaprc.json",
+                "docs/roadmap.yml"
+              ],
+              "missing": []
+            }
+          ]
+        },
+        {
+          "id": "roadmap-ci",
+          "name": "Roadmap sync workflow present",
+          "done": true,
+          "results": [
+            {
+              "type": "files_exist",
+              "note": "1 file(s) present",
+              "ok": true,
+              "detail": null,
+              "files": [
+                ".github/workflows/roadmap.yml"
+              ],
+              "missing": []
+            }
+          ]
+        },
+        {
+          "id": "roadmap-script",
+          "name": "Local roadmap verification script",
+          "done": true,
+          "results": [
+            {
+              "type": "files_exist",
+              "note": "1 file(s) present",
+              "ok": true,
+              "detail": null,
+              "files": [
+                "scripts/roadmap-check.mjs"
+              ],
+              "missing": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "w02",
+      "title": "Weeks 3–4 — Dashboard polish",
+      "items": [
+        {
+          "id": "api-surface",
+          "name": "API surface for dashboard",
+          "done": true,
+          "results": [
+            {
+              "type": "files_exist",
+              "note": "3 file(s) present",
+              "ok": true,
+              "detail": null,
+              "files": [
+                "app/api/status/[owner]/[repo]/route.ts",
+                "app/api/verify/route.ts",
+                "app/api/webhook/route.ts"
+              ],
+              "missing": []
+            }
+          ]
+        },
+        {
+          "id": "dashboard-ui",
+          "name": "Dashboard UI committed",
+          "done": true,
+          "results": [
+            {
+              "type": "files_exist",
+              "note": "2 file(s) present",
+              "ok": true,
+              "detail": null,
+              "files": [
+                "app/page.tsx",
+                "app/HomeClient.tsx"
+              ],
+              "missing": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "w05",
+      "title": "Weeks 9–10 — PR automations",
+      "items": [
+        {
+          "id": "status-badge",
+          "name": "Repo README shows live status badge",
+          "done": true,
+          "results": [
+            {
+              "type": "files_exist",
+              "note": "1 file(s) present",
+              "ok": true,
+              "detail": null,
+              "files": [
+                "README.md"
+              ],
+              "missing": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "w12",
+      "title": "Weeks 23–24 — Packaging & docs",
+      "items": [
+        {
+          "id": "repo-template",
+          "name": "New-repo bootstrap template published",
+          "done": true,
+          "results": [
+            {
+              "type": "files_exist",
+              "note": "1 file(s) present",
+              "ok": true,
+              "detail": null,
+              "files": [
+                "docs/template-usage.md"
+              ],
+              "missing": []
+            }
+          ]
+        },
+        {
+          "id": "one-pager",
+          "name": "One-pager: how to adopt in <30 min",
+          "done": true,
+          "results": [
+            {
+              "type": "files_exist",
+              "note": "1 file(s) present",
+              "ok": true,
+              "detail": null,
+              "files": [
+                "docs/one-pager.md"
+              ],
+              "missing": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
