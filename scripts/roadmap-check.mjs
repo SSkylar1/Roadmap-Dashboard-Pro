@@ -49,7 +49,7 @@ function normalizeFiles(check) {
 
 function checkFilesExist(paths) {
   if (paths.length === 0) {
-    return { ok: true, note: 'no files listed' };
+    return { ok: true, note: 'no files listed', missing: [] };
   }
 
   const missing = [];
@@ -59,16 +59,16 @@ function checkFilesExist(paths) {
   }
 
   if (missing.length > 0) {
-    return { ok: false, note: `missing: ${missing.join(', ')}` };
+    return { ok: false, note: `missing: ${missing.join(', ')}`, missing };
   }
-  return { ok: true, note: `${paths.length} file(s) present` };
+  return { ok: true, note: `${paths.length} file(s) present`, missing: [] };
 }
 
 function runCheck(check) {
   const type = String(check?.type || '').trim();
   if (type === 'files_exist') {
     const files = normalizeFiles(check);
-    return checkFilesExist(files);
+    return { ...checkFilesExist(files), files };
   }
   return { ok: false, note: `unsupported check type: ${type || 'unknown'}` };
 }
@@ -77,27 +77,58 @@ function main() {
   const doc = readRoadmap(roadmapPath);
   const weeks = Array.isArray(doc.weeks) ? doc.weeks : [];
   let failures = 0;
+  const status = {
+    generated_at: new Date().toISOString(),
+    weeks: [],
+  };
 
   for (const week of weeks) {
     const weekId = week?.id || week?.title || '(week)';
     const items = Array.isArray(week?.items) ? week.items : [];
+    const statusWeek = {
+      id: week?.id ?? null,
+      title: week?.title ?? null,
+      items: [],
+    };
     for (const item of items) {
       const itemId = item?.id || item?.name || '(item)';
       const checks = Array.isArray(item?.checks) ? item.checks : [];
-      if (checks.length === 0) continue;
+      let itemPassed = true;
+      const results = [];
 
       for (const check of checks) {
-        const { ok, note } = runCheck(check);
+        const { ok, note, ...extras } = runCheck(check);
         const label = `${weekId} / ${itemId}`;
         if (ok) {
           console.log(`✅ ${label}${note ? ` — ${note}` : ''}`);
         } else {
           failures += 1;
           console.error(`❌ ${label}${note ? ` — ${note}` : ''}`);
+          itemPassed = false;
         }
+        results.push({
+          type: check?.type ?? null,
+          note: note ?? null,
+          ok,
+          detail: typeof check?.detail === 'string' ? check.detail : null,
+          files: extras.files ?? undefined,
+          missing: extras.missing ?? undefined,
+        });
       }
+      statusWeek.items.push({
+        id: item?.id ?? null,
+        name: item?.name ?? null,
+        done: itemPassed,
+        results,
+      });
     }
+    if (statusWeek.items.length > 0) status.weeks.push(statusWeek);
   }
+
+  const statusPath = path.join(projectRoot, 'docs', 'roadmap-status.json');
+  fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+  fs.writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`);
+  console.log(`\nWrote ${relative(statusPath)}`);
 
   if (failures > 0) {
     console.error(`\n${failures} check${failures === 1 ? '' : 's'} failed.`);
