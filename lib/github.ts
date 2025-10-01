@@ -1,7 +1,12 @@
 // lib/github.ts
-export async function ghToken(): Promise<string> {
+export async function ghToken(): Promise<string>;
+export async function ghToken(required: false): Promise<string | undefined>;
+export async function ghToken(required = true): Promise<string | undefined> {
   const t = process.env.GITHUB_TOKEN;
-  if (!t) throw new Error("GITHUB_TOKEN not set in environment");
+  if (!t) {
+    if (required) throw new Error("GITHUB_TOKEN not set in environment");
+    return undefined;
+  }
   return t;
 }
 
@@ -25,7 +30,7 @@ export function encodeGitHubPath(path: string) {
 }
 
 export async function getFileRaw(owner: string, repo: string, path: string, ref?: string, token?: string) {
-  const t = token || (await ghToken()); 
+  const t = token ?? (await ghToken(false));
   const encodedPath = encodeGitHubPath(path);
   const url =
     `https://api.github.com/repos/${owner}/${repo}/contents/` +
@@ -33,7 +38,12 @@ export async function getFileRaw(owner: string, repo: string, path: string, ref?
     (ref ? `?ref=${encodeURIComponent(ref)}` : "");
   const r = await fetch(url, { headers: ghHeaders(t), cache: "no-store" });
   if (r.status === 404) return null;
-  if (r.status === 401) throw new Error(`GitHub 401 (check PAT scope/access for ${owner}/${repo})`);
+  if (r.status === 401) {
+    if (!t) {
+      throw new Error(`GitHub 401 (set GITHUB_TOKEN with access to ${owner}/${repo})`);
+    }
+    throw new Error(`GitHub 401 (check PAT scope/access for ${owner}/${repo})`);
+  }
   if (!r.ok) throw new Error(`GET ${owner}/${repo}:${path} failed: ${r.status}`);
   return r.text();
 }
