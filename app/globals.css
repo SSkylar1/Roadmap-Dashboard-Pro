@@ -246,6 +246,20 @@ button.ghost-button:disabled{ opacity:0.6; cursor:not-allowed; background:transp
 .add-project-actions .project-wizard{ font-size:14px }
 .add-project-hints{ margin:0; padding-left:18px; display:grid; gap:6px; font-size:13px; color:var(--muted) }
 .add-project-hints code{ font-size:12px }
+.add-project-wizard{ display:grid; gap:12px }
+.add-project-wizard h3{ margin:0; font-size:16px; color:#cfe2f3 }
+.add-project-wizard p{ margin:0; font-size:14px; line-height:1.5; color:var(--muted) }
+.add-project-wizard-grid{ display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) }
+.add-project-wizard-card{ display:grid; gap:12px; padding:16px; border-radius:14px; border:1px solid #1f2732; background:rgba(12,18,28,0.85); transition:border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; color:inherit }
+.add-project-wizard-card:hover{ border-color:rgba(78,161,255,0.55); transform:translateY(-2px); box-shadow:0 12px 26px rgba(10,15,24,0.45) }
+.add-project-wizard-card h4{ margin:0; font-size:16px; color:var(--fg) }
+.add-project-wizard-card p{ margin:0; font-size:14px; line-height:1.55; color:var(--muted) }
+.add-project-wizard-card ul{ margin:0; padding-left:18px; display:grid; gap:6px; font-size:13px; color:var(--muted) }
+.add-project-wizard-copy{ display:grid; gap:6px }
+.add-project-wizard-meta{ display:flex; align-items:center; gap:8px; font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted) }
+.add-project-wizard-label{ display:inline-flex; align-items:center; justify-content:center; padding:4px 10px; border-radius:999px; border:1px solid #283042; background:rgba(15,21,32,0.75); color:var(--fg); font-size:11px; font-weight:600 }
+.add-project-wizard-sub{ font-size:11px; color:var(--muted) }
+.add-project-wizard-cta{ font-size:13px; font-weight:600; color:var(--fg); display:inline-flex; align-items:center; gap:6px }
 
 @media (min-width:560px){ .project-form-row{ grid-template-columns:repeat(2,minmax(0,1fr)) } }
 @media (max-width:980px){ .dashboard-shell{ grid-template-columns:1fr } .project-panel{ position:relative; top:auto; max-height:none; overflow:visible } .project-panel-body{ width:100%; margin-right:0; padding-right:0; overflow:visible } }
