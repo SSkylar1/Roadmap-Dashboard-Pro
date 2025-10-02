@@ -54,7 +54,7 @@ const STAGES = {
     ],
     resources: [
       { label: "Back to wizard", href: "/wizard" },
-      { label: "Launch idea workspace", href: "/wizard/new-idea" },
+      { label: "Launch idea workspace", href: "/wizard/brainstorm" },
     ],
   },
   concept: {
