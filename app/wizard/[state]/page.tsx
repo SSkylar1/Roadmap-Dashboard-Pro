@@ -72,7 +72,7 @@ const STAGES = {
     label: "Roadmap Drafting",
     title: "Firm Concept, Missing Roadmap",
     description:
-      "Turn your concept brief into an actionable roadmap, complete with generated project files, integrations, and automation hooks.",
+      "Turn your concept brief into an actionable roadmap, complete with generated project files, integrations, and automation hooks.", 
     cta: null,
     sections: [
       {
@@ -259,7 +259,7 @@ export default function WizardStatePage({ params }: WizardStatePageProps) {
         <h1 className="tw-text-3xl tw-font-bold tw-leading-tight tw-text-slate-100">{stage.title}</h1>
         <p className="tw-text-lg tw-leading-relaxed tw-text-slate-300">{stage.description}</p>
       </div>
-
+ 
       {stage.cta && (
         <div className="tw-rounded-3xl tw-border tw-border-blue-500/40 tw-bg-blue-500/10 tw-p-6 tw-flex tw-flex-col tw-gap-4">
           <div className="tw-space-y-2">
