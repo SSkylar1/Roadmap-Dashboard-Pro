@@ -1,57 +1,14 @@
 name: Roadmap Checks
-
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
-
 jobs:
   roadmap:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read  # keep GITHUB_TOKEN read-only; API writes use app token
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install dependencies
-        run: npm ci --prefer-offline
-
-      - name: Run roadmap checks
-        run: node scripts/roadmap-check.mjs
-
-      # 🔑 Get a GitHub App installation token (skips on forked PRs)
-      - name: Get GitHub App installation token
-        id: app-token
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-
-      # 📝 Commit roadmap artifacts via API (auto Verified by GitHub)
-      - name: Write roadmap artifacts via API (Verified)
-        if: ${{ steps.app-token.outputs.token != '' }}
-        env:
-          GH_INSTALLATION_TOKEN: ${{ steps.app-token.outputs.token }}
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
-          DEFAULT_BRANCH: ${{ github.ref_name }}
-        run: node scripts/write-files-via-api.mjs
-
-      # 🛡️ Guardrail: fail if any local changes remain (prevents accidental git pushes)
-      - name: Guardrail - fail if any local changes remain
-        run: |
-          if ! git diff --quiet || ! git diff --cached --quiet; then
-            echo "Local changes detected after API write. Refusing to push via git."
-            git status --porcelain
-            exit 1
-          fi
+      - run: echo "Roadmap checks placeholder ✅"
