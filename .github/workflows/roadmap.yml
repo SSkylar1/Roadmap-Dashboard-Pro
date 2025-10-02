@@ -23,3 +23,20 @@ jobs:
 
       - name: Run roadmap checks
         run: node scripts/roadmap-check.mjs
+
+      # 🔑 Get a GitHub App installation token (replace secrets with yours)
+      - name: Get GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      # 📝 Commit roadmap artifacts via API (auto Verified by GitHub)
+      - name: Write roadmap artifacts via API (Verified)
+        env:
+          GH_INSTALLATION_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          DEFAULT_BRANCH: ${{ github.ref_name }}
+        run: node scripts/write-files-via-api.mjs
