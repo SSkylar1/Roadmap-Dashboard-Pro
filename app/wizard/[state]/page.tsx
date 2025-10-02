@@ -6,7 +6,7 @@ const STAGES = {
     label: "Ideation",
     title: "New Idea Brainstorming",
     description:
-      "Capture and expand every spark with a persistent AI workspace that keeps your ideas tethered to future execution.",
+      "Capture and expand every spark with a persistent AI workspace that keeps your ideas tethered to future execution.", 
     cta: {
       eyebrow: "Live AI workspace",
       title: "Jump into the brainstorming chat",
@@ -125,7 +125,7 @@ const STAGES = {
     label: "Workspace Provisioning",
     title: "Roadmap Ready, Pre-Build",
     description:
-      "Drop in your final roadmap and let the wizard generate the repo automations, context packs, and status surfaces you will need for build.",
+      "Drop in your final roadmap and let the wizard generate the repo automations, context packs, and status surfaces you will need for build.", 
     cta: null,
     sections: [
       {
@@ -178,7 +178,7 @@ const STAGES = {
     label: "Discovery Mode",
     title: "Mid-Project Build",
     description:
-      "Overlay discovery mode on your live project so AI copilots see what changed, what shipped, and what needs attention next.",
+      "Overlay discovery mode on your live project so AI copilots see what changed, what shipped, and what needs attention next.", 
     cta: null,
     sections: [
       {
@@ -259,7 +259,7 @@ export default function WizardStatePage({ params }: WizardStatePageProps) {
         <h1 className="tw-text-3xl tw-font-bold tw-leading-tight tw-text-slate-100">{stage.title}</h1>
         <p className="tw-text-lg tw-leading-relaxed tw-text-slate-300">{stage.description}</p>
       </div>
-
+ 
       {stage.cta && (
         <div className="tw-rounded-3xl tw-border tw-border-blue-500/40 tw-bg-blue-500/10 tw-p-6 tw-flex tw-flex-col tw-gap-4">
           <div className="tw-space-y-2">
