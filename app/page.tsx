@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
+import { WIZARD_ENTRY_POINTS } from "@/lib/wizard-entry-points";
 
 type Check = {
   id?: string;
@@ -1286,6 +1288,39 @@ function AddProjectTab({
           Launch onboarding wizard ↗
         </a>
         <p className="hint">The wizard walks through secrets, workflows, and Supabase setup for a fresh project.</p>
+      </div>
+      <div className="add-project-wizard">
+        <h3>Choose a guided workflow</h3>
+        <p>
+          Match the onboarding wizard to your current milestone. Each card opens the detailed flow in a new tab so you can return
+          here after scaffolding.
+        </p>
+        <div className="add-project-wizard-grid">
+          {WIZARD_ENTRY_POINTS.map((entry) => (
+            <Link
+              key={entry.slug}
+              href={`/wizard/${entry.slug}`}
+              target="_blank"
+              rel="noreferrer"
+              className="add-project-wizard-card"
+            >
+              <div className="add-project-wizard-meta">
+                <span className="add-project-wizard-label">{entry.label}</span>
+                <span className="add-project-wizard-sub">Entry point</span>
+              </div>
+              <div className="add-project-wizard-copy">
+                <h4>{entry.title}</h4>
+                <p>{entry.description}</p>
+              </div>
+              <ul>
+                {entry.bullets.map((bullet) => (
+                  <li key={bullet}>{bullet}</li>
+                ))}
+              </ul>
+              <span className="add-project-wizard-cta">Open workflow →</span>
+            </Link>
+          ))}
+        </div>
       </div>
       <ProjectForm onAdd={onAdd} onSelect={onSelect} className="project-form" submitLabel="Save project" />
       <ul className="add-project-hints">
