@@ -65,7 +65,7 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
     ],
     tools: [
       {
-        href: "/wizard/roadmap",
+        href: "/wizard/roadmap/workspace",
         label: "Launch provisioning workspace",
         description:
           "Upload an existing roadmap.yml, validate it, and scaffold infra-facts, tech stack, and roadmap workflow files.",

@@ -142,7 +142,7 @@ const STAGES = {
       description:
         "Upload your existing docs/roadmap.yml, validate it, and generate infra facts, tech stack, and roadmap workflow files in one flow.",
       action: {
-        href: "/wizard/roadmap",
+        href: "/wizard/roadmap/workspace",
         label: "Launch provisioning workspace",
       },
       note: "Commits docs/roadmap.yml along with docs/infra-facts.md, docs/tech-stack.yml, and .github/workflows/roadmap.yml if they are missing.",
@@ -191,7 +191,7 @@ const STAGES = {
     ],
     resources: [
       { label: "Back to wizard", href: "/wizard" },
-      { label: "Launch provisioning workspace", href: "/wizard/roadmap" },
+      { label: "Launch provisioning workspace", href: "/wizard/roadmap/workspace" },
       { label: "Provision automations", href: "/api/setup" },
     ],
   },
