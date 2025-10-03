@@ -246,6 +246,101 @@ button.ghost-button:disabled{ opacity:0.6; cursor:not-allowed; background:transp
 .add-project-actions .project-wizard{ font-size:14px }
 .add-project-hints{ margin:0; padding-left:18px; display:grid; gap:6px; font-size:13px; color:var(--muted) }
 .add-project-hints code{ font-size:12px }
+.add-project-wizard{ display:grid; gap:12px }
+.add-project-wizard h3{ margin:0; font-size:16px; color:#cfe2f3 }
+.add-project-wizard p{ margin:0; font-size:14px; line-height:1.5; color:var(--muted) }
+.add-project-wizard-grid{ display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) }
+.add-project-wizard-card{ display:grid; gap:12px; padding:16px; border-radius:14px; border:1px solid #1f2732; background:rgba(12,18,28,0.85); transition:border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease; color:inherit; cursor:pointer; outline:none }
+.add-project-wizard-card:hover{ border-color:rgba(78,161,255,0.55); transform:translateY(-2px); box-shadow:0 12px 26px rgba(10,15,24,0.45) }
+.add-project-wizard-card:focus-visible{ border-color:rgba(148,205,255,0.85); box-shadow:0 0 0 3px rgba(78,161,255,0.3) }
+.add-project-wizard-card h4{ margin:0; font-size:16px; color:var(--fg) }
+.add-project-wizard-card p{ margin:0; font-size:14px; line-height:1.55; color:var(--muted) }
+.add-project-wizard-card ul{ margin:0; padding-left:18px; display:grid; gap:6px; font-size:13px; color:var(--muted) }
+.add-project-wizard-copy{ display:grid; gap:6px }
+.add-project-wizard-meta{ display:flex; align-items:center; gap:8px; font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted) }
+.add-project-wizard-label{ display:inline-flex; align-items:center; justify-content:center; padding:4px 10px; border-radius:999px; border:1px solid #283042; background:rgba(15,21,32,0.75); color:var(--fg); font-size:11px; font-weight:600 }
+.add-project-wizard-sub{ font-size:11px; color:var(--muted) }
+.add-project-wizard-actions{ display:flex; flex-wrap:wrap; gap:8px }
+.add-project-wizard-action{ display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:999px; border:1px solid #273244; background:rgba(18,26,38,0.95); color:var(--fg); font-size:13px; font-weight:600; text-decoration:none; transition:background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease }
+.add-project-wizard-action:hover{ border-color:rgba(78,161,255,0.45); color:#e6f0ff }
+.add-project-wizard-action--primary{ background:rgba(219,234,254,0.9); color:#0f172a; border-color:rgba(219,234,254,0.9) }
+.add-project-wizard-action--primary:hover{ background:#e8f1ff; color:#0b1220; border-color:#e8f1ff }
+.add-project-wizard-note{ margin:0; font-size:12px; line-height:1.5; color:rgba(167,197,255,0.85) }
 
 @media (min-width:560px){ .project-form-row{ grid-template-columns:repeat(2,minmax(0,1fr)) } }
 @media (max-width:980px){ .dashboard-shell{ grid-template-columns:1fr } .project-panel{ position:relative; top:auto; max-height:none; overflow:visible } .project-panel-body{ width:100%; margin-right:0; padding-right:0; overflow:visible } }
+
+/* Minimal Tailwind-inspired utilities for the wizard UI */
+.tw-space-y-10 > * + * { margin-top: 2.5rem; }
+.tw-space-y-3 > * + * { margin-top: 0.75rem; }
+.tw-space-y-2 > * + * { margin-top: 0.5rem; }
+.tw-inline-flex { display: inline-flex; }
+.tw-flex { display: flex; }
+.tw-grid { display: grid; }
+.tw-flex-col { flex-direction: column; }
+.tw-flex-wrap { flex-wrap: wrap; }
+.tw-items-center { align-items: center; }
+.tw-items-start { align-items: flex-start; }
+.tw-justify-center { justify-content: center; }
+.tw-gap-2 { gap: 0.5rem; }
+.tw-gap-3 { gap: 0.75rem; }
+.tw-gap-4 { gap: 1rem; }
+.tw-gap-6 { gap: 1.5rem; }
+.tw-gap-10 { gap: 2.5rem; }
+.tw-rounded-full { border-radius: 9999px; }
+.tw-rounded-3xl { border-radius: 1.5rem; }
+.tw-border { border: 1px solid rgba(148, 163, 184, 0.25); }
+.tw-border-slate-800 { border-color: rgba(30, 41, 59, 0.75); }
+.tw-px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+.tw-py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+.tw-p-6 { padding: 1.5rem; }
+.tw-p-8 { padding: 2rem; }
+.tw-text-xs { font-size: 0.75rem; line-height: 1rem; }
+.tw-text-sm { font-size: 0.875rem; line-height: 1.5rem; }
+.tw-text-lg { font-size: 1.125rem; line-height: 1.75rem; }
+.tw-text-xl { font-size: 1.25rem; line-height: 1.75rem; }
+.tw-text-2xl { font-size: 1.5rem; line-height: 2rem; }
+.tw-text-3xl { font-size: 1.875rem; line-height: 2.25rem; }
+.tw-text-\[0\.7rem\] { font-size: 0.7rem; line-height: 1rem; }
+.tw-font-medium { font-weight: 500; }
+.tw-font-semibold { font-weight: 600; }
+.tw-font-bold { font-weight: 700; }
+.tw-uppercase { text-transform: uppercase; }
+.tw-tracking-wide { letter-spacing: 0.12em; }
+.tw-text-slate-100 { color: #e2e8f0; }
+.tw-text-slate-300 { color: #94a3b8; }
+.tw-text-slate-400 { color: #7c8a9f; }
+.tw-leading-tight { line-height: 1.2; }
+.tw-leading-snug { line-height: 1.35; }
+.tw-leading-relaxed { line-height: 1.6; }
+.tw-h-full { height: 100%; }
+.tw-bg-slate-900 { background-color: rgba(15, 23, 42, 0.85); }
+.tw-transition { transition-property: all; }
+.tw-duration-200 { transition-duration: 200ms; }
+.tw-ease-out { transition-timing-function: cubic-bezier(0, 0, 0.2, 1); }
+.tw-transform { transform: translateZ(0); }
+.tw-list-disc { list-style: disc; }
+.tw-pl-5 { padding-left: 1.25rem; }
+.tw-block { display: block; }
+.tw-mb-6 { margin-bottom: 1.5rem; }
+
+.hover\:tw-border-slate-700:hover { border-color: rgba(51, 65, 85, 0.8); }
+.hover\:tw-shadow-xl:hover { box-shadow: 0 24px 60px rgba(8, 15, 30, 0.45); }
+.hover\:tw-translate-y-\[-4px\]:hover { transform: translateY(-4px); }
+.hover\:tw-text-slate-100:hover { color: #e2e8f0; }
+
+.md\:tw-grid-cols-2 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+@media (min-width: 768px) {
+  .md\:tw-grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.code-editor{ position:relative; border-radius:18px; border:1px solid rgba(51,65,85,0.55); background:rgba(8,12,18,0.85); overflow:hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+.code-editor__preview{ margin:0; padding:18px; white-space:pre; overflow:auto; max-height:420px; color:#e7eef7; pointer-events:none; }
+.code-editor__textarea{ position:absolute; inset:0; resize:none; padding:18px; border:none; background:transparent; color:transparent; caret-color:#f8fafc; font: inherit; line-height:1.5; tab-size:2; outline:none; overflow:auto; }
+.code-editor__textarea::selection{ background:rgba(148,163,184,0.25); }
+.token-key{ color:#93c5fd; font-weight:600; }
+.token-colon{ color:#7dd3fc; }
+.token-string{ color:#fcd34d; }
+.token-comment{ color:#94a3b8; font-style:italic; }
+.token-dash{ color:#f472b6; }
+
