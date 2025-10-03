@@ -83,5 +83,12 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
       "Surface off-roadmap work automatically so nothing gets lost in the shuffle.",
       "Hand the full context to your AI teammate or keep coding with richer feedback.",
     ],
+    tools: [
+      {
+        href: "/wizard/midproject/workspace",
+        label: "Launch mid-project sync",
+        description: "Run status + discover workflows and preview backlog discoveries before opening the dashboard.",
+      },
+    ],
   },
 ] as const;

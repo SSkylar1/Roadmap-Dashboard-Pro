@@ -200,7 +200,17 @@ const STAGES = {
     title: "Mid-Project Build",
     description:
       "Overlay discovery mode on your live project so AI copilots see what changed, what shipped, and what needs attention next.",
-    cta: null,
+    cta: {
+      eyebrow: "Current state sync",
+      title: "Refresh roadmap status before diving in",
+      description:
+        "Launch the mid-project sync workspace to run /api/run and /api/discover, then preview the updated status grid and backlog list.",
+      action: {
+        href: "/wizard/midproject/workspace",
+        label: "Launch mid-project sync",
+      },
+      note: "Generates docs/roadmap-status.json, docs/project-plan.md, and docs/backlog-discovered.yml so the dashboard is already current.",
+    },
     sections: [
       {
         id: "ingest",
@@ -245,6 +255,7 @@ const STAGES = {
     ],
     resources: [
       { label: "Back to wizard", href: "/wizard" },
+      { label: "Launch mid-project sync", href: "/wizard/midproject/workspace" },
       { label: "Trigger discover run", href: "/api/discover" },
     ],
   },
