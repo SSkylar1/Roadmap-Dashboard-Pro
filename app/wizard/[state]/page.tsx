@@ -6,7 +6,18 @@ const STAGES = {
     label: "Ideation",
     title: "New Idea Brainstorming",
     description:
-      "Capture and expand every spark with a persistent AI workspace that keeps your ideas tethered to future execution.",
+      "Capture and expand every spark with a persistent AI workspace that keeps your ideas tethered to future execution.", 
+    cta: {
+      eyebrow: "Live AI workspace",
+      title: "Jump into the brainstorming chat",
+      description:
+        "Spin up the connected ideation thread so every idea, insight, and follow-up question stays linked to this project.",
+      action: {
+        href: "/wizard/brainstorm",
+        label: "Launch idea workspace",
+      },
+      note: "Opens the interactive chat where each turn is saved to /tmp/ideas and can be promoted into docs/idea-log.md.",
+    },
     sections: [
       {
         id: "canvas",
@@ -61,7 +72,18 @@ const STAGES = {
     label: "Roadmap Drafting",
     title: "Firm Concept, Missing Roadmap",
     description:
-      "Turn your concept brief into an actionable roadmap, complete with generated project files, integrations, and automation hooks.",
+      "Turn your concept brief into an actionable roadmap, complete with generated project files, integrations, and automation hooks.", 
+    cta: {
+      eyebrow: "Roadmap workspace",
+      title: "Draft docs/roadmap.yml from your brief",
+      description:
+        "Open the guided flow to paste concept notes, upload supporting files, and generate a YAML roadmap before committing it to your repo.",
+      action: {
+        href: "/wizard/concept/workspace",
+        label: "Open roadmap drafting workspace",
+      },
+      note: "Launches the upload + AI generation experience with repo commit controls.",
+    },
     sections: [
       {
         id: "ingest",
@@ -105,15 +127,16 @@ const STAGES = {
       },
     ],
     resources: [
-      { label: "Back to wizard", href: "/wizard" },
-      { label: "Generate roadmap artifacts", href: "/api/run" },
+      { label: "Back to wizard", href: "/wizard" }, 
+      { label: "Open roadmap drafting workspace", href: "/wizard/concept/workspace" },
     ],
   },
   "roadmap-ready": {
     label: "Workspace Provisioning",
     title: "Roadmap Ready, Pre-Build",
     description:
-      "Drop in your final roadmap and let the wizard generate the repo automations, context packs, and status surfaces you will need for build.",
+      "Drop in your final roadmap and let the wizard generate the repo automations, context packs, and status surfaces you will need for build.", 
+    cta: null,
     sections: [
       {
         id: "sync",
@@ -165,7 +188,8 @@ const STAGES = {
     label: "Discovery Mode",
     title: "Mid-Project Build",
     description:
-      "Overlay discovery mode on your live project so AI copilots see what changed, what shipped, and what needs attention next.",
+      "Overlay discovery mode on your live project so AI copilots see what changed, what shipped, and what needs attention next.", 
+    cta: null,
     sections: [
       {
         id: "ingest",
@@ -245,6 +269,28 @@ export default function WizardStatePage({ params }: WizardStatePageProps) {
         <h1 className="tw-text-3xl tw-font-bold tw-leading-tight tw-text-slate-100">{stage.title}</h1>
         <p className="tw-text-lg tw-leading-relaxed tw-text-slate-300">{stage.description}</p>
       </div>
+ 
+      {stage.cta && (
+        <div className="tw-rounded-3xl tw-border tw-border-blue-500/40 tw-bg-blue-500/10 tw-p-6 tw-flex tw-flex-col tw-gap-4">
+          <div className="tw-space-y-2">
+            <span className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-blue-500/40 tw-bg-blue-500/10 tw-px-3 tw-py-1 tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-blue-200">
+              {stage.cta.eyebrow}
+            </span>
+            <h2 className="tw-text-2xl tw-font-semibold tw-text-blue-100">{stage.cta.title}</h2>
+            <p className="tw-text-sm tw-leading-relaxed tw-text-blue-100/80">{stage.cta.description}</p>
+          </div>
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
+            <Link
+              href={stage.cta.action.href}
+              className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-bg-blue-500 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-blue-50 tw-shadow-lg tw-shadow-blue-500/30 tw-transition tw-duration-200 tw-ease-out hover:tw-bg-blue-400"
+            >
+              <span>{stage.cta.action.label}</span>
+              <span aria-hidden="true">→</span>
+            </Link>
+            <p className="tw-text-xs tw-text-blue-100/70">{stage.cta.note}</p>
+          </div>
+        </div>
+      )}
 
       <div className="tw-grid tw-gap-6 md:tw-grid-cols-2">
         {stage.sections.map((section) => (

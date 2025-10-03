@@ -326,4 +326,15 @@ button.ghost-button:disabled{ opacity:0.6; cursor:not-allowed; background:transp
 .md\:tw-grid-cols-2 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
 @media (min-width: 768px) {
   .md\:tw-grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
+} 
+
+.code-editor{ position:relative; border-radius:18px; border:1px solid rgba(51,65,85,0.55); background:rgba(8,12,18,0.85); overflow:hidden; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+.code-editor__preview{ margin:0; padding:18px; white-space:pre; overflow:auto; max-height:420px; color:#e7eef7; pointer-events:none; }
+.code-editor__textarea{ position:absolute; inset:0; resize:none; padding:18px; border:none; background:transparent; color:transparent; caret-color:#f8fafc; font: inherit; line-height:1.5; tab-size:2; outline:none; overflow:auto; }
+.code-editor__textarea::selection{ background:rgba(148,163,184,0.25); }
+.token-key{ color:#93c5fd; font-weight:600; }
+.token-colon{ color:#7dd3fc; }
+.token-string{ color:#fcd34d; }
+.token-comment{ color:#94a3b8; font-style:italic; }
+.token-dash{ color:#f472b6; }
+
