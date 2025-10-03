@@ -121,7 +121,10 @@ ${discovered.length ? discovered.map(d => `- ${d.title}`).join("\n") : "- none"}
 `;
     await safePut("docs/summary.txt", summary, "chore(roadmap): update summary [skip ci]");
 
-    return NextResponse.json({ ok: true, discovered: discovered.length, wrote }, { headers: { "cache-control": "no-store" } });
+    return NextResponse.json(
+      { ok: true, discovered: discovered.length, items: discovered, wrote },
+      { headers: { "cache-control": "no-store" } },
+    );
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
   }
