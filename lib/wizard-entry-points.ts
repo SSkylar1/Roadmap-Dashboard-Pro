@@ -1,9 +1,16 @@
+export type WizardEntryTool = {
+  href: string;
+  label: string;
+  description?: string;
+};
+
 export type WizardEntryPoint = {
   slug: string;
   label: string;
   title: string;
   description: string;
   bullets: readonly string[];
+  tools?: readonly WizardEntryTool[];
 };
 
 export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
@@ -18,6 +25,13 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
       "Clip research, voice notes, and quick sketches into a living idea vault.",
       "Upgrade the flow into a roadmap whenever you are ready to commit.",
     ],
+    tools: [
+      {
+        href: "/wizard/brainstorm",
+        label: "Launch idea workspace",
+        description: "Open the AI chat that logs every turn and can be promoted into docs/idea-log.md.",
+      },
+    ],
   },
   {
     slug: "concept",
@@ -30,6 +44,13 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
       "Co-create an actionable roadmap and scaffold repo-ready artifacts in one click.",
       "Wire up Supabase, secrets, and GitHub so your execution stack is ready to ship.",
     ],
+    tools: [
+      {
+        href: "/wizard/concept/workspace",
+        label: "Open roadmap drafting workspace",
+        description: "Paste your brief or upload a file, generate docs/roadmap.yml, and commit it to the repo.",
+      },
+    ],
   },
   {
     slug: "roadmap-ready",
@@ -41,6 +62,14 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
       "Upload roadmap docs and sync the structure into docs/roadmap.yml.",
       "Generate GTM, tech stack, and infra snapshots that stay aligned with the plan.",
       "Push the new workspace to GitHub with secrets and integrations configured.",
+    ],
+    tools: [
+      {
+        href: "/wizard/roadmap",
+        label: "Launch provisioning workspace",
+        description:
+          "Upload an existing roadmap.yml, validate it, and scaffold infra-facts, tech stack, and roadmap workflow files.",
+      },
     ],
   },
   {

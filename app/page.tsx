@@ -1,11 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
-import { WIZARD_ENTRY_POINTS } from "@/lib/wizard-entry-points";
+import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
 
 type Check = {
   id?: string;
@@ -1263,17 +1273,15 @@ function ProjectSidebar({
   );
 }
 
-function AddProjectTab({
-  onAdd,
-  onSelect,
-  wizardHref,
-  hasProjects,
-}: {
+type AddProjectTabProps = {
   onAdd: (repo: RepoRef) => RepoRef | null;
   onSelect?: (repo: RepoRef) => void;
   wizardHref: string;
   hasProjects: boolean;
-}) {
+};
+
+function AddProjectTab(props: AddProjectTabProps) {
+  const { onAdd, onSelect, wizardHref, hasProjects } = props;
   return (
     <section className="card add-project-card">
       <div className="add-project-header">
@@ -1292,33 +1300,12 @@ function AddProjectTab({
       <div className="add-project-wizard">
         <h3>Choose a guided workflow</h3>
         <p>
-          Match the onboarding wizard to your current milestone. Each card opens the detailed flow in a new tab so you can return
-          here after scaffolding.
+          Match the onboarding wizard to your current milestone. Jump into the playbook for an overview or launch the workspace tools
+          directly when you are ready to build.
         </p>
         <div className="add-project-wizard-grid">
           {WIZARD_ENTRY_POINTS.map((entry) => (
-            <Link
-              key={entry.slug}
-              href={`/wizard/${entry.slug}`}
-              target="_blank"
-              rel="noreferrer"
-              className="add-project-wizard-card"
-            >
-              <div className="add-project-wizard-meta">
-                <span className="add-project-wizard-label">{entry.label}</span>
-                <span className="add-project-wizard-sub">Entry point</span>
-              </div>
-              <div className="add-project-wizard-copy">
-                <h4>{entry.title}</h4>
-                <p>{entry.description}</p>
-              </div>
-              <ul>
-                {entry.bullets.map((bullet) => (
-                  <li key={bullet}>{bullet}</li>
-                ))}
-              </ul>
-              <span className="add-project-wizard-cta">Open workflow →</span>
-            </Link>
+            <WizardEntryCard key={entry.slug} entry={entry} />
           ))}
         </div>
       </div>
@@ -1329,6 +1316,78 @@ function AddProjectTab({
         {hasProjects ? null : <li>Your first project will also appear in the sidebar for quick access.</li>}
       </ul>
     </section>
+  );
+}
+
+function WizardEntryCard({ entry }: { entry: WizardEntryPoint }) {
+  const router = useRouter();
+
+  const handleNavigate = useCallback(() => {
+    router.push(`/wizard/${entry.slug}`);
+  }, [entry.slug, router]);
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        handleNavigate();
+      }
+    },
+    [handleNavigate],
+  );
+
+  const stopPropagation = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+  }, []);
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      className="add-project-wizard-card"
+      onClick={handleNavigate}
+      onKeyDown={handleKeyDown}
+    >
+      <div className="add-project-wizard-meta">
+        <span className="add-project-wizard-label">{entry.label}</span>
+        <span className="add-project-wizard-sub">Entry point</span>
+      </div>
+      <div className="add-project-wizard-copy">
+        <h4>{entry.title}</h4>
+        <p>{entry.description}</p>
+      </div>
+      <ul>
+        {entry.bullets.map((bullet) => (
+          <li key={bullet}>{bullet}</li>
+        ))}
+      </ul>
+      <div className="add-project-wizard-actions">
+        <Link
+          href={`/wizard/${entry.slug}`}
+          className="add-project-wizard-action add-project-wizard-action--primary"
+          onClick={stopPropagation}
+        >
+          View playbook
+        </Link>
+        {entry.tools?.map((tool) => (
+          <Link
+            key={tool.href}
+            href={tool.href}
+            className="add-project-wizard-action"
+            onClick={stopPropagation}
+          >
+            {tool.label}
+          </Link>
+        ))}
+      </div>
+      {entry.tools?.map((tool) =>
+        tool.description ? (
+          <p key={`${tool.href}-note`} className="add-project-wizard-note">
+            {tool.description}
+          </p>
+        ) : null
+      )}
+    </article>
   );
 }
 

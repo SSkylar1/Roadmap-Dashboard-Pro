@@ -1,5 +1,5 @@
 import Link from "next/link";
- 
+
 import { WIZARD_ENTRY_POINTS } from "@/lib/wizard-entry-points";
 
 export default function WizardLandingPage() {
@@ -19,9 +19,8 @@ export default function WizardLandingPage() {
 
       <div className="tw-grid tw-gap-6 md:tw-grid-cols-2">
         {WIZARD_ENTRY_POINTS.map((entry) => (
-          <Link
+          <div
             key={entry.slug}
-            href={`/wizard/${entry.slug}`}
             className="tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8 tw-flex tw-flex-col tw-gap-6 tw-h-full tw-transition tw-duration-200 tw-ease-out tw-transform hover:tw-border-slate-700 hover:tw-shadow-xl hover:tw-translate-y-[-4px]"
           >
             <div className="tw-inline-flex tw-items-center tw-gap-2 tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-300">
@@ -46,11 +45,34 @@ export default function WizardLandingPage() {
               ))}
             </ul>
 
-            <div className="tw-inline-flex tw-items-center tw-gap-2 tw-text-sm tw-font-medium tw-text-slate-100">
-              <span>Open workflow</span>
-              <span aria-hidden="true">→</span>
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
+              <Link
+                href={`/wizard/${entry.slug}`}
+                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-bg-slate-100 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out hover:tw-bg-slate-200"
+              >
+                <span>View playbook</span>
+                <span aria-hidden="true">→</span>
+              </Link>
+              {entry.tools?.map((tool) => (
+                <Link
+                  key={tool.href}
+                  href={tool.href}
+                  className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100"
+                >
+                  <span>{tool.label}</span>
+                  <span aria-hidden="true">↗</span>
+                </Link>
+              ))}
             </div>
-          </Link>
+
+            {entry.tools?.map((tool) =>
+              tool.description ? (
+                <p key={`${tool.href}-note`} className="tw-text-xs tw-leading-relaxed tw-text-slate-400">
+                  {tool.description}
+                </p>
+              ) : null
+            )}
+          </div>
         ))}
       </div>
     </section>
