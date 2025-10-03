@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "next/link"; 
 import {
   Suspense,
   type FormEvent,
@@ -1301,13 +1301,13 @@ function AddProjectTab({
       </div>
       <div className="add-project-wizard">
         <h3>Choose a guided workflow</h3>
-        <p>
+        <p> 
           Match the onboarding wizard to your current milestone. Jump into the playbook for an overview or launch the workspace tools
           directly when you are ready to build.
         </p>
         <div className="add-project-wizard-grid">
           {WIZARD_ENTRY_POINTS.map((entry) => (
-            <WizardEntryCard key={entry.slug} entry={entry} />
+            <WizardEntryCard key={entry.slug} entry={entry} /
           ))}
         </div>
       </div>

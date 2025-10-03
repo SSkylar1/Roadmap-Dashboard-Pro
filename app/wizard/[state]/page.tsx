@@ -5,7 +5,7 @@ const STAGES = {
   "new-idea": {
     label: "Ideation",
     title: "New Idea Brainstorming",
-    description:
+    description: 
       "Capture and expand every spark with a persistent AI workspace that keeps your ideas tethered to future execution.",
     cta: {
       eyebrow: "Live AI workspace",
