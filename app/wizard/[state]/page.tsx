@@ -1,6 +1,33 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+type StageTool = {
+  href: string;
+  label: string;
+  description?: string;
+};
+
+type StageConfig = {
+  label: string;
+  title: string;
+  description: string;
+  cta?: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    action: { href: string; label: string };
+    note: string;
+  };
+  sections: {
+    id: string;
+    title: string;
+    summary: string;
+    checklist: { title: string; detail: string }[];
+  }[];
+  resources: { label: string; href: string }[];
+  tools?: StageTool[];
+};
+
 const STAGES = {
   "new-idea": {
     label: "Ideation",
@@ -18,6 +45,14 @@ const STAGES = {
       },
       note: "Opens the interactive chat where each turn is saved to /tmp/ideas and can be promoted into docs/idea-log.md.",
     },
+    tools: [
+      {
+        href: "/wizard/brainstorm",
+        label: "Launch idea workspace",
+        description:
+          "Open the AI chat that logs every turn and can be promoted into docs/idea-log.md.",
+      },
+    ],
     sections: [
       {
         id: "canvas",
@@ -84,6 +119,14 @@ const STAGES = {
       },
       note: "Launches the upload + AI generation experience with repo commit controls.",
     },
+    tools: [
+      {
+        href: "/wizard/concept/workspace",
+        label: "Open roadmap drafting workspace",
+        description:
+          "Paste your brief or upload a file, generate docs/roadmap.yml, and commit it to the repo.",
+      },
+    ],
     sections: [
       {
         id: "ingest",
@@ -147,6 +190,14 @@ const STAGES = {
       },
       note: "Commits docs/roadmap.yml along with docs/infra-facts.md, docs/tech-stack.yml, and .github/workflows/roadmap.yml if they are missing.",
     },
+    tools: [
+      {
+        href: "/wizard/roadmap/workspace",
+        label: "Launch provisioning workspace",
+        description:
+          "Upload an existing roadmap.yml, validate it, and scaffold infra-facts, tech stack, and roadmap workflow files.",
+      },
+    ],
     sections: [
       {
         id: "sync",
@@ -211,6 +262,14 @@ const STAGES = {
       },
       note: "Generates docs/roadmap-status.json, docs/project-plan.md, and docs/backlog-discovered.yml so the dashboard is already current.",
     },
+    tools: [
+      {
+        href: "/wizard/midproject/workspace",
+        label: "Launch mid-project sync",
+        description:
+          "Run status + discover workflows and preview backlog discoveries before opening the dashboard.",
+      },
+    ],
     sections: [
       {
         id: "ingest",
@@ -259,7 +318,7 @@ const STAGES = {
       { label: "Trigger discover run", href: "/api/discover" },
     ],
   },
-} as const;
+} as const satisfies Record<string, StageConfig>;
 
 type StageKey = keyof typeof STAGES;
 
@@ -313,6 +372,35 @@ export default function WizardStatePage({ params }: WizardStatePageProps) {
           </div>
         </div>
       )}
+
+      {stage.tools?.length ? (
+        <div className="tw-space-y-3">
+          <h2 className="tw-text-sm tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-300">
+            Access the workspace
+          </h2>
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
+            {stage.tools.map((tool) => (
+              <Link
+                key={tool.href}
+                href={tool.href}
+                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100"
+              >
+                <span>{tool.label}</span>
+                <span aria-hidden="true">↗</span>
+              </Link>
+            ))}
+          </div>
+          {stage.tools.some((tool) => Boolean(tool.description)) ? (
+            <ul className="tw-space-y-1 tw-text-xs tw-text-slate-400">
+              {stage.tools.map((tool) =>
+                tool.description ? (
+                  <li key={`${tool.href}-description`}>{tool.description}</li>
+                ) : null,
+              )}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="tw-grid tw-gap-6 md:tw-grid-cols-2">
         {stage.sections.map((section) => (

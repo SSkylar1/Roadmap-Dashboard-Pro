@@ -132,6 +132,16 @@ export default function MidProjectSyncWorkspace() {
 
   return (
     <div className="tw-space-y-10">
+      <div>
+        <Link
+          href="/wizard/mid-build"
+          className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-300 hover:tw-border-slate-700 hover:tw-text-slate-100"
+        >
+          <span aria-hidden="true">←</span>
+          <span>Back to mid-project playbook</span>
+        </Link>
+      </div>
+
       <header className="tw-space-y-3">
         <span className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-300">
           Mid-project sync
