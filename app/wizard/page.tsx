@@ -1,5 +1,5 @@
 import Link from "next/link";
-
+ 
 import { WIZARD_ENTRY_POINTS } from "@/lib/wizard-entry-points";
 
 export default function WizardLandingPage() {
