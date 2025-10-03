@@ -242,7 +242,10 @@ export default function MidProjectSyncWorkspace() {
       </form>
 
       <section className="tw-grid tw-gap-6 xl:tw-grid-cols-2">
-        <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
+        <div
+          id="discover"
+          className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8"
+        >
           <div className="tw-flex tw-items-center tw-justify-between tw-gap-3">
             <div>
               <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Roadmap status</h2>

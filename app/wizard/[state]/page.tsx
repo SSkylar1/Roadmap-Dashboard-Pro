@@ -315,7 +315,7 @@ const STAGES = {
     resources: [
       { label: "Back to wizard", href: "/wizard" },
       { label: "Launch mid-project sync", href: "/wizard/midproject/workspace" },
-      { label: "Trigger discover run", href: "/api/discover" },
+      { label: "Run discovery workflow", href: "/wizard/midproject/workspace#discover" },
     ],
   },
 } as const satisfies Record<string, StageConfig>;
