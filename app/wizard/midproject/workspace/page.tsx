@@ -161,6 +161,11 @@ export default function MidProjectSyncWorkspace() {
     ? new Date(lastDiscoveryAt).toLocaleString()
     : null;
 
+  const seededDiscover = useMemo(
+    () => discoverArtifacts.some((path) => path.startsWith("docs/discover.yml")),
+    [discoverArtifacts],
+  );
+
   const contextGeneratedAt = contextPack?.generated_at
     ? new Date(contextPack.generated_at).toLocaleString()
     : null;
@@ -466,6 +471,14 @@ export default function MidProjectSyncWorkspace() {
               Use <span className="tw-font-semibold tw-text-slate-200">Run discovery</span> to surface completed work that never landed on the roadmap.
             </div>
           )}
+          {seededDiscover ? (
+            <div className="tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4 tw-text-xs tw-text-emerald-100">
+              <div className="tw-font-semibold">Default discovery config created</div>
+              <p className="tw-mt-1 tw-text-emerald-100/80">
+                We added <code className="tw-rounded tw-bg-emerald-500/20 tw-px-1 tw-py-0.5">docs/discover.yml</code> to your repo with starter queries and globs. Update that file in GitHub to refine discovery results.
+              </p>
+            </div>
+          ) : null}
         </div>
 
         <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">

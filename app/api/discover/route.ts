@@ -12,6 +12,14 @@ const READ_ONLY_CHECKS_URL = process.env.READ_ONLY_CHECKS_URL || "";
 
 const DEFAULT_DB_QUERIES = ["ext:pgcrypto"];
 const DEFAULT_CODE_GLOBS = ["src/screens/**/*.{tsx,ts}"];
+const DEFAULT_DISCOVER_YAML = `# docs/discover.yml
+# Customize these queries and code globs to surface completed work
+# that never landed on your roadmap.
+db_queries:
+  - ext:pgcrypto
+code_globs:
+  - src/screens/**/*.{tsx,ts}
+`;
 
 type ProbeResult = { q: string; ok: boolean; why?: string };
 type DiscoverConfig = {
@@ -55,7 +63,12 @@ async function probeSupabase(queries: string[], overrideUrl?: string): Promise<P
     });
 
     if (!response.ok) {
-      return queries.map((q) => ({ q, ok: false, why: String(response.status) }));
+      const detail = await response
+        .text()
+        .then((text) => text.trim())
+        .catch(() => "");
+      const why = detail ? `${response.status} ${detail}` : String(response.status);
+      return queries.map((q) => ({ q, ok: false, why }));
     }
 
     const json = await response.json().catch(() => ({}));
@@ -180,6 +193,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
 
+    const wrote: string[] = [];
+
     const statusRaw = await getFileRaw(owner, repo, "docs/roadmap-status.json", branch).catch(() => null);
     const doneNames = new Set<string>();
     if (statusRaw) {
@@ -196,7 +211,21 @@ export async function POST(req: NextRequest) {
     }
 
     const discoverRaw = await getFileRaw(owner, repo, "docs/discover.yml", branch).catch(() => null);
+    const missingDiscover = !discoverRaw;
     const config = parseDiscoverConfig(discoverRaw);
+
+    if (missingDiscover) {
+      await safePut(
+        owner,
+        repo,
+        branch,
+        "docs/discover.yml",
+        DEFAULT_DISCOVER_YAML,
+        "chore(roadmap): seed discover config [skip ci]",
+        wrote,
+      );
+      config.notes.push("Seeded docs/discover.yml with default discovery settings. Update this file to refine probes.");
+    }
 
     const dbResults = await probeSupabase(config.db_queries, probeUrl);
     const dbSuccesses = dbResults.filter((result) => result.ok).map((result) => result.q);
@@ -223,8 +252,6 @@ export async function POST(req: NextRequest) {
         discovered.push({ id: slugify(`code-${path}`), title, status: "complete" });
       }
     }
-
-    const wrote: string[] = [];
 
     await safePut(
       owner,
