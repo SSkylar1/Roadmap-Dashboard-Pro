@@ -86,10 +86,16 @@ async function fetchViaContentsAPI(owner: string, repo: string, path: string, re
   }
 }
 /** raw.githubusercontent.com (unauth) */
-async function fetchViaRaw(owner: string, repo: string, path: string, ref: string) {
+function rawHeaders(token?: string) {
+  const headers = ghHeaders(token);
+  headers.Accept = "application/vnd.github.v3.raw";
+  return headers;
+}
+
+async function fetchViaRaw(owner: string, repo: string, path: string, ref: string, token?: string) {
   const encodedPath = encodeGitHubPath(path);
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
-  const r = await fetch(url, { headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
+  const r = await fetch(url, { headers: rawHeaders(token), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) return null;
   return r.text();
 }
@@ -97,7 +103,7 @@ async function fetchViaRaw(owner: string, repo: string, path: string, ref: strin
 async function loadFile(owner: string, repo: string, path: string, ref: string, token?: string) {
   const viaApi = await fetchViaContentsAPI(owner, repo, path, ref, token);
   if (viaApi !== null) return viaApi;
-  const viaRaw = await fetchViaRaw(owner, repo, path, ref);
+  const viaRaw = await fetchViaRaw(owner, repo, path, ref, token);
   if (viaRaw !== null) return viaRaw;
   return null;
 }
@@ -111,7 +117,7 @@ async function fileExists(owner: string, repo: string, path: string, ref: string
     if (r.ok) return true;
   }
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
-  const r = await fetch(url, { method: "GET", headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
+  const r = await fetch(url, { method: "GET", headers: rawHeaders(token), next: { revalidate: REVALIDATE_SECS } });
   return r.ok;
 }
 
