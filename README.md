@@ -39,6 +39,7 @@ Add env vars (Production + Preview):
 - **GitHub App**: `GH_APP_ID`, `GH_APP_PRIVATE_KEY` (`GH_APP_INSTALLATION_ID` optional; the setup wizard will look it up)
 - or **PAT**: `GITHUB_TOKEN`
 - `READ_ONLY_CHECKS_URL` for the verify API
+- (optional) `READ_ONLY_CHECKS_HEADERS` when your Supabase function requires auth headers (JSON string or `Key: Value` pairs separated by semicolons/newlines)
 - (optional) `GITHUB_WEBHOOK_SECRET` if you add a webhook
 
 > **Security tip:** Store these secrets in your deployment platform (e.g., Vercel env vars) or in a local `.env.local` file for development. Do **not** commit GitHub App credentials to your roadmap repo—no branch should contain the raw private key.

@@ -7,6 +7,7 @@ import micromatch from "micromatch";
 import yaml from "js-yaml";
 
 import { getFileRaw, listRepoTreePaths, putFile } from "@/lib/github";
+import { parseProbeHeaders, probeReadOnlyCheck, type ProbeHeaders } from "@/lib/read-only-probe";
 
 const READ_ONLY_CHECKS_URL = process.env.READ_ONLY_CHECKS_URL || "";
 
@@ -21,7 +22,7 @@ code_globs:
   - src/screens/**/*.{tsx,ts}
 `;
 
-type ProbeResult = { q: string; ok: boolean; why?: string };
+type ProbeResult = { q: string; ok: boolean; why?: string; status?: number };
 type DiscoverConfig = {
   db_queries: string[];
   code_globs: string[];
@@ -49,35 +50,26 @@ function ensureStringList(value: unknown, fallback: string[]): string[] {
   return filtered.length ? filtered : fallback;
 }
 
-async function probeSupabase(queries: string[], overrideUrl?: string): Promise<ProbeResult[]> {
+const ENV_PROBE_HEADERS: ProbeHeaders = parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS);
+
+async function probeSupabase(
+  queries: string[],
+  overrideUrl?: string,
+  overrideHeaders?: ProbeHeaders,
+): Promise<ProbeResult[]> {
   const url = overrideUrl?.trim() || READ_ONLY_CHECKS_URL;
   if (!url) {
     return queries.map((q) => ({ q, ok: false, why: "READ_ONLY_CHECKS_URL not configured" }));
   }
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ queries }),
-    });
-
-    if (!response.ok) {
-      const detail = await response
-        .text()
-        .then((text) => text.trim())
-        .catch(() => "");
-      const why = detail ? `${response.status} ${detail}` : String(response.status);
-      return queries.map((q) => ({ q, ok: false, why }));
-    }
-
-    const json = await response.json().catch(() => ({}));
-    const arr = Array.isArray(json?.results) ? json.results : [];
-    const byQuery = new Map(arr.map((entry: any) => [entry?.q, !!entry?.ok]));
-    return queries.map((q) => ({ q, ok: !!byQuery.get(q) }));
-  } catch (error: any) {
-    return queries.map((q) => ({ q, ok: false, why: error?.message || String(error) }));
-  }
+  const headers: ProbeHeaders = { ...ENV_PROBE_HEADERS, ...(overrideHeaders || {}) };
+  const results = await Promise.all(
+    queries.map(async (query) => {
+      const outcome = await probeReadOnlyCheck(url, query, headers);
+      return { q: query, ok: outcome.ok, why: outcome.why, status: outcome.status };
+    }),
+  );
+  return results;
 }
 
 function parseDiscoverConfig(raw: string | null): DiscoverConfig {
@@ -192,7 +184,7 @@ async function safePut(
 
 export async function POST(req: NextRequest) {
   try {
-    const { owner, repo, branch = "main", probeUrl } = await req.json();
+    const { owner, repo, branch = "main", probeUrl, probeHeaders } = await req.json();
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
@@ -235,7 +227,8 @@ export async function POST(req: NextRequest) {
       config.notes.push("Seeded docs/discover.yml with default discovery settings. Update this file to refine probes.");
     }
 
-    const dbResults = await probeSupabase(config.db_queries, probeUrl);
+    const overrideHeaders = parseProbeHeaders(probeHeaders);
+    const dbResults = await probeSupabase(config.db_queries, probeUrl, overrideHeaders);
     const dbSuccesses = dbResults.filter((result) => result.ok).map((result) => result.q);
     const dbFailures = dbResults.filter((result) => !result.ok);
 
