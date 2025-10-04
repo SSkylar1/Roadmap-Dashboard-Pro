@@ -94,18 +94,21 @@ export async function POST(req: NextRequest) {
     const branch =
       typeof payload?.branch === "string" && payload.branch.trim() ? payload.branch.trim() : "main";
     const probeUrl = typeof payload?.probeUrl === "string" ? payload.probeUrl : undefined;
-    const requestProbeHeaders = parseProbeHeaders(
-      req.headers.get("x-supabase-headers") ?? req.headers.get("x-probe-headers")
-    );
-    const payloadProbeHeaders = parseProbeHeaders(
+    const rawRequestProbeHeaders =
+      req.headers.get("x-supabase-headers") ??
+      req.headers.get("x-probe-headers") ??
+      req.headers.get("x-discovery-headers");
+    const requestProbeHeaders = parseProbeHeaders(rawRequestProbeHeaders);
+
+    const rawPayloadProbeHeaders =
       (payload &&
         (payload.probeHeaders ??
           payload.probe_headers ??
           payload.supabaseHeaders ??
           payload.supabase_headers ??
           payload.headers)) ||
-        undefined
-    );
+      undefined;
+    const payloadProbeHeaders = parseProbeHeaders(rawPayloadProbeHeaders);
     const combinedProbeHeaders: ProbeHeaders = {
       ...ENV_PROBE_HEADERS,
       ...requestProbeHeaders,
