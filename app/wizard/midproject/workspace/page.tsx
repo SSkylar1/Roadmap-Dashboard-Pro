@@ -65,10 +65,12 @@ export default function MidProjectSyncWorkspace() {
   const [dbProbes, setDbProbes] = useState<ProbeResult[]>([]);
   const [codeMatches, setCodeMatches] = useState<string[]>([]);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [lastDiscoveryAt, setLastDiscoveryAt] = useState<string | null>(null);
 
   const [error, setError] = useState<ErrorState>(null);
   const [contextError, setContextError] = useState<ErrorState>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isDiscovering, setIsDiscovering] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
   const [contextPack, setContextPack] = useState<ContextPack | null>(null);
@@ -81,6 +83,7 @@ export default function MidProjectSyncWorkspace() {
     : null;
 
   const canSubmit = Boolean(!isSyncing && repoSlug);
+  const canDiscover = Boolean(!isDiscovering && !isSyncing && repoSlug);
   const branchParam = branch.trim() || "main";
 
   async function handleSync(event: FormEvent<HTMLFormElement>) {
@@ -101,6 +104,8 @@ export default function MidProjectSyncWorkspace() {
     setCodeMatches([]);
     setContextPack(null);
     setContextError(null);
+    setLastSyncedAt(null);
+    setLastDiscoveryAt(null);
 
     const payload = {
       owner: owner.trim(),
@@ -132,22 +137,10 @@ export default function MidProjectSyncWorkspace() {
         setStatus(null);
       }
 
-      const discoverResponse = await fetch("/api/discover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const discoverJson = (await discoverResponse.json()) as DiscoverResponse;
-      if (!discoverResponse.ok || discoverJson?.ok === false || discoverJson?.error) {
-        throw new Error(discoverJson?.error || "Discover run failed");
-      }
-      setDiscoverArtifacts(discoverJson?.wrote ?? []);
-      setBacklog(discoverJson?.items ?? []);
-      setDiscoverConfig(discoverJson?.config ?? null);
-      setDbProbes(discoverJson?.db ?? []);
-      setCodeMatches(discoverJson?.code_matches ?? []);
+      await runDiscovery(payload);
 
-      setLastSyncedAt(new Date().toISOString());
+      const nowIso = new Date().toISOString();
+      setLastSyncedAt(nowIso);
     } catch (err: any) {
       setError({
         title: "Sync failed",
@@ -164,6 +157,10 @@ export default function MidProjectSyncWorkspace() {
     ? new Date(lastSyncedAt).toLocaleString()
     : null;
 
+  const discoveryGeneratedAt = lastDiscoveryAt
+    ? new Date(lastDiscoveryAt).toLocaleString()
+    : null;
+
   const contextGeneratedAt = contextPack?.generated_at
     ? new Date(contextPack.generated_at).toLocaleString()
     : null;
@@ -172,6 +169,65 @@ export default function MidProjectSyncWorkspace() {
     [contextPack],
   );
   const contextFiles = useMemo(() => Object.keys(contextPack?.files ?? {}), [contextPack]);
+
+  const runDiscovery = useCallback(
+    async (payload: { owner: string; repo: string; branch: string; probeUrl?: string }) => {
+      const discoverResponse = await fetch("/api/discover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const discoverJson = (await discoverResponse.json()) as DiscoverResponse;
+      if (!discoverResponse.ok || discoverJson?.ok === false || discoverJson?.error) {
+        throw new Error(discoverJson?.error || "Discover run failed");
+      }
+      setDiscoverArtifacts(discoverJson?.wrote ?? []);
+      setBacklog(discoverJson?.items ?? []);
+      setDiscoverConfig(discoverJson?.config ?? null);
+      setDbProbes(discoverJson?.db ?? []);
+      setCodeMatches(discoverJson?.code_matches ?? []);
+      const nowIso = new Date().toISOString();
+      setLastDiscoveryAt(nowIso);
+    },
+    [],
+  );
+
+  const handleDiscoverOnly = useCallback(async () => {
+    if (!repoSlug) {
+      setError({
+        title: "Provide owner and repository",
+        detail: "Fill both fields before running discovery.",
+      });
+      return;
+    }
+
+    const payload = {
+      owner: owner.trim(),
+      repo: repo.trim(),
+      branch: branch.trim() || "main",
+      ...(probeUrl.trim() ? { probeUrl: probeUrl.trim() } : {}),
+    };
+
+    setIsDiscovering(true);
+    setError(null);
+    setDiscoverArtifacts([]);
+    setBacklog([]);
+    setDiscoverConfig(null);
+    setDbProbes([]);
+    setCodeMatches([]);
+    setLastDiscoveryAt(null);
+
+    try {
+      await runDiscovery(payload);
+    } catch (err: any) {
+      setError({
+        title: "Discovery failed",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setIsDiscovering(false);
+    }
+  }, [branch, owner, probeUrl, repo, repoSlug, runDiscovery]);
 
   const handleExportContext = useCallback(async () => {
     if (!repoSlug) {
@@ -362,16 +418,31 @@ export default function MidProjectSyncWorkspace() {
         </div>
 
         <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
-          <div className="tw-flex tw-items-center tw-justify-between tw-gap-3">
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
             <div>
               <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Backlog discoveries</h2>
               <p className="tw-text-sm tw-text-slate-300">Preview of docs/backlog-discovered.yml entries to triage.</p>
             </div>
-            {discoverArtifacts.length ? (
-              <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
-                {discoverArtifacts.length} files touched
-              </span>
-            ) : null}
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
+              {discoverArtifacts.length ? (
+                <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
+                  {discoverArtifacts.length} files touched
+                </span>
+              ) : null}
+              {discoveryGeneratedAt ? (
+                <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
+                  Discovery {discoveryGeneratedAt}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={handleDiscoverOnly}
+                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-xs tw-font-semibold tw-text-slate-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100 disabled:tw-cursor-not-allowed disabled:tw-border-slate-800 disabled:tw-text-slate-500"
+                disabled={!canDiscover}
+              >
+                {isDiscovering ? "Running…" : "Run discovery"}
+              </button>
+            </div>
           </div>
           {backlog.length ? (
             <ul className="tw-space-y-3">
@@ -392,19 +463,23 @@ export default function MidProjectSyncWorkspace() {
             </ul>
           ) : (
             <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-8 tw-text-center tw-text-sm tw-text-slate-400">
-              Discover runs will surface completed work that never landed on the roadmap.
+              Use <span className="tw-font-semibold tw-text-slate-200">Run discovery</span> to surface completed work that never landed on the roadmap.
             </div>
           )}
         </div>
 
         <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
-          <div className="tw-flex tw-flex-col tw-gap-1">
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-2">
             <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Supabase probes</h2>
-            <p className="tw-text-sm tw-text-slate-300">
-              Results from <code className="tw-rounded tw-bg-slate-950 tw-px-1.5 tw-py-0.5">db_queries</code> in
-              docs/discover.yml.
-            </p>
+            {discoveryGeneratedAt ? (
+              <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
+                Discovery {discoveryGeneratedAt}
+              </span>
+            ) : null}
           </div>
+          <p className="tw-text-sm tw-text-slate-300">
+            Results from <code className="tw-rounded tw-bg-slate-950 tw-px-1.5 tw-py-0.5">db_queries</code> in docs/discover.yml.
+          </p>
           {discoverConfig?.db_queries?.length ? (
             <p className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-slate-400">
               {discoverConfig.db_queries.length} query{discoverConfig.db_queries.length === 1 ? "" : "ies"} configured
@@ -447,11 +522,18 @@ export default function MidProjectSyncWorkspace() {
         </div>
 
         <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
-          <div className="tw-flex tw-flex-col tw-gap-1">
-            <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Code path matches</h2>
-            <p className="tw-text-sm tw-text-slate-300">
-              Globs from docs/discover.yml matched against the repository tree.
-            </p>
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-2">
+            <div>
+              <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Code path matches</h2>
+              <p className="tw-text-sm tw-text-slate-300">
+                Globs from docs/discover.yml matched against the repository tree.
+              </p>
+            </div>
+            {discoveryGeneratedAt ? (
+              <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
+                Discovery {discoveryGeneratedAt}
+              </span>
+            ) : null}
           </div>
           {discoverConfig?.code_globs?.length ? (
             <p className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-slate-400">
