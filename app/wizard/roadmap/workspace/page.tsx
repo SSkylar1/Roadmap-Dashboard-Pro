@@ -19,6 +19,9 @@ type SuccessState = {
   skipped: string[];
   owner: string;
   repo: string;
+  branch?: string;
+  prUrl?: string;
+  pullRequestNumber?: number;
 } | null;
 
 type UploadState = {
@@ -30,6 +33,9 @@ type ImportResponse = {
   ok: boolean;
   created?: string[];
   skipped?: string[];
+  branch?: string;
+  prUrl?: string;
+  pullRequestNumber?: number;
   error?: string;
   detail?: string;
 };
@@ -62,10 +68,11 @@ function RoadmapProvisionerInner() {
   const [uploadKey, setUploadKey] = useState(0);
   const secrets = useLocalSecrets();
   const githubConfigured = Boolean(secrets.githubPat);
+  const [openAsPr, setOpenAsPr] = useState(false);
 
   const roadmapPreview = useMemo(() => roadmap.trim(), [roadmap]);
   const hasRoadmap = Boolean(roadmapPreview);
-  const canSubmit = Boolean(!isSubmitting && owner && repo && hasRoadmap);
+  const canSubmit = Boolean(!isSubmitting && owner && repo && branch && hasRoadmap);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -121,13 +128,14 @@ function RoadmapProvisionerInner() {
         headers["x-github-pat"] = secrets.githubPat;
       }
 
-      const response = await fetch("/api/roadmap/import", {
+      const endpoint = openAsPr ? "/api/roadmap/import?asPR=true" : "/api/roadmap/import";
+      const response = await fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify({ owner, repo, branch, roadmap }),
       });
 
-      const payload = (await response.json()) as ImportResponse;
+      const payload = (await response.json().catch(() => ({}))) as ImportResponse;
       if (!response.ok || !payload?.ok) {
         const title = payload?.error ?? "Failed to import roadmap";
         setError({ title, detail: payload?.detail });
@@ -139,6 +147,9 @@ function RoadmapProvisionerInner() {
         skipped: payload.skipped ?? [],
         owner,
         repo,
+        branch: payload.branch ?? branch,
+        prUrl: payload.prUrl,
+        pullRequestNumber: payload.pullRequestNumber,
       });
     } catch (err: any) {
       setError({ title: "Request failed", detail: err instanceof Error ? err.message : String(err) });
@@ -258,11 +269,30 @@ function RoadmapProvisionerInner() {
           ) : null}
 
           {success ? (
-            <div className="tw-rounded-2xl tw-border tw-border-emerald-700 tw-bg-emerald-950/40 tw-p-4 tw-space-y-2">
-              <h3 className="tw-text-sm tw-font-semibold tw-text-emerald-200">Roadmap imported successfully</h3>
-              <p className="tw-text-xs tw-text-emerald-100">
-                Created {success.created.length} files{success.skipped.length ? `, skipped ${success.skipped.length} existing` : ""}.
-              </p>
+            <div className="tw-rounded-2xl tw-border tw-border-emerald-700 tw-bg-emerald-950/40 tw-p-4 tw-space-y-3">
+              <div>
+                <h3 className="tw-text-sm tw-font-semibold tw-text-emerald-200">Roadmap imported successfully</h3>
+                <p className="tw-text-xs tw-text-emerald-100">
+                  Created {success.created.length} files
+                  {success.skipped.length ? `, skipped ${success.skipped.length} existing` : ""}.
+                </p>
+                {success.branch ? (
+                  <p className="tw-mt-1 tw-text-xs tw-text-emerald-200/80">
+                    Changes pushed to <code className="tw-font-mono tw-text-[11px]">{success.branch}</code>.
+                  </p>
+                ) : null}
+              </div>
+              {success.prUrl ? (
+                <a
+                  href={success.prUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-500 tw-bg-emerald-600/10 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-emerald-100 hover:tw-bg-emerald-600/20"
+                >
+                  View {success.pullRequestNumber ? `PR #${success.pullRequestNumber}` : "pull request"}
+                  <span aria-hidden="true">↗</span>
+                </a>
+              ) : null}
               {dashboardHref ? (
                 <Link
                   href={dashboardHref}
@@ -275,7 +305,7 @@ function RoadmapProvisionerInner() {
             </div>
           ) : null}
 
-          <div className="tw-flex tw-items-center tw-gap-3">
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
             <button
               type="submit"
               disabled={!canSubmit}
@@ -283,8 +313,19 @@ function RoadmapProvisionerInner() {
             >
               {isSubmitting ? "Importing…" : "Import & scaffold"}
             </button>
+            <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-px-3 tw-py-1.5 tw-text-xs tw-font-medium tw-text-slate-200">
+              <input
+                type="checkbox"
+                checked={openAsPr}
+                onChange={(event) => setOpenAsPr(event.target.checked)}
+                className="tw-h-3.5 tw-w-3.5 tw-rounded tw-border tw-border-slate-700 tw-bg-slate-900 tw-text-emerald-400 focus:tw-ring-emerald-400"
+              />
+              <span>Open as pull request</span>
+            </label>
             <p className="tw-text-xs tw-text-slate-400">
-              We will commit docs/roadmap.yml and scaffold supporting artifacts directly to {branch}.
+              {openAsPr
+                ? "Creates a new branch and opens a PR with the roadmap scaffolding."
+                : `Commits docs/roadmap.yml and scaffolding directly to ${success?.branch ?? branch}.`}
             </p>
           </div>
         </section>

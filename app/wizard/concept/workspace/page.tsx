@@ -16,11 +16,18 @@ import { useSearchParams } from "next/navigation";
 import { useLocalSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
-type SuccessState = string | null;
+type SuccessState = { message: string; prUrl?: string } | null;
 
 type GenerateResponse = { roadmap: string };
 
-type CommitResponse = { ok: boolean };
+type CommitResponse = {
+  ok: boolean;
+  branch?: string;
+  prUrl?: string;
+  pullRequestNumber?: number;
+  error?: string;
+  detail?: string;
+};
 
 type UploadState = {
   name: string;
@@ -118,6 +125,7 @@ function ConceptWizardPageInner() {
   const [roadmap, setRoadmap] = useState("");
   const [error, setError] = useState<ErrorState>(null);
   const [success, setSuccess] = useState<SuccessState>(null);
+  const [openAsPr, setOpenAsPr] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
   const previewRef = useRef<HTMLPreElement | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -144,7 +152,7 @@ function ConceptWizardPageInner() {
   }, [roadmap]);
 
   const canGenerate = Boolean(!isGenerating && combinedPrompt);
-  const canCommit = Boolean(!isCommitting && roadmap.trim() && owner && repo);
+  const canCommit = Boolean(!isCommitting && roadmap.trim() && owner && repo && branch);
 
   async function onGenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -179,7 +187,7 @@ function ConceptWizardPageInner() {
 
       const data = (await response.json()) as GenerateResponse;
       setRoadmap(data.roadmap.trim());
-      setSuccess("Draft roadmap ready. Review and edit before committing to your repo.");
+      setSuccess({ message: "Draft roadmap ready. Review and edit before committing to your repo." });
     } catch (err) {
       setError({ title: "Generation failed", detail: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -251,25 +259,41 @@ function ConceptWizardPageInner() {
         headers["x-github-pat"] = secrets.githubPat;
       }
 
-      const response = await fetch("/api/concept/commit", {
+      const endpoint = openAsPr ? "/api/concept/commit?asPR=true" : "/api/concept/commit";
+      const response = await fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify({ owner, repo, branch: branch || "main", content: roadmap }),
       });
 
+      const detail = (await response.json().catch(() => ({}))) as CommitResponse;
+
       if (!response.ok) {
-        const detail = await response.json().catch(() => ({}));
-        const title = typeof detail.error === "string" ? detail.error : "Commit failed";
-        const info = typeof detail.detail === "string" ? detail.detail : undefined;
+        const title = typeof detail?.error === "string" ? detail.error : "Commit failed";
+        const info = typeof detail?.detail === "string" ? detail.detail : undefined;
         setError({ title, detail: info });
         return;
       }
 
-      const data = (await response.json()) as CommitResponse;
-      if (data.ok) {
-        setSuccess("docs/roadmap.yml created in your repo. Open a PR or keep iterating on the plan.");
+      if (detail.ok) {
+        if (openAsPr) {
+          if (detail.prUrl) {
+            const label = detail.pullRequestNumber ? `PR #${detail.pullRequestNumber}` : "Pull request";
+            setSuccess({
+              message: `${label} opened for docs/roadmap.yml.`,
+              prUrl: detail.prUrl,
+            });
+          } else {
+            setSuccess({
+              message: "Pull request opened for docs/roadmap.yml. Check GitHub to review and merge.",
+            });
+          }
+        } else {
+          const targetBranch = detail.branch ?? branch;
+          setSuccess({ message: `docs/roadmap.yml committed to ${targetBranch}.` });
+        }
       } else {
-        setError({ title: "Unexpected response", detail: "The commit endpoint did not confirm success." });
+        setError({ title: detail?.error ?? "Unexpected response", detail: detail?.detail });
       }
     } catch (err) {
       setError({ title: "Commit failed", detail: err instanceof Error ? err.message : String(err) });
@@ -373,8 +397,19 @@ function ConceptWizardPageInner() {
             </div>
           )}
           {success && !error && (
-            <div className="tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4 tw-text-sm tw-text-emerald-200">
-              {success}
+            <div className="tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4 tw-text-sm tw-text-emerald-200 tw-space-y-2">
+              <p className="tw-font-semibold">{success.message}</p>
+              {success.prUrl && (
+                <a
+                  href={success.prUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="tw-inline-flex tw-items-center tw-gap-2 tw-text-xs tw-font-semibold tw-text-emerald-200/90 hover:tw-text-emerald-100"
+                >
+                  View on GitHub
+                  <span aria-hidden="true">↗</span>
+                </a>
+              )}
             </div>
           )}
         </div>
@@ -383,11 +418,11 @@ function ConceptWizardPageInner() {
       <div className="tw-grid tw-gap-4">
         <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
           <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">docs/roadmap.yml</h2>
-          <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
-            <input
-              value={owner}
-              onChange={(event) => setOwner(event.target.value)}
-              placeholder="owner"
+        <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
+          <input
+            value={owner}
+            onChange={(event) => setOwner(event.target.value)}
+            placeholder="owner"
               className="tw-w-32 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
             />
             <span className="tw-text-slate-400">/</span>
@@ -401,18 +436,32 @@ function ConceptWizardPageInner() {
               value={branch}
               onChange={(event) => setBranch(event.target.value)}
               placeholder="branch"
-              className="tw-w-32 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
+            className="tw-w-32 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
+          />
+          <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-px-3 tw-py-1.5 tw-text-xs tw-font-medium tw-text-slate-200">
+            <input
+              type="checkbox"
+              checked={openAsPr}
+              onChange={(event) => setOpenAsPr(event.target.checked)}
+              className="tw-h-3.5 tw-w-3.5 tw-rounded tw-border tw-border-slate-700 tw-bg-slate-900 tw-text-emerald-400 focus:tw-ring-emerald-400"
             />
-            <button
-              type="button"
-              onClick={onCommit}
-              disabled={!canCommit}
-              className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-emerald-400/90 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out disabled:tw-cursor-not-allowed disabled:tw-border-slate-800/60 disabled:tw-bg-slate-700/40 disabled:tw-text-slate-400 hover:tw-bg-emerald-300"
-            >
-              {isCommitting ? "Committing…" : "Commit to Repo"}
-            </button>
-          </div>
+            <span>Open as pull request</span>
+          </label>
+          <button
+            type="button"
+            onClick={onCommit}
+            disabled={!canCommit}
+            className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-emerald-400/90 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out disabled:tw-cursor-not-allowed disabled:tw-border-slate-800/60 disabled:tw-bg-slate-700/40 disabled:tw-text-slate-400 hover:tw-bg-emerald-300"
+          >
+            {isCommitting ? "Committing…" : "Commit to Repo"}
+          </button>
         </div>
+      </div>
+      <p className="tw-text-xs tw-text-slate-400">
+          {openAsPr
+            ? "Creates a new branch and opens a PR with the generated roadmap."
+            : `Commits docs/roadmap.yml directly to ${branch || "main"}.`}
+      </p>
 
         <div className="code-editor">
           <pre

@@ -7,6 +7,8 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
+    const url = new URL(req.url);
+    const asPR = url.searchParams.get("asPR") === "true";
     const body = await req.json();
     const owner = typeof body?.owner === "string" ? body.owner.trim() : "";
     const repo = typeof body?.repo === "string" ? body.repo.trim() : "";
@@ -22,17 +24,31 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Roadmap content is empty" }, { status: 400 });
     }
 
-    await putFile(
+    const message = "feat(roadmap): add generated docs/roadmap.yml";
+    const result = await putFile(
       owner,
       repo,
       "docs/roadmap.yml",
       content,
       branch,
-      "feat(roadmap): add generated docs/roadmap.yml",
+      message,
       token,
+      asPR
+        ? {
+            asPR: true,
+            prTitle: message,
+            prBody:
+              "Generated via Concept to Roadmap wizard. Review the roadmap structure and merge when ready.",
+          }
+        : undefined,
     );
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      branch: result.branch,
+      prUrl: result.pullRequest?.html_url ?? result.pullRequest?.url,
+      pullRequestNumber: result.pullRequest?.number,
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? "Failed to commit roadmap" }, { status: 500 });
   }

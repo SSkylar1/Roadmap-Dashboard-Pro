@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import micromatch from "micromatch";
 import yaml from "js-yaml";
 
-import { getFileRaw, listRepoTree, putFile } from "@/lib/github";
+import { getFileRaw, listRepoTreePaths, putFile } from "@/lib/github";
 
 const READ_ONLY_CHECKS_URL = process.env.READ_ONLY_CHECKS_URL || "";
 
@@ -239,7 +239,7 @@ export async function POST(req: NextRequest) {
     const dbSuccesses = dbResults.filter((result) => result.ok).map((result) => result.q);
     const dbFailures = dbResults.filter((result) => !result.ok);
 
-    const treePaths = await listRepoTree(owner, repo, branch, token);
+    const treePaths = await listRepoTreePaths(owner, repo, branch, token);
     const matchedPaths = config.code_globs.length
       ? Array.from(new Set(micromatch(treePaths, config.code_globs, { dot: true }))).sort()
       : [];

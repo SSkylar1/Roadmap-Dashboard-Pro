@@ -67,11 +67,15 @@ type ImportSuccess = {
   ok: true;
   created: string[];
   skipped: string[];
+  branch?: string;
+  prUrl?: string;
+  pullRequestNumber?: number;
 };
 
 type ImportError = {
   error: string;
   detail?: string;
+  prUrl?: string;
 };
 
 export async function POST(req: Request) {
@@ -82,6 +86,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const url = new URL(req.url);
+  const asPR = url.searchParams.get("asPR") === "true";
   const owner = typeof body?.owner === "string" ? body.owner.trim() : "";
   const repo = typeof body?.repo === "string" ? body.repo.trim() : "";
   const branch = typeof body?.branch === "string" && body.branch.trim() ? body.branch.trim() : "main";
@@ -112,16 +118,26 @@ export async function POST(req: Request) {
   const skipped: string[] = [];
 
   try {
-    await putFile(
+    const message = "feat(roadmap): import roadmap definition";
+    const result = await putFile(
       owner,
       repo,
       "docs/roadmap.yml",
       roadmap,
       branch,
-      "feat(roadmap): import roadmap definition",
+      message,
       token,
+      asPR
+        ? {
+            asPR: true,
+            prTitle: message,
+            prBody: "Seeded via Roadmap Ready workspace.",
+          }
+        : undefined,
     );
     created.push("docs/roadmap.yml");
+
+    const workingBranch = asPR ? result.branch : branch;
 
     const scaffoldTargets = [
       {
@@ -142,18 +158,25 @@ export async function POST(req: Request) {
     ] as const;
 
     for (const target of scaffoldTargets) {
-      const existing = await getFileRaw(owner, repo, target.path, branch, token);
+      const existing = await getFileRaw(owner, repo, target.path, workingBranch, token);
 
       if (existing !== null) {
         skipped.push(target.path);
         continue;
       }
 
-      await putFile(owner, repo, target.path, target.content, branch, target.message, token);
+      await putFile(owner, repo, target.path, target.content, workingBranch, target.message, token);
       created.push(target.path);
     }
 
-    const response: ImportSuccess = { ok: true, created, skipped };
+    const response: ImportSuccess = {
+      ok: true,
+      created,
+      skipped,
+      branch: workingBranch,
+      prUrl: result.pullRequest?.html_url ?? result.pullRequest?.url,
+      pullRequestNumber: result.pullRequest?.number,
+    };
     return NextResponse.json(response);
   } catch (error: any) {
     const payload: ImportError = {
