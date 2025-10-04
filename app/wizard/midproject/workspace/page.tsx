@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 
 import StatusGrid from "@/components/StatusGrid";
@@ -34,6 +34,12 @@ type RoadmapStatus = {
   weeks?: any[];
 };
 
+type ContextPack = {
+  generated_at?: string;
+  repo?: { owner?: string; name?: string; branch?: string };
+  files?: Record<string, string>;
+};
+
 export default function MidProjectSyncWorkspace() {
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
@@ -47,7 +53,11 @@ export default function MidProjectSyncWorkspace() {
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   const [error, setError] = useState<ErrorState>(null);
+  const [contextError, setContextError] = useState<ErrorState>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const [contextPack, setContextPack] = useState<ContextPack | null>(null);
 
   const repoSlug = useMemo(() => {
     const o = owner.trim();
@@ -56,6 +66,7 @@ export default function MidProjectSyncWorkspace() {
   }, [owner, repo]);
 
   const canSubmit = Boolean(!isSyncing && repoSlug);
+  const branchParam = branch.trim() || "main";
 
   async function handleSync(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -70,6 +81,8 @@ export default function MidProjectSyncWorkspace() {
     setBacklog([]);
     setRunArtifacts([]);
     setDiscoverArtifacts([]);
+    setContextPack(null);
+    setContextError(null);
 
     const payload = {
       owner: owner.trim(),
@@ -129,6 +142,67 @@ export default function MidProjectSyncWorkspace() {
     : lastSyncedAt
     ? new Date(lastSyncedAt).toLocaleString()
     : null;
+
+  const contextGeneratedAt = contextPack?.generated_at
+    ? new Date(contextPack.generated_at).toLocaleString()
+    : null;
+  const contextJson = useMemo(
+    () => (contextPack ? JSON.stringify(contextPack, null, 2) : null),
+    [contextPack],
+  );
+  const contextFiles = useMemo(() => Object.keys(contextPack?.files ?? {}), [contextPack]);
+
+  const handleExportContext = useCallback(async () => {
+    if (!repoSlug) {
+      setContextError({
+        title: "Provide owner and repository",
+        detail: "Fill the owner, repository, and branch before exporting a context pack.",
+      });
+      return;
+    }
+
+    const trimmedOwner = owner.trim();
+    const trimmedRepo = repo.trim();
+    const trimmedBranch = branchParam;
+
+    setContextError(null);
+    setContextPack(null);
+    setIsExporting(true);
+
+    try {
+      const response = await fetch(
+        `/api/context/${encodeURIComponent(trimmedOwner)}/${encodeURIComponent(trimmedRepo)}?branch=${encodeURIComponent(trimmedBranch)}`,
+        { cache: "no-store" },
+      );
+      const json = (await response.json()) as ContextPack & { error?: string; missing?: string[] };
+      if (!response.ok || json?.error) {
+        const missing = json?.missing?.length ? ` Missing files: ${json.missing.join(", ")}.` : "";
+        throw new Error(json?.error ? `${json.error}.${missing}` : `Failed to export context pack.${missing}`);
+      }
+      setContextPack(json);
+    } catch (err: any) {
+      setContextError({
+        title: "Export failed",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  }, [branchParam, owner, repo, repoSlug]);
+
+  const handleDownloadContext = useCallback(() => {
+    if (!contextPack) return;
+    const filename = `${(repoSlug ?? "context-pack").replace(/\//g, "-")}.context-pack.json`;
+    const blob = new Blob([JSON.stringify(contextPack, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [contextPack, repoSlug]);
 
   return (
     <div className="tw-space-y-10">
@@ -334,6 +408,86 @@ export default function MidProjectSyncWorkspace() {
               )}
             </div>
           </div>
+        </div>
+
+        <div
+          id="context-pack"
+          className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8 xl:tw-col-span-2"
+        >
+          <div className="tw-flex tw-flex-col tw-gap-4 md:tw-flex-row md:tw-items-center md:tw-justify-between">
+            <div className="tw-space-y-1">
+              <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Context pack export</h2>
+              <p className="tw-text-sm tw-text-slate-300">
+                Bundle roadmap, backlog, tech stack, and summary artifacts into a single JSON payload for AI copilots.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleExportContext}
+              className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-bg-slate-100 tw-px-5 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out hover:tw-bg-slate-200 disabled:tw-cursor-not-allowed disabled:tw-bg-slate-700 disabled:tw-text-slate-400"
+              disabled={!repoSlug || isExporting}
+            >
+              {isExporting ? "Building context pack…" : "Generate context pack"}
+            </button>
+          </div>
+          {contextError ? (
+            <div className="tw-rounded-2xl tw-border tw-border-red-500/40 tw-bg-red-500/10 tw-p-4 tw-text-sm tw-text-red-100">
+              <div className="tw-font-semibold">{contextError.title}</div>
+              {contextError.detail ? <div className="tw-text-red-100/80">{contextError.detail}</div> : null}
+            </div>
+          ) : null}
+          {contextPack ? (
+            <div className="tw-space-y-4">
+              <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
+                {contextGeneratedAt ? (
+                  <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
+                    Generated {contextGeneratedAt}
+                  </span>
+                ) : null}
+                {contextPack.repo?.branch ? (
+                  <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
+                    Branch {contextPack.repo.branch}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleDownloadContext}
+                  className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100"
+                >
+                  Download JSON
+                </button>
+              </div>
+              {contextFiles.length ? (
+                <div className="tw-space-y-2">
+                  <h3 className="tw-text-sm tw-font-semibold tw-text-slate-200">Included files</h3>
+                  <ul className="tw-grid tw-gap-2 md:tw-grid-cols-2">
+                    {contextFiles.map((file) => (
+                      <li
+                        key={file}
+                        className="tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-300"
+                      >
+                        {file}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {contextJson ? (
+                <details className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-3">
+                  <summary className="tw-cursor-pointer tw-text-sm tw-font-semibold tw-text-slate-200">
+                    View JSON payload
+                  </summary>
+                  <pre className="tw-mt-3 tw-max-h-96 tw-overflow-auto tw-rounded-xl tw-bg-slate-950 tw-p-4 tw-text-xs tw-leading-relaxed tw-text-slate-300">
+                    {contextJson}
+                  </pre>
+                </details>
+              ) : null}
+            </div>
+          ) : (
+            <p className="tw-text-sm tw-text-slate-400">
+              Generate a context pack to bundle the refreshed roadmap files for AI assistants or teammates.
+            </p>
+          )}
         </div>
       </section>
     </div>

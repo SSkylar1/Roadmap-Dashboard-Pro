@@ -95,6 +95,12 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
         label: "Launch mid-project sync",
         description: "Run status + discover workflows and preview backlog discoveries before opening the dashboard.",
       },
+      {
+        href: "/wizard/midproject/workspace#context-pack",
+        label: "Export context pack",
+        description:
+          "Bundle roadmap, status, tech stack, backlog, and GTM artifacts into a single JSON for AI copilots.",
+      },
     ],
   },
 ] as const;
