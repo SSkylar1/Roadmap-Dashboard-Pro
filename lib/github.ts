@@ -288,3 +288,32 @@ export async function listRepoTree(
     .sort();
 }
 
+export async function listRepoTree(
+  owner: string,
+  repo: string,
+  ref = "HEAD",
+  token?: string
+) {
+  const t = token ?? (await ghToken(false));
+  const url =
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}` +
+    "?recursive=1";
+  const r = await fetch(url, { headers: ghHeaders(t, "json"), cache: "no-store" });
+  if (r.status === 404) return [] as string[];
+  if (r.status === 401) {
+    if (!t) throw new Error(`GitHub 401 (set GITHUB_TOKEN with access to ${owner}/${repo})`);
+    throw new Error(`GitHub 401 (check PAT scope/access for ${owner}/${repo})`);
+  }
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`GET tree ${owner}/${repo}@${ref} failed: ${r.status} ${txt}`);
+  }
+
+  const json = (await r.json()) as { tree?: Array<{ type?: string; path?: string }> };
+  if (!json?.tree) return [] as string[];
+  return json.tree
+    .filter((node) => node?.type === "blob" && typeof node?.path === "string")
+    .map((node) => node.path!)
+    .sort();
+}
+
