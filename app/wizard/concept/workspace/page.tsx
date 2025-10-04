@@ -13,7 +13,7 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
-import { useLocalSecrets } from "@/lib/use-local-secrets";
+import { useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
 type SuccessState = { message: string; prUrl?: string } | null;
@@ -129,7 +129,7 @@ function ConceptWizardPageInner() {
   const [isCommitting, setIsCommitting] = useState(false);
   const previewRef = useRef<HTMLPreElement | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
-  const secrets = useLocalSecrets();
+  const secrets = useResolvedSecrets(owner, repo);
   const openAiConfigured = Boolean(secrets.openaiKey);
   const githubConfigured = Boolean(secrets.githubPat);
 
