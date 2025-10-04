@@ -49,35 +49,81 @@ function ensureStringList(value: unknown, fallback: string[]): string[] {
   return filtered.length ? filtered : fallback;
 }
 
+function extractCheckResult(query: string, payload: any): boolean | undefined {
+  if (typeof payload?.ok === "boolean") return payload.ok;
+
+  const results = Array.isArray(payload?.results)
+    ? payload.results
+    : Array.isArray(payload)
+      ? payload
+      : [];
+
+  for (const entry of results) {
+    if (!entry) continue;
+    const candidates = [entry.q, entry.query, entry.symbol];
+    if (candidates.includes(query) && typeof entry.ok === "boolean") {
+      return entry.ok;
+    }
+  }
+
+  return undefined;
+}
+
+async function probeSingleSupabase(url: string, query: string): Promise<ProbeResult> {
+  const attempts = [
+    { body: JSON.stringify({ queries: [query] }), label: "queries" },
+    { body: JSON.stringify({ query }), label: "query" },
+    { body: JSON.stringify({ symbol: query }), label: "symbol" },
+    { body: JSON.stringify(query), label: "raw" },
+  ];
+
+  let lastWhy = "";
+
+  for (const attempt of attempts) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: attempt.body,
+      });
+
+      const text = await response.text();
+      let parsed: any = undefined;
+      try {
+        parsed = text ? JSON.parse(text) : undefined;
+      } catch {}
+
+      const ok = extractCheckResult(query, parsed);
+      if (typeof ok === "boolean") {
+        return { q: query, ok };
+      }
+
+      const detail =
+        (parsed && (parsed.error || parsed.message)) ||
+        text.trim() ||
+        `Unexpected response via ${attempt.label}`;
+
+      if (!response.ok) {
+        lastWhy = `${response.status} ${detail}`.trim();
+      } else {
+        lastWhy = detail;
+      }
+    } catch (error: any) {
+      lastWhy = error?.message || String(error);
+    }
+  }
+
+  return { q: query, ok: false, why: lastWhy || "Unexpected read_only_checks response" };
+}
+
 async function probeSupabase(queries: string[], overrideUrl?: string): Promise<ProbeResult[]> {
   const url = overrideUrl?.trim() || READ_ONLY_CHECKS_URL;
   if (!url) {
     return queries.map((q) => ({ q, ok: false, why: "READ_ONLY_CHECKS_URL not configured" }));
   }
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ queries }),
-    });
-
-    if (!response.ok) {
-      const detail = await response
-        .text()
-        .then((text) => text.trim())
-        .catch(() => "");
-      const why = detail ? `${response.status} ${detail}` : String(response.status);
-      return queries.map((q) => ({ q, ok: false, why }));
-    }
-
-    const json = await response.json().catch(() => ({}));
-    const arr = Array.isArray(json?.results) ? json.results : [];
-    const byQuery = new Map(arr.map((entry: any) => [entry?.q, !!entry?.ok]));
-    return queries.map((q) => ({ q, ok: !!byQuery.get(q) }));
-  } catch (error: any) {
-    return queries.map((q) => ({ q, ok: false, why: error?.message || String(error) }));
-  }
+  const results = await Promise.all(queries.map((query) => probeSingleSupabase(url, query)));
+  return results;
 }
 
 function parseDiscoverConfig(raw: string | null): DiscoverConfig {
