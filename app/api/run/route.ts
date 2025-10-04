@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
       req.headers.get("x-discovery-headers");
     const requestProbeHeaders = parseProbeHeaders(rawRequestProbeHeaders);
 
-    const rawPayloadProbeHeaders =
+    const payloadProbeHeadersRaw =
       (payload &&
         (payload.probeHeaders ??
           payload.probe_headers ??
@@ -108,11 +108,11 @@ export async function POST(req: NextRequest) {
           payload.supabase_headers ??
           payload.headers)) ||
       undefined;
-    const payloadProbeHeaders = parseProbeHeaders(rawPayloadProbeHeaders);
+    const overrideProbeHeaders = parseProbeHeaders(payloadProbeHeadersRaw);
     const combinedProbeHeaders: ProbeHeaders = {
       ...ENV_PROBE_HEADERS,
       ...requestProbeHeaders,
-      ...payloadProbeHeaders,
+      ...overrideProbeHeaders,
     };
     const projectKey = normalizeProjectKey(payload?.project);
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
