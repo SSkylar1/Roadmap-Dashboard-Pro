@@ -138,7 +138,9 @@ function RoadmapProvisionerInner() {
     }
   }
 
-  const dashboardHref = success ? `/${success.owner}/${success.repo}` : null;
+  const dashboardHref = success && success.owner && success.repo
+    ? `/?owner=${encodeURIComponent(success.owner.trim())}&repo=${encodeURIComponent(success.repo.trim())}`
+    : null;
 
   return (
     <div className="tw-space-y-10">

@@ -59,11 +59,12 @@ export default function MidProjectSyncWorkspace() {
 
   const [contextPack, setContextPack] = useState<ContextPack | null>(null);
 
-  const repoSlug = useMemo(() => {
-    const o = owner.trim();
-    const r = repo.trim();
-    return o && r ? `${o}/${r}` : null;
-  }, [owner, repo]);
+  const trimmedOwner = owner.trim();
+  const trimmedRepo = repo.trim();
+  const repoSlug = trimmedOwner && trimmedRepo ? `${trimmedOwner}/${trimmedRepo}` : null;
+  const dashboardHref = repoSlug
+    ? `/?owner=${encodeURIComponent(trimmedOwner)}&repo=${encodeURIComponent(trimmedRepo)}`
+    : null;
 
   const canSubmit = Boolean(!isSyncing && repoSlug);
   const branchParam = branch.trim() || "main";
@@ -303,9 +304,9 @@ export default function MidProjectSyncWorkspace() {
             </li>
             <li>Bring a Supabase probe URL to surface database checks along with code signals.</li>
           </ul>
-          {repoSlug ? (
+          {dashboardHref ? (
             <Link
-              href={`/${repoSlug}`}
+              href={dashboardHref}
               className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100"
             >
               <span>Open {repoSlug} dashboard</span>
