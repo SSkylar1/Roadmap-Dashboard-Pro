@@ -34,16 +34,21 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const connectionString = Deno.env.get("SUPABASE_DB_URL") ?? Deno.env.get("DATABASE_URL");
+const connectionString =
+  Deno.env.get("SB_DB_URL") ??
+  Deno.env.get("SUPABASE_DB_URL") ??
+  Deno.env.get("DATABASE_URL");
 
 if (!connectionString) {
-  throw new Error("Set the SUPABASE_DB_URL secret before deploying this function.");
+  throw new Error(
+    "Set the SB_DB_URL (or SUPABASE_DB_URL) secret before deploying this function.",
+  );
 }
 
 const pool = new Pool(connectionString, 1, true);
 const READ_ROLES = ["anon", "authenticated"];
 const READ_ROLES_SQL = READ_ROLES.map((role) => "'" + role + "'").join(", ");
-const allowed = /^(ext:[a-z0-9_]+|table:[a-z0-9_]+:[a-z0-9_]+|rls:[a-z0-9_]+:[a-z0-9_]+|policy:[a-z0-9_]+:[a-z0-9_]+:[a-z0-9_]+)$/;
+const allowed = /^(ext:[a-z0-9_]+|table:[a-z0-9_]+:[a-z0-9_]+|rls:[a-z0-9_]+:[a-z0-9_]+|policy:[a-z0-9_]+:[a-z0-9_]+:[^:]+)$/i;
 
 function pickSymbol(payload: unknown): string | null {
   if (!payload) return null;
@@ -151,6 +156,15 @@ Deno.serve(async (req) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  const url = new URL(req.url);
+
+  if (req.method === "GET" && url.pathname === "/_health") {
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: Object.assign({ "Content-Type": "application/json" }, corsHeaders),
+    });
+  }
+
   if (req.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
   }
@@ -189,6 +203,12 @@ Deno.serve(async (req) => {
 });
 ```
 
+This implementation first looks for the `SB_DB_URL` secret that Supabase CLI writes
+when you run `supabase secrets set`, then falls back to `SUPABASE_DB_URL` or
+`DATABASE_URL` for older setups. It also exposes a `GET /_health` endpoint so any
+status checks you already configured will keep working alongside the primary
+`POST /read_only_checks` handler.
+
 Once deployed, smoke-test the function directly:
 
 ```
@@ -207,6 +227,10 @@ in `.env.local` and your deployment environment.
   shown above. The `pickSymbol` helper must be present so the handler recognizes
   nested `queries` arrays, raw strings, and other fallback shapes the dashboard
   sends while probing your project.
+- **Connection string errors?** Confirm `SB_DB_URL` (or `SUPABASE_DB_URL`) is set
+  as a secret in Supabase and inside `supabase/.env` when serving locally. The
+  function falls back to `DATABASE_URL`, but Supabase projects typically expose
+  the Postgres URI via `SB_DB_URL`.
 - **Function returns `ok: false` for a table policy?** The script only allows
   read-only access for the `anon` and `authenticated` roles. If your Supabase
   project uses different roles, update the `READ_ROLES` array before deploying.
