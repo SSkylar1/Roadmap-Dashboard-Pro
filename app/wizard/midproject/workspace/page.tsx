@@ -20,6 +20,14 @@ type BacklogItem = {
   status: string;
 };
 
+type DiscoverConfig = {
+  db_queries: string[];
+  code_globs: string[];
+  notes?: string[];
+};
+
+type ProbeResult = { q: string; ok: boolean; why?: string };
+
 type DiscoverResponse = {
   ok?: boolean;
   discovered?: number;
@@ -27,6 +35,9 @@ type DiscoverResponse = {
   wrote?: string[];
   error?: string;
   detail?: string;
+  config?: DiscoverConfig;
+  db?: ProbeResult[];
+  code_matches?: string[];
 };
 
 type RoadmapStatus = {
@@ -50,6 +61,9 @@ export default function MidProjectSyncWorkspace() {
   const [backlog, setBacklog] = useState<BacklogItem[]>([]);
   const [runArtifacts, setRunArtifacts] = useState<string[]>([]);
   const [discoverArtifacts, setDiscoverArtifacts] = useState<string[]>([]);
+  const [discoverConfig, setDiscoverConfig] = useState<DiscoverConfig | null>(null);
+  const [dbProbes, setDbProbes] = useState<ProbeResult[]>([]);
+  const [codeMatches, setCodeMatches] = useState<string[]>([]);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   const [error, setError] = useState<ErrorState>(null);
@@ -82,6 +96,9 @@ export default function MidProjectSyncWorkspace() {
     setBacklog([]);
     setRunArtifacts([]);
     setDiscoverArtifacts([]);
+    setDiscoverConfig(null);
+    setDbProbes([]);
+    setCodeMatches([]);
     setContextPack(null);
     setContextError(null);
 
@@ -126,6 +143,9 @@ export default function MidProjectSyncWorkspace() {
       }
       setDiscoverArtifacts(discoverJson?.wrote ?? []);
       setBacklog(discoverJson?.items ?? []);
+      setDiscoverConfig(discoverJson?.config ?? null);
+      setDbProbes(discoverJson?.db ?? []);
+      setCodeMatches(discoverJson?.code_matches ?? []);
 
       setLastSyncedAt(new Date().toISOString());
     } catch (err: any) {
@@ -373,6 +393,85 @@ export default function MidProjectSyncWorkspace() {
           ) : (
             <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-8 tw-text-center tw-text-sm tw-text-slate-400">
               Discover runs will surface completed work that never landed on the roadmap.
+            </div>
+          )}
+        </div>
+
+        <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
+          <div className="tw-flex tw-flex-col tw-gap-1">
+            <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Supabase probes</h2>
+            <p className="tw-text-sm tw-text-slate-300">
+              Results from <code className="tw-rounded tw-bg-slate-950 tw-px-1.5 tw-py-0.5">db_queries</code> in
+              docs/discover.yml.
+            </p>
+          </div>
+          {discoverConfig?.db_queries?.length ? (
+            <p className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-slate-400">
+              {discoverConfig.db_queries.length} query{discoverConfig.db_queries.length === 1 ? "" : "ies"} configured
+            </p>
+          ) : null}
+          {dbProbes.length ? (
+            <ul className="tw-space-y-2">
+              {dbProbes.map((probe) => (
+                <li
+                  key={probe.q}
+                  className="tw-flex tw-items-start tw-gap-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-p-4"
+                >
+                  <span className="tw-text-lg" aria-hidden="true">
+                    {probe.ok ? "✅" : "⚠️"}
+                  </span>
+                  <div className="tw-space-y-1">
+                    <p className="tw-text-sm tw-font-semibold tw-text-slate-100">{probe.q}</p>
+                    <p className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-slate-400">
+                      {probe.ok ? "Probe successful" : probe.why ? `Failed → ${probe.why}` : "Probe failed"}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-8 tw-text-center tw-text-sm tw-text-slate-400">
+              Run discovery to execute Supabase probes defined in docs/discover.yml.
+            </div>
+          )}
+          {discoverConfig?.notes?.length ? (
+            <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-p-4 tw-text-xs tw-text-slate-300">
+              <div className="tw-font-semibold tw-text-slate-200">Notes</div>
+              <ul className="tw-mt-2 tw-space-y-1 tw-list-disc tw-pl-4">
+                {discoverConfig.notes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
+          <div className="tw-flex tw-flex-col tw-gap-1">
+            <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Code path matches</h2>
+            <p className="tw-text-sm tw-text-slate-300">
+              Globs from docs/discover.yml matched against the repository tree.
+            </p>
+          </div>
+          {discoverConfig?.code_globs?.length ? (
+            <p className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-slate-400">
+              {discoverConfig.code_globs.length} pattern{discoverConfig.code_globs.length === 1 ? "" : "s"} configured
+            </p>
+          ) : null}
+          {codeMatches.length ? (
+            <ul className="tw-space-y-2">
+              {codeMatches.map((path) => (
+                <li
+                  key={path}
+                  className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-2 tw-text-sm tw-text-slate-200"
+                >
+                  {path}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-8 tw-text-center tw-text-sm tw-text-slate-400">
+              Run discovery to surface matched code paths from your repository.
             </div>
           )}
         </div>
