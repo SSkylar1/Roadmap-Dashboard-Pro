@@ -46,12 +46,13 @@ async function sql_exists(probeUrl: string, query: string) {
 export async function POST(req: NextRequest) {
   try {
     const { owner, repo, branch = "main", probeUrl } = await req.json();
+    const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
 
     // Load roadmap spec
-    const rmRaw = await getFileRaw(owner, repo, "docs/roadmap.yml", branch);
+    const rmRaw = await getFileRaw(owner, repo, "docs/roadmap.yml", branch, token);
     if (rmRaw === null) {
       return NextResponse.json({ error: "docs/roadmap.yml missing" }, { status: 404 });
     }
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
 
     async function safePut(p: string, content: string, msg: string) {
       try {
-        await putFile(owner, repo, p, content, branch, msg);
+        await putFile(owner, repo, p, content, branch, msg, token);
         wrote.push(p);
       } catch (e: any) {
         wrote.push(`${p} (FAILED: ${e?.message || e})`);
