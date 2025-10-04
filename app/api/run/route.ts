@@ -120,9 +120,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
 
-    const overrideHeaders = parseProbeHeaders(probeHeaders);
-    const probeHeadersFinal: ProbeHeaders = { ...ENV_PROBE_HEADERS, ...(overrideHeaders || {}) };
-
     // Load roadmap spec
     const roadmapPath = projectAwarePath("docs/roadmap.yml", projectKey);
     const rmRaw = await getFileRaw(owner, repo, roadmapPath, branch, token);
