@@ -289,13 +289,13 @@ const EDGE_FUNCTION_COMMANDS = [
   "supabase functions deploy read_only_checks --no-verify-jwt",
   "supabase functions list",
   "supabase secrets list",
-  "supabase functions invoke read_only_checks --project-ref <project-ref> --no-verify-jwt --body '{\"query\":\"ext:pgcrypto\"}'",
+  "supabase functions invoke read_only_checks --project-ref <project-ref> --no-verify-jwt --body '{\"queries\":[\"ext:pgcrypto\"]}'",
 ].join("\n");
 
 const EDGE_FUNCTION_CURL = [
   "curl -X POST https://<project-ref>.functions.supabase.co/read_only_checks \\",
   "  -H \"Content-Type: application/json\" \\",
-  "  -d '{\"query\":\"ext:pgcrypto\"}'",
+  "  -d '{\"queries\":[\"ext:pgcrypto\"]}'",
 ].join("\n");
 
 const ROADMAP_YAML_SNIPPET = [
@@ -2069,8 +2069,11 @@ function OnboardingChecklist({
               <div className="onboarding-step-title">5. Expose a read-only database checker</div>
               <p className="onboarding-step-description">
                 Deploy the <code>read_only_checks</code> Supabase Edge Function (or an equivalent API)
-                and store its URL in the <code>READ_ONLY_CHECKS_URL</code> repository secret. The
-                roadmap checks call this endpoint to validate database state without full credentials.
+                using the drop-in source from <code>docs/supabase-read-only-checks.md</code>. That
+                version accepts every payload shape the dashboard sends, preventing
+                <code>invalid symbol</code> probe failures. Store the function URL in the
+                <code>READ_ONLY_CHECKS_URL</code> repository secret so roadmap checks can validate
+                database state without full credentials.
               </p>
             </div>
             <StatusBadge
@@ -2092,6 +2095,8 @@ function OnboardingChecklist({
             {httpUrl
               ? `Latest run checked ${httpUrl}. Verify that the GitHub secret still points to this URL.`
               : "Add the secret under Settings → Secrets and variables → Actions → New repository secret."}
+            {" "}Use the guide below whenever the Supabase function changes—the onboarding panel always
+            mirrors the latest snippet.
           </p>
         </li>
 
@@ -2175,7 +2180,8 @@ function CreateEdgeFunctionGuide() {
           <strong>Paste the edge function source.</strong>
           <p className="guide-inline">
             The CLI scaffolds <code>supabase/functions/read_only_checks/index.ts</code>. Replace its contents with the snippet
-            below—the logic mirrors the dashboard’s <code>/api/verify</code> endpoint and only allows safe symbol checks.
+            below (also stored in <code>docs/supabase-read-only-checks.md</code>) so the function matches the dashboard’s
+            payload parsing and only allows safe symbol checks.
           </p>
           <div className="guide-actions">
             <CopyButton label="Copy edge function" text={EDGE_FUNCTION_SNIPPET} />

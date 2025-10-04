@@ -16,7 +16,10 @@ symbol using several JSON shapes:
 
 If your edge function only reads `body.query` it will reject the other payloads
 with an `invalid symbol` error. Update the function so it can extract the symbol
-from any of the shapes above (arrays, nested `results` objects, etc.).
+from any of the shapes above (arrays, nested `results` objects, etc.). The
+official dashboard implementation uses a `pickSymbol` helper to normalize every
+supported payload before running the database checks—the same helper is included
+below so you can mirror the behavior without digging through the app code.
 
 Below is a drop-in `read_only_checks` function that mirrors the dashboard’s
 parsing logic and passes CORS preflight requests. You can paste it into
@@ -197,3 +200,13 @@ curl -X POST https://<project-ref>.functions.supabase.co/read_only_checks \
 A response of `{"ok":true}` confirms the check passed. If you require Supabase
 service-role authentication, set the same headers under `READ_ONLY_CHECKS_HEADERS`
 in `.env.local` and your deployment environment.
+
+## Troubleshooting
+
+- **Still seeing `invalid symbol`?** Make sure you deployed the exact function
+  shown above. The `pickSymbol` helper must be present so the handler recognizes
+  nested `queries` arrays, raw strings, and other fallback shapes the dashboard
+  sends while probing your project.
+- **Function returns `ok: false` for a table policy?** The script only allows
+  read-only access for the `anon` and `authenticated` roles. If your Supabase
+  project uses different roles, update the `READ_ROLES` array before deploying.
