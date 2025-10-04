@@ -3,38 +3,190 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { getFileRaw, putFile } from "@/lib/github";
+import micromatch from "micromatch";
+import yaml from "js-yaml";
 
-// --- helpers ---
-async function probe(probeUrl: string, queries: string[]) {
-  if (!probeUrl) return queries.map(q => ({ q, ok: false, why: "no probeUrl" }));
-  const r = await fetch(probeUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ queries })
-  });
-  if (!r.ok) return queries.map(q => ({ q, ok: false, why: String(r.status) }));
-  const j = await r.json().catch(() => ({}));
-  const arr = Array.isArray(j.results) ? j.results : [];
-  const byQ = new Map(arr.map((x: any) => [x.q, !!x.ok]));
-  return queries.map(q => ({ q, ok: !!byQ.get(q) }));
+import { getFileRaw, listRepoTree, putFile } from "@/lib/github";
+
+const READ_ONLY_CHECKS_URL = process.env.READ_ONLY_CHECKS_URL || "";
+
+const DEFAULT_DB_QUERIES = ["ext:pgcrypto"];
+const DEFAULT_CODE_GLOBS = ["src/screens/**/*.{tsx,ts}"];
+const DEFAULT_DISCOVER_YAML = `# docs/discover.yml
+# Customize these queries and code globs to surface completed work
+# that never landed on your roadmap.
+db_queries:
+  - ext:pgcrypto
+code_globs:
+  - src/screens/**/*.{tsx,ts}
+`;
+
+type ProbeResult = { q: string; ok: boolean; why?: string };
+type DiscoverConfig = {
+  db_queries: string[];
+  code_globs: string[];
+  notes: string[];
+};
+
+type BacklogItem = { id: string; title: string; status: "complete" };
+
+type DiscoverSummary = {
+  owner: string;
+  repo: string;
+  branch: string;
+  config: DiscoverConfig;
+  dbSuccesses: string[];
+  dbFailures: ProbeResult[];
+  matchedPaths: string[];
+  discovered: BacklogItem[];
+};
+
+function ensureStringList(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) return fallback;
+  const filtered = value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter((item) => item.length > 0);
+  return filtered.length ? filtered : fallback;
 }
 
-async function fileExists(owner: string, repo: string, path: string, ref?: string) {
-  // We treat each path as literal (cheap existence check via contents API/raw)
-  const raw = await getFileRaw(owner, repo, path, ref).catch(() => null);
-  return raw !== null;
-}
-
-function yamlList(items: { id: string; title: string; status: "complete" }[]) {
-  if (!items.length) {
-    return "# Auto-discovered items that appear complete but weren’t on the roadmap\n# (none)\n";
+async function probeSupabase(queries: string[], overrideUrl?: string): Promise<ProbeResult[]> {
+  const url = overrideUrl?.trim() || READ_ONLY_CHECKS_URL;
+  if (!url) {
+    return queries.map((q) => ({ q, ok: false, why: "READ_ONLY_CHECKS_URL not configured" }));
   }
-  return (
-    ["# Auto-discovered items that appear complete but weren’t on the roadmap"]
-      .concat(items.map(x => `- id: ${x.id}\n  title: "${x.title}"\n  status: complete`))
-      .join("\n") + "\n"
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ queries }),
+    });
+
+    if (!response.ok) {
+      const detail = await response
+        .text()
+        .then((text) => text.trim())
+        .catch(() => "");
+      const why = detail ? `${response.status} ${detail}` : String(response.status);
+      return queries.map((q) => ({ q, ok: false, why }));
+    }
+
+    const json = await response.json().catch(() => ({}));
+    const arr = Array.isArray(json?.results) ? json.results : [];
+    const byQuery = new Map(arr.map((entry: any) => [entry?.q, !!entry?.ok]));
+    return queries.map((q) => ({ q, ok: !!byQuery.get(q) }));
+  } catch (error: any) {
+    return queries.map((q) => ({ q, ok: false, why: error?.message || String(error) }));
+  }
+}
+
+function parseDiscoverConfig(raw: string | null): DiscoverConfig {
+  const notes: string[] = [];
+
+  if (!raw) {
+    notes.push("docs/discover.yml not found — using defaults");
+    return { db_queries: DEFAULT_DB_QUERIES, code_globs: DEFAULT_CODE_GLOBS, notes };
+  }
+
+  try {
+    const parsed = yaml.load(raw) as any;
+    const dbQueries = ensureStringList(parsed?.db_queries ?? parsed?.dbQueries, DEFAULT_DB_QUERIES);
+    const codeGlobs = ensureStringList(parsed?.code_globs ?? parsed?.codeGlobs, DEFAULT_CODE_GLOBS);
+    return { db_queries: dbQueries, code_globs: codeGlobs, notes };
+  } catch (error: any) {
+    notes.push(`Failed to parse docs/discover.yml (${error?.message || String(error)})`);
+    return { db_queries: DEFAULT_DB_QUERIES, code_globs: DEFAULT_CODE_GLOBS, notes };
+  }
+}
+
+function slugify(input: string) {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "item";
+}
+
+function backlogYaml(items: BacklogItem[]) {
+  if (!items.length) {
+    return [
+      "# Auto-discovered items generated from docs/discover.yml",
+      "# (none detected)",
+      "",
+    ].join("\n");
+  }
+
+  return [
+    "# Auto-discovered items generated from docs/discover.yml",
+    ...items.map((item) => `- id: ${item.id}\n  title: "${item.title.replace(/"/g, '\\"')}"\n  status: complete`),
+    "",
+  ].join("\n");
+}
+
+function buildSummary(details: DiscoverSummary) {
+  const { owner, repo, branch, config, dbSuccesses, dbFailures, matchedPaths, discovered } = details;
+  const lines: string[] = [
+    `Repo: ${owner}/${repo}`,
+    `Branch: ${branch}`,
+    `Generated: ${new Date().toISOString()}`,
+    "",
+    "Discovery configuration:",
+    `- db_queries (${config.db_queries.length}): ${config.db_queries.join(", ") || "(none)"}`,
+    `- code_globs (${config.code_globs.length}): ${config.code_globs.join(", ") || "(none)"}`,
+  ];
+
+  if (config.notes.length) {
+    lines.push("", "Notes:", ...config.notes.map((note) => `- ${note}`));
+  }
+
+  lines.push(
+    "",
+    `Successful database probes (${dbSuccesses.length}):`,
+    dbSuccesses.length ? dbSuccesses.map((q) => `- ${q}`).join("\n") : "- none",
+    "",
+    `Failed database probes (${dbFailures.length}):`,
+    dbFailures.length ? dbFailures.map((r) => `- ${r.q}${r.why ? ` → ${r.why}` : ""}`).join("\n") : "- none",
+    "",
+    `Matched code paths (${matchedPaths.length}):`,
+    matchedPaths.length ? matchedPaths.map((path) => `- ${path}`).join("\n") : "- none",
+    "",
+    `Newly discovered backlog items (${discovered.length}):`,
+    discovered.length ? discovered.map((item) => `- ${item.title}`).join("\n") : "- none",
+    "",
   );
+
+  return lines.join("\n");
+}
+
+function alreadyTrackedFactory(doneNames: Set<string>) {
+  const comparisons = Array.from(doneNames)
+    .map((name) => name.toLowerCase())
+    .filter(Boolean);
+
+  return (title: string) => {
+    const lower = title.toLowerCase();
+    return comparisons.some((name) => lower === name || lower.includes(name));
+  };
+}
+
+async function safePut(
+  owner: string,
+  repo: string,
+  branch: string,
+  path: string,
+  content: string,
+  message: string,
+  wrote: string[],
+  failures: string[],
+) {
+  try {
+    await putFile(owner, repo, path, content, branch, message);
+    wrote.push(path);
+  } catch (error: any) {
+    const detail = error?.message || String(error);
+    wrote.push(`${path} (FAILED: ${detail})`);
+    failures.push(`${path}: ${detail}`);
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -44,85 +196,140 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
 
-    // 1) Read current status to avoid duplicating already-done items
+    const wrote: string[] = [];
+    const failures: string[] = [];
+
     const statusRaw = await getFileRaw(owner, repo, "docs/roadmap-status.json", branch).catch(() => null);
     const doneNames = new Set<string>();
     if (statusRaw) {
       try {
-        const s = JSON.parse(statusRaw);
-        for (const w of s.weeks ?? []) {
-          for (const it of w.items ?? []) {
-            if (it?.done && typeof it?.name === "string") doneNames.add(it.name);
+        const parsed = JSON.parse(statusRaw);
+        for (const week of parsed?.weeks ?? []) {
+          for (const item of week?.items ?? []) {
+            if (item?.done && typeof item?.name === "string") {
+              doneNames.add(item.name);
+            }
           }
         }
       } catch {}
     }
 
-    // 2) DB probes (edit this list to fit your schema/policies)
-    const dbQueries = [
-      "ext:pgcrypto",
-      "table:public:profiles",
-      "rls:public:profiles",
-      // Example policy (rename to match your policy names):
-      "policy:public:profiles:select:Profiles can view own"
-    ];
-    const db = await probe(probeUrl, dbQueries);
+    const discoverRaw = await getFileRaw(owner, repo, "docs/discover.yml", branch).catch(() => null);
+    const missingDiscover = !discoverRaw;
+    const config = parseDiscoverConfig(discoverRaw);
 
-    // 3) Code presence checks (add paths that matter for your repos)
-    const codePaths = [
-      "supabase/functions/read_only_checks/index.ts",
-      "src/screens/JournalScreen.tsx",
-      "docs/context/context-pack.json",
-      "docs/tech-stack.yml"
-    ];
-    const present: string[] = [];
-    for (const p of codePaths) {
-      // eslint-disable-next-line no-await-in-loop
-      if (await fileExists(owner, repo, p, branch)) present.push(p);
+    if (missingDiscover) {
+      await safePut(
+        owner,
+        repo,
+        branch,
+        "docs/discover.yml",
+        DEFAULT_DISCOVER_YAML,
+        "chore(roadmap): seed discover config [skip ci]",
+        wrote,
+        failures,
+      );
+      config.notes.push("Seeded docs/discover.yml with default discovery settings. Update this file to refine probes.");
     }
 
-    // 4) Build discovered list, skipping names already “done” in status
-    const discovered: { id: string; title: string; status: "complete" }[] = [];
+    const dbResults = await probeSupabase(config.db_queries, probeUrl);
+    const dbSuccesses = dbResults.filter((result) => result.ok).map((result) => result.q);
+    const dbFailures = dbResults.filter((result) => !result.ok);
 
-    for (const r of db) {
-      if (r.ok) {
-        const title = `DB: ${r.q}`;
-        if (![...doneNames].some(n => title.includes(n))) {
-          discovered.push({ id: r.q.replace(/[^a-zA-Z0-9_-]+/g, "-"), title, status: "complete" });
-        }
-      }
-    }
-    for (const p of present) {
-      const title = `Code: ${p} present`;
-      if (![...doneNames].some(n => title.includes(n))) {
-        discovered.push({ id: p.replace(/[^a-zA-Z0-9_-]+/g, "-"), title, status: "complete" });
+    const treePaths = await listRepoTree(owner, repo, branch);
+    const matchedPaths = config.code_globs.length
+      ? Array.from(new Set(micromatch(treePaths, config.code_globs, { dot: true }))).sort()
+      : [];
+
+    const alreadyTracked = alreadyTrackedFactory(doneNames);
+    const discovered: BacklogItem[] = [];
+
+    for (const query of dbSuccesses) {
+      const title = `Database check present: ${query}`;
+      if (!alreadyTracked(title)) {
+        discovered.push({ id: slugify(`db-${query}`), title, status: "complete" });
       }
     }
 
-    // 5) Commit artifacts
-    const wrote: string[] = [];
-    async function safePut(path: string, content: string, msg: string) {
-      try {
-        await putFile(owner, repo, path, content, branch, msg);
-        wrote.push(path);
-      } catch (e: any) {
-        wrote.push(`${path} (FAILED: ${e?.message || e})`);
+    for (const path of matchedPaths) {
+      const title = `Code path matched: ${path}`;
+      if (!alreadyTracked(title)) {
+        discovered.push({ id: slugify(`code-${path}`), title, status: "complete" });
       }
     }
 
-    const backlogBody = yamlList(discovered);
-    await safePut("docs/backlog-discovered.yml", backlogBody, "chore(roadmap): update backlog-discovered [skip ci]");
+    await safePut(
+      owner,
+      repo,
+      branch,
+      "docs/backlog-discovered.yml",
+      backlogYaml(discovered),
+      "chore(roadmap): update backlog-discovered [skip ci]",
+      wrote,
+      failures,
+    );
 
-    const summary = `Repo: ${owner}/${repo}
-Generated: ${new Date().toISOString()}
+    const summary = buildSummary({
+      owner,
+      repo,
+      branch,
+      config,
+      dbSuccesses,
+      dbFailures,
+      matchedPaths,
+      discovered,
+    });
 
-Newly discovered, already-done items (not on roadmap):
-${discovered.length ? discovered.map(d => `- ${d.title}`).join("\n") : "- none"}
-`;
-    await safePut("docs/summary.txt", summary, "chore(roadmap): update summary [skip ci]");
+    await safePut(
+      owner,
+      repo,
+      branch,
+      "docs/summary.txt",
+      summary,
+      "chore(roadmap): update summary [skip ci]",
+      wrote,
+      failures,
+    );
 
-    return NextResponse.json({ ok: true, discovered: discovered.length, wrote }, { headers: { "cache-control": "no-store" } });
-  } catch (e: any) {
-    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
+    const ok = failures.length === 0;
+    if (!ok) {
+      config.notes.push(
+        ...failures.map(
+          (failure) => `GitHub write failed: ${failure}. Ensure the dashboard has push access to ${owner}/${repo}.`,
+        ),
+      );
+    }
+    const detail =
+      failures.length > 0
+        ? `Some files could not be written to GitHub. Check your token permissions and branch settings.\n${failures.join("\n")}`
+        : undefined;
+
+    return NextResponse.json(
+      {
+        ok,
+        discovered: discovered.length,
+        items: discovered,
+        wrote,
+        config,
+        db: dbResults,
+        code_matches: matchedPaths,
+        ...(detail ? { error: "GitHub writes failed", detail } : {}),
+      },
+      {
+        status: ok ? 200 : 207,
+        headers: { "cache-control": "no-store" },
+      },
+    );
+  } catch (error: any) {
+    return NextResponse.json({ error: String(error?.message || error) }, { status: 500 });
   }
+}
+
+export async function OPTIONS() {
+  return NextResponse.json({ ok: true }, { status: 200 });
+}
+
+export async function GET(req: NextRequest) {
+  const redirectUrl = new URL("/wizard/midproject/workspace#discover", req.url);
+  return NextResponse.redirect(redirectUrl, { status: 307 });
 }
