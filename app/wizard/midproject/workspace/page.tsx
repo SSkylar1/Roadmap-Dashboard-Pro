@@ -63,7 +63,7 @@ export default function MidProjectSyncWorkspace() {
   const trimmedRepo = repo.trim();
   const repoSlug = trimmedOwner && trimmedRepo ? `${trimmedOwner}/${trimmedRepo}` : null;
   const dashboardHref = repoSlug
-    ? `/?owner=${encodeURIComponent(trimmedOwner)}&repo=${encodeURIComponent(trimmedRepo)}`
+    ? `/dashboard?owner=${encodeURIComponent(trimmedOwner)}&repo=${encodeURIComponent(trimmedRepo)}`
     : null;
 
   const canSubmit = Boolean(!isSyncing && repoSlug);

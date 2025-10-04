@@ -139,7 +139,7 @@ function RoadmapProvisionerInner() {
   }
 
   const dashboardHref = success && success.owner && success.repo
-    ? `/?owner=${encodeURIComponent(success.owner.trim())}&repo=${encodeURIComponent(success.repo.trim())}`
+    ? `/dashboard?owner=${encodeURIComponent(success.owner.trim())}&repo=${encodeURIComponent(success.repo.trim())}`
     : null;
 
   return (
