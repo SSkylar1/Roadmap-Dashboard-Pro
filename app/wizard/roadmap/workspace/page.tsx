@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { load } from "js-yaml";
 
-import { useLocalSecrets } from "@/lib/use-local-secrets";
+import { useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
 type SuccessState = {
@@ -66,7 +66,7 @@ function RoadmapProvisionerInner() {
   const [success, setSuccess] = useState<SuccessState>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadKey, setUploadKey] = useState(0);
-  const secrets = useLocalSecrets();
+  const secrets = useResolvedSecrets(owner, repo);
   const githubConfigured = Boolean(secrets.githubPat);
   const [openAsPr, setOpenAsPr] = useState(false);
 
