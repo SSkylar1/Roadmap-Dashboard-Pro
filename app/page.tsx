@@ -1,9 +1,24 @@
 "use client";
 
-import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import {
+  Suspense,
+  type ChangeEvent,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
+import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
+import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
 
 type Check = {
   id?: string;
@@ -46,6 +61,8 @@ type RepoRef = {
   owner: string;
   repo: string;
   label?: string;
+  project?: string;
+  projectLabel?: string;
 };
 
 type ManualItem = {
@@ -65,17 +82,34 @@ type ManualState = Record<string, ManualWeekState>;
 type DecoratedItem = Item & { manualKey?: string; manual?: boolean };
 type DecoratedWeek = Week & { manualKey: string; manualState: ManualWeekState; items?: DecoratedItem[] };
 
-type TabKey = "projects" | "onboarding" | "add";
+type GtmPlanTabProps = {
+  repo: RepoRef | null;
+};
+
+type CommitApiResponse = {
+  ok?: boolean;
+  content?: string;
+  created?: boolean;
+  error?: string;
+};
+
+type TabKey = "projects" | "gtm" | "onboarding" | "add";
 
 const DEFAULT_REPOS: RepoRef[] = [{ owner: "SSkylar1", repo: "Roadmap-Kit-Starter" }];
 const REPO_STORAGE_KEY = "roadmap-dashboard.repos";
 const MANUAL_STORAGE_PREFIX = "roadmap-dashboard.manual.";
 const TAB_LABELS: Record<TabKey, string> = {
   projects: "Projects",
+  gtm: "GTM Plan",
   onboarding: "Onboarding Checklist",
   add: "Add New Project",
 };
-const TAB_KEYS: TabKey[] = ["projects", "onboarding", "add"];
+const TAB_KEYS: TabKey[] = ["projects", "gtm", "onboarding", "add"];
+
+function normalizeTab(value: string | null): TabKey {
+  if (value === "gtm" || value === "onboarding" || value === "add") return value;
+  return "projects";
+}
 
 const EDGE_FUNCTION_SNIPPET = [
   "import { Pool, type PoolClient } from \"https://deno.land/x/postgres@v0.17.0/mod.ts\";",
@@ -283,15 +317,20 @@ const enum CopyState {
   Error = "error",
 }
 
-function repoKey(owner: string, repo: string) {
-  return `${owner.trim().toLowerCase()}/${repo.trim().toLowerCase()}`;
+function repoKey(owner: string, repo: string, project?: string | null) {
+  const base = `${owner.trim().toLowerCase()}/${repo.trim().toLowerCase()}`;
+  const projectKey = normalizeProjectKey(project ?? undefined);
+  return projectKey ? `${base}#${projectKey}` : base;
 }
 
 function normalizeRepoRef(ref: Partial<RepoRef> | RepoRef): RepoRef {
   const owner = typeof ref?.owner === "string" ? ref.owner.trim() : "";
   const repo = typeof ref?.repo === "string" ? ref.repo.trim() : "";
   const label = typeof ref?.label === "string" ? ref.label.trim() : undefined;
-  return { owner, repo, label };
+  const projectRaw = typeof ref?.project === "string" ? ref.project.trim() : "";
+  const project = normalizeProjectKey(projectRaw) ?? undefined;
+  const projectLabel = typeof ref?.projectLabel === "string" ? ref.projectLabel.trim() : undefined;
+  return { owner, repo, label, ...(project ? { project } : {}), ...(projectLabel ? { projectLabel } : {}) };
 }
 
 function sanitizeManualState(value: unknown): ManualState {
@@ -332,7 +371,7 @@ function getItemKey(item: Item, index: number) {
   return item.id || item.name || `item-${index + 1}`;
 }
 
-function useStatus(owner: string, repo: string) {
+function useStatus(owner: string, repo: string, project?: string | null) {
   const [data, setData] = useState<StatusResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -346,7 +385,13 @@ function useStatus(owner: string, repo: string) {
     }
 
     let cancelled = false;
-    const url = `/api/status/${owner}/${repo}`;
+    const params = new URLSearchParams();
+    const projectKey = normalizeProjectKey(project ?? undefined);
+    if (projectKey) {
+      params.set("project", projectKey);
+    }
+    const query = params.toString();
+    const url = query ? `/api/status/${owner}/${repo}?${query}` : `/api/status/${owner}/${repo}`;
 
     setLoading(true);
     fetch(url, { cache: "no-store" })
@@ -377,7 +422,7 @@ function useStatus(owner: string, repo: string) {
     return () => {
       cancelled = true;
     };
-  }, [owner, repo]);
+  }, [owner, repo, project]);
 
   return { data, err, loading };
 }
@@ -426,10 +471,10 @@ function useStoredRepos() {
     (repo: RepoRef): RepoRef | null => {
       const normalized = normalizeRepoRef(repo);
       if (!normalized.owner || !normalized.repo) return null;
-      const key = repoKey(normalized.owner, normalized.repo);
+      const key = repoKey(normalized.owner, normalized.repo, normalized.project);
 
       setAndStore((prev) => {
-        const idx = prev.findIndex((entry) => repoKey(entry.owner, entry.repo) === key);
+        const idx = prev.findIndex((entry) => repoKey(entry.owner, entry.repo, entry.project) === key);
         if (idx >= 0) {
           const next = [...prev];
           const existing = next[idx];
@@ -449,8 +494,8 @@ function useStoredRepos() {
     (repo: RepoRef) => {
       const normalized = normalizeRepoRef(repo);
       if (!normalized.owner || !normalized.repo) return;
-      const key = repoKey(normalized.owner, normalized.repo);
-      setAndStore((prev) => prev.filter((entry) => repoKey(entry.owner, entry.repo) !== key));
+      const key = repoKey(normalized.owner, normalized.repo, normalized.project);
+      setAndStore((prev) => prev.filter((entry) => repoKey(entry.owner, entry.repo, entry.project) !== key));
     },
     [setAndStore]
   );
@@ -458,8 +503,8 @@ function useStoredRepos() {
   return { repos, initialized, addRepo, removeRepo };
 }
 
-function useManualRoadmap(owner?: string, repo?: string) {
-  const storageKey = owner && repo ? `${MANUAL_STORAGE_PREFIX}${repoKey(owner, repo)}` : null;
+function useManualRoadmap(owner?: string, repo?: string, project?: string | null) {
+  const storageKey = owner && repo ? `${MANUAL_STORAGE_PREFIX}${repoKey(owner, repo, project)}` : null;
   const [state, setState] = useState<ManualState>({});
   const [ready, setReady] = useState(false);
 
@@ -1126,6 +1171,7 @@ function ProjectForm({
 }) {
   const [ownerInput, setOwnerInput] = useState("");
   const [repoInput, setRepoInput] = useState("");
+  const [projectInput, setProjectInput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -1146,7 +1192,8 @@ function ProjectForm({
       return;
     }
 
-    const added = onAdd({ owner, repo });
+    const project = projectInput.trim();
+    const added = onAdd({ owner, repo, project });
     if (!added) {
       setError("Unable to add project. Check the owner and repo name.");
       return;
@@ -1155,6 +1202,7 @@ function ProjectForm({
     onSelect?.(added);
     setOwnerInput("");
     setRepoInput("");
+    setProjectInput("");
     setError(null);
   };
 
@@ -1182,6 +1230,18 @@ function ProjectForm({
               if (error) setError(null);
             }}
             placeholder="dashboard"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label>Project slug (optional)</label>
+          <input
+            value={projectInput}
+            onChange={(e) => {
+              setProjectInput(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="growth-experiments"
             autoComplete="off"
           />
         </div>
@@ -1224,8 +1284,10 @@ function ProjectSidebar({
         ) : (
           <ul className="project-list">
             {repos.map((repo) => {
-              const key = repoKey(repo.owner, repo.repo);
+              const key = repoKey(repo.owner, repo.repo, repo.project);
               const slug = `${repo.owner}/${repo.repo}`;
+              const projectLabel = repo.projectLabel || repo.project;
+              const display = projectLabel ? `${slug} · ${projectLabel}` : slug;
               const active = key === activeKey;
               return (
                 <li key={key} className="project-item">
@@ -1234,7 +1296,7 @@ function ProjectSidebar({
                     className={`project-button${active ? " active" : ""}`}
                     onClick={() => onSelect(repo)}
                   >
-                    <span className="project-slug">{slug}</span>
+                    <span className="project-slug">{display}</span>
                     {active ? <span className="project-active">Viewing</span> : null}
                   </button>
                   <button
@@ -1244,7 +1306,7 @@ function ProjectSidebar({
                       event.stopPropagation();
                       onRemove(repo);
                     }}
-                    aria-label={`Remove ${slug}`}
+                    aria-label={`Remove ${display}`}
                     title="Remove project"
                   >
                     ×
@@ -1261,17 +1323,312 @@ function ProjectSidebar({
   );
 }
 
-function AddProjectTab({
-  onAdd,
-  onSelect,
-  wizardHref,
-  hasProjects,
-}: {
+type AddProjectTabProps = {
   onAdd: (repo: RepoRef) => RepoRef | null;
   onSelect?: (repo: RepoRef) => void;
   wizardHref: string;
   hasProjects: boolean;
-}) {
+};
+
+function GtmPlanTab({ repo }: GtmPlanTabProps) {
+  const owner = repo?.owner ?? "";
+  const repoName = repo?.repo ?? "";
+  const project = repo?.project ?? undefined;
+  const planPath = describeProjectFile("docs/gtm-plan.md", project);
+  const [branchInput, setBranchInput] = useState("main");
+  const [branch, setBranch] = useState("main");
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [planExists, setPlanExists] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const secretsStore = useLocalSecrets();
+  const resolvedSecrets = useMemo(() => resolveSecrets(secretsStore, owner, repoName), [secretsStore, owner, repoName]);
+  const githubConfigured = Boolean(resolvedSecrets.githubPat);
+
+  useEffect(() => {
+    if (!owner || !repoName) {
+      setBranchInput("main");
+      setBranch("main");
+      setDraft("");
+      setPlanExists(false);
+      setSuccess(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    setBranchInput("main");
+    setBranch("main");
+    setDraft("");
+    setPlanExists(false);
+    setSuccess(null);
+    setError(null);
+    setReloadKey((value) => value + 1);
+  }, [owner, repoName]);
+
+  useEffect(() => {
+    if (!owner || !repoName) return;
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (branch) {
+      params.set("branch", branch);
+    }
+    if (project) {
+      params.set("project", project);
+    }
+    const query = params.toString();
+    setLoading(true);
+    setError(null);
+
+    const requestInit: RequestInit = { cache: "no-store" };
+    if (resolvedSecrets.githubPat) {
+      requestInit.headers = { "x-github-pat": resolvedSecrets.githubPat };
+    }
+
+    fetch(`/api/gtm/${owner}/${repoName}${query ? `?${query}` : ""}`, requestInit)
+      .then(async (response) => {
+        if (response.status === 404) {
+          if (!cancelled) {
+            setPlanExists(false);
+            setDraft("");
+          }
+          return;
+        }
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          const message =
+            typeof (body as { error?: string })?.error === "string"
+              ? (body as { error: string }).error
+              : response.statusText || "Failed to load GTM plan";
+          throw new Error(message);
+        }
+        const data = (await response.json()) as { content?: string };
+        if (!cancelled) {
+          setPlanExists(true);
+          setDraft(typeof data?.content === "string" ? data.content : "");
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, repoName, project, branch, reloadKey, resolvedSecrets.githubPat]);
+
+  const encodedPlanPath = planPath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  const planUrl = planExists
+    ? `https://github.com/${owner}/${repoName}/blob/${encodeURIComponent(branch)}/${encodedPlanPath}`
+    : null;
+
+  const onBranchInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setBranchInput(event.currentTarget.value);
+  }, []);
+
+  const onDraftChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {
+    setDraft(event.currentTarget.value);
+  }, []);
+
+  const onBranchSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!owner || !repoName) return;
+      const next = branchInput.trim() || "main";
+      setBranchInput(next);
+      setSuccess(null);
+      setError(null);
+      if (next === branch) {
+        setReloadKey((value) => value + 1);
+      } else {
+        setBranch(next);
+      }
+    },
+    [branch, branchInput, owner, repoName],
+  );
+
+  const refreshPlan = useCallback(() => {
+    if (!loading) {
+      setSuccess(null);
+      setError(null);
+      setReloadKey((value) => value + 1);
+    }
+  }, [loading]);
+
+  const createTemplate = useCallback(async () => {
+    if (!owner || !repoName) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (resolvedSecrets.githubPat) {
+        headers["x-github-pat"] = resolvedSecrets.githubPat;
+      }
+      const response = await fetch(`/api/gtm/${owner}/${repoName}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ branch, project }),
+      });
+      const data = (await response.json().catch(() => ({}))) as CommitApiResponse;
+      if (!response.ok || typeof data?.error === "string") {
+        const message = typeof data?.error === "string" ? data.error : "Failed to scaffold GTM plan";
+        throw new Error(message);
+      }
+      const content = typeof data?.content === "string" ? data.content : draft;
+      setDraft(content);
+      setPlanExists(true);
+      const created = data?.created ?? true;
+      setSuccess(created ? `Created ${planPath} on ${branch}` : `Updated ${planPath} on ${branch}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [branch, draft, owner, planPath, project, repoName, resolvedSecrets.githubPat]);
+
+  const onSave = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!owner || !repoName) return;
+      if (!draft.trim()) {
+        setError("Add details to the GTM plan before saving.");
+        setSuccess(null);
+        return;
+      }
+      setSaving(true);
+      setError(null);
+      setSuccess(null);
+      try {
+        const headers: HeadersInit = { "Content-Type": "application/json" };
+        if (resolvedSecrets.githubPat) {
+          headers["x-github-pat"] = resolvedSecrets.githubPat;
+        }
+        const response = await fetch(`/api/gtm/${owner}/${repoName}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ branch, content: draft, project }),
+        });
+        const data = (await response.json().catch(() => ({}))) as CommitApiResponse;
+        if (!response.ok || typeof data?.error === "string") {
+          const message = typeof data?.error === "string" ? data.error : "Failed to save GTM plan";
+          throw new Error(message);
+        }
+        const updated = typeof data?.content === "string" ? data.content : draft;
+        setDraft(updated);
+        setPlanExists(true);
+        const created = data?.created ?? false;
+        setSuccess(created ? `Created ${planPath} on ${branch}` : `Updated ${planPath} on ${branch}`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [branch, draft, owner, planPath, project, repoName, resolvedSecrets.githubPat],
+  );
+
+  if (!owner || !repoName) {
+    return (
+      <section className="card gtm-plan-card">
+        <div className="gtm-plan-header">
+          <h2>GTM plan workspace</h2>
+          <p className="hint">Select a project to review or scaffold its go-to-market plan.</p>
+        </div>
+        <div className="gtm-plan-empty">
+          Add a repository from the sidebar and reopen this tab to capture launch strategy alongside your roadmap.
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="card gtm-plan-card">
+      <div className="gtm-plan-header">
+        <h2>Go-to-market plan</h2>
+        <p className="hint">Keep launch, pricing, and success metrics in lockstep with the engineering roadmap.</p>
+        <p className="hint small">{githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings to save changes."}</p>
+      </div>
+      <div className="repo-line">
+        <span className="repo-label">Repo:</span>
+        <code>
+          {owner}/{repoName}
+        </code>
+        {planUrl ? (
+          <a href={planUrl} target="_blank" rel="noreferrer">
+            View on GitHub ↗
+          </a>
+        ) : null}
+      </div>
+      <form className="gtm-plan-branch-form" onSubmit={onBranchSubmit}>
+        <label htmlFor="gtm-plan-branch">Branch</label>
+        <input
+          id="gtm-plan-branch"
+          name="branch"
+          value={branchInput}
+          onChange={onBranchInputChange}
+          autoComplete="off"
+          placeholder="main"
+        />
+        <div className="gtm-plan-branch-controls">
+          <button type="submit" className="ghost-button compact" disabled={loading || saving}>
+            Load branch
+          </button>
+          <button type="button" className="ghost-button compact" onClick={refreshPlan} disabled={loading}>
+            Refresh
+          </button>
+        </div>
+      </form>
+      {error ? <div className="gtm-plan-error">{error}</div> : null}
+      {success ? <div className="gtm-plan-success">{success}</div> : null}
+      {loading ? <div className="hint">Loading GTM plan…</div> : null}
+      {planExists ? (
+        <form className="gtm-plan-editor" onSubmit={onSave}>
+          <label htmlFor="gtm-plan-editor">{planPath}</label>
+          <textarea
+            id="gtm-plan-editor"
+            value={draft}
+            onChange={onDraftChange}
+            disabled={saving}
+          />
+          <div className="gtm-plan-actions">
+            <button type="submit" className="primary-button" disabled={saving}>
+              Save GTM Plan
+            </button>
+            <span className="hint">Commits update <code>{planPath}</code> on {branch}.</span>
+          </div>
+        </form>
+      ) : (
+        <div className="gtm-plan-empty">
+          <p>
+            No GTM plan found on <code>{planPath}</code> in <code>{branch}</code>.
+          </p>
+          <div className="gtm-plan-actions">
+            <button type="button" className="primary-button" onClick={createTemplate} disabled={saving || loading}>
+              Create GTM Plan
+            </button>
+            <span className="hint">We will scaffold market, channel, pricing, and metrics sections automatically.</span>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AddProjectTab(props: AddProjectTabProps) {
+  const { onAdd, onSelect, wizardHref, hasProjects } = props;
   return (
     <section className="card add-project-card">
       <div className="add-project-header">
@@ -1287,6 +1644,18 @@ function AddProjectTab({
         </a>
         <p className="hint">The wizard walks through secrets, workflows, and Supabase setup for a fresh project.</p>
       </div>
+      <div className="add-project-wizard">
+        <h3>Choose a guided workflow</h3>
+        <p>
+          Match the onboarding wizard to your current milestone. Jump into the playbook for an overview or launch the workspace tools
+          directly when you are ready to build.
+        </p>
+        <div className="add-project-wizard-grid">
+          {WIZARD_ENTRY_POINTS.map((entry) => (
+            <WizardEntryCard key={entry.slug} entry={entry} />
+          ))}
+        </div>
+      </div>
       <ProjectForm onAdd={onAdd} onSelect={onSelect} className="project-form" submitLabel="Save project" />
       <ul className="add-project-hints">
         <li>Use owner/repo to add quickly, e.g. <code>acme-co/roadmap</code>.</li>
@@ -1294,6 +1663,78 @@ function AddProjectTab({
         {hasProjects ? null : <li>Your first project will also appear in the sidebar for quick access.</li>}
       </ul>
     </section>
+  );
+}
+
+function WizardEntryCard({ entry }: { entry: WizardEntryPoint }) {
+  const router = useRouter();
+
+  const handleNavigate = useCallback(() => {
+    router.push(`/wizard/${entry.slug}`);
+  }, [entry.slug, router]);
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        handleNavigate();
+      }
+    },
+    [handleNavigate],
+  );
+
+  const stopPropagation = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+  }, []);
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      className="add-project-wizard-card"
+      onClick={handleNavigate}
+      onKeyDown={handleKeyDown}
+    >
+      <div className="add-project-wizard-meta">
+        <span className="add-project-wizard-label">{entry.label}</span>
+        <span className="add-project-wizard-sub">Entry point</span>
+      </div>
+      <div className="add-project-wizard-copy">
+        <h4>{entry.title}</h4>
+        <p>{entry.description}</p>
+      </div>
+      <ul>
+        {entry.bullets.map((bullet) => (
+          <li key={bullet}>{bullet}</li>
+        ))}
+      </ul>
+      <div className="add-project-wizard-actions">
+        <Link
+          href={`/wizard/${entry.slug}`}
+          className="add-project-wizard-action add-project-wizard-action--primary"
+          onClick={stopPropagation}
+        >
+          View playbook
+        </Link>
+        {entry.tools?.map((tool) => (
+          <Link
+            key={tool.href}
+            href={tool.href}
+            className="add-project-wizard-action"
+            onClick={stopPropagation}
+          >
+            {tool.label}
+          </Link>
+        ))}
+      </div>
+      {entry.tools?.map((tool) =>
+        tool.description ? (
+          <p key={`${tool.href}-note`} className="add-project-wizard-note">
+            {tool.description}
+          </p>
+        ) : null
+      )}
+    </article>
   );
 }
 
@@ -1782,20 +2223,22 @@ function DashboardPage() {
   const searchString = sp.toString();
   const searchOwner = sp.get("owner");
   const searchRepo = sp.get("repo");
+  const searchProjectParam = sp.get("project");
+  const searchProject = normalizeProjectKey(searchProjectParam ?? undefined) ?? undefined;
   const searchTab = sp.get("tab");
-  const searchKey = searchOwner && searchRepo ? repoKey(searchOwner, searchRepo) : null;
+  const searchKey = searchOwner && searchRepo ? repoKey(searchOwner, searchRepo, searchProject) : null;
 
   const router = useRouter();
   const pathname = usePathname();
 
   const { repos, initialized, addRepo, removeRepo } = useStoredRepos();
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const initialTab: TabKey = searchTab === "onboarding" ? "onboarding" : searchTab === "add" ? "add" : "projects";
+  const initialTab: TabKey = normalizeTab(searchTab);
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const lastSearchKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const normalized: TabKey = searchTab === "onboarding" ? "onboarding" : searchTab === "add" ? "add" : "projects";
+    const normalized = normalizeTab(searchTab);
     setActiveTab((prev) => (prev === normalized ? prev : normalized));
   }, [searchTab]);
 
@@ -1805,10 +2248,10 @@ function DashboardPage() {
     if (!searchKey || !searchOwner || !searchRepo) {
       lastSearchKeyRef.current = null;
       setActiveKey((prev) => {
-        if (prev && repos.some((repo) => repoKey(repo.owner, repo.repo) === prev)) {
+        if (prev && repos.some((repo) => repoKey(repo.owner, repo.repo, repo.project) === prev)) {
           return prev;
         }
-        return repos.length > 0 ? repoKey(repos[0].owner, repos[0].repo) : null;
+        return repos.length > 0 ? repoKey(repos[0].owner, repos[0].repo, repos[0].project) : null;
       });
       return;
     }
@@ -1819,26 +2262,26 @@ function DashboardPage() {
 
     lastSearchKeyRef.current = searchKey;
 
-    const exists = repos.some((repo) => repoKey(repo.owner, repo.repo) === searchKey);
+    const exists = repos.some((repo) => repoKey(repo.owner, repo.repo, repo.project) === searchKey);
     if (!exists) {
-      const added = addRepo({ owner: searchOwner, repo: searchRepo });
+      const added = addRepo({ owner: searchOwner, repo: searchRepo, project: searchProject });
       if (added) {
-        setActiveKey(repoKey(added.owner, added.repo));
+        setActiveKey(repoKey(added.owner, added.repo, added.project));
         return;
       }
     }
 
     setActiveKey(searchKey);
-  }, [initialized, searchKey, repos, addRepo, searchOwner, searchRepo]);
+  }, [initialized, searchKey, repos, addRepo, searchOwner, searchRepo, searchProject]);
 
   useEffect(() => {
     if (!initialized) return;
 
     setActiveKey((prev) => {
-      if (prev && repos.some((repo) => repoKey(repo.owner, repo.repo) === prev)) {
+      if (prev && repos.some((repo) => repoKey(repo.owner, repo.repo, repo.project) === prev)) {
         return prev;
       }
-      return repos.length > 0 ? repoKey(repos[0].owner, repos[0].repo) : null;
+      return repos.length > 0 ? repoKey(repos[0].owner, repos[0].repo, repos[0].project) : null;
     });
   }, [initialized, repos]);
 
@@ -1858,13 +2301,16 @@ function DashboardPage() {
 
   const activeRepo = useMemo(() => {
     if (!activeKey) return null;
-    return repos.find((repo) => repoKey(repo.owner, repo.repo) === activeKey) ?? null;
+    return repos.find((repo) => repoKey(repo.owner, repo.repo, repo.project) === activeKey) ?? null;
   }, [repos, activeKey]);
   const wizardHref = useMemo(() => {
     if (!activeRepo) return "/new";
     const params = new URLSearchParams();
     params.set("owner", activeRepo.owner);
     params.set("repo", activeRepo.repo);
+    if (activeRepo.project) {
+      params.set("project", activeRepo.project);
+    }
     return `/new?${params.toString()}`;
   }, [activeRepo]);
 
@@ -1882,10 +2328,15 @@ function DashboardPage() {
     const params = new URLSearchParams(searchString);
     params.set("owner", activeRepo.owner);
     params.set("repo", activeRepo.repo);
+    if (activeRepo.project) {
+      params.set("project", activeRepo.project);
+    } else {
+      params.delete("project");
+    }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [activeRepo, initialized, pathname, router, searchOwner, searchRepo, searchString]);
 
-  const { data, err, loading } = useStatus(activeRepo?.owner ?? "", activeRepo?.repo ?? "");
+  const { data, err, loading } = useStatus(activeRepo?.owner ?? "", activeRepo?.repo ?? "", activeRepo?.project);
   const {
     state: manualState,
     ready: manualReady,
@@ -1894,7 +2345,7 @@ function DashboardPage() {
     hideExistingItem,
     resetWeek,
     resetAll,
-  } = useManualRoadmap(activeRepo?.owner, activeRepo?.repo);
+  } = useManualRoadmap(activeRepo?.owner, activeRepo?.repo, activeRepo?.project ?? null);
 
   const decoratedWeeks: DecoratedWeek[] = useMemo(() => {
     if (!data) return [];
@@ -1941,7 +2392,7 @@ function DashboardPage() {
 
   const handleSelectRepo = useCallback(
     (repo: RepoRef) => {
-      setActiveKey(repoKey(repo.owner, repo.repo));
+      setActiveKey(repoKey(repo.owner, repo.repo, repo.project));
       handleTabChange("projects");
     },
     [handleTabChange]
@@ -1951,7 +2402,7 @@ function DashboardPage() {
     (repo: RepoRef) => {
       const added = addRepo(repo);
       if (added) {
-        setActiveKey(repoKey(added.owner, added.repo));
+        setActiveKey(repoKey(added.owner, added.repo, added.project));
         handleTabChange("projects");
       }
       return added;
@@ -2031,7 +2482,11 @@ function DashboardPage() {
                   <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
                     Create setup PR ↗
                   </a>
-                  <a href={`/api/status/${activeRepo.owner}/${activeRepo.repo}`} target="_blank" rel="noreferrer">
+                  <a
+                    href={`/api/status/${activeRepo.owner}/${activeRepo.repo}${activeRepo.project ? `?project=${activeRepo.project}` : ""}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     View status JSON ↗
                   </a>
                 </div>
@@ -2099,11 +2554,21 @@ function DashboardPage() {
           </div>
         ) : null}
 
+        {activeTab === "gtm" ? (
+          <div id="panel-gtm" role="tabpanel" aria-labelledby="tab-gtm" className="tab-panel">
+            <GtmPlanTab repo={activeRepo} />
+          </div>
+        ) : null}
+
         {activeTab === "onboarding" ? (
           <div id="panel-onboarding" role="tabpanel" aria-labelledby="tab-onboarding" className="tab-panel">
             <OnboardingChecklist
               status={activeRepo ? data ?? null : null}
-              projectSlug={activeRepo ? `${activeRepo.owner}/${activeRepo.repo}` : null}
+              projectSlug={
+                activeRepo
+                  ? `${activeRepo.owner}/${activeRepo.repo}${activeRepo.project ? `#${activeRepo.project}` : ""}`
+                  : null
+              }
             />
             <CreateEdgeFunctionGuide />
           </div>

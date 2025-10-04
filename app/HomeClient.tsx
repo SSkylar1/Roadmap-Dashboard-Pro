@@ -6,17 +6,23 @@ import { useSearchParams } from "next/navigation";
 
 type Week = { id?: string; title?: string; items?: any[] };
 
-function useStatus(owner: string, repo: string) {
+function useStatus(owner: string, repo: string, project?: string | null) {
   const [data, setData] = useState<{ weeks: Week[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    const url = `/api/status/${owner}/${repo}`;
+    const params = new URLSearchParams();
+    if (project) {
+      params.set("project", project);
+    }
+    const url = params.toString()
+      ? `/api/status/${owner}/${repo}?${params.toString()}`
+      : `/api/status/${owner}/${repo}`;
     fetch(url, { cache: "no-store" })
       .then(r => (r.ok ? r.json() : r.json().then(x => Promise.reject(x))))
       .then(setData)
       .catch(e => setErr(e?.message || e?.error || "Failed to load status"));
-  }, [owner, repo]);
+  }, [owner, repo, project]);
 
   return { data, err };
 }
@@ -25,8 +31,9 @@ export default function HomeClient() {
   const sp = useSearchParams();
   const owner = sp.get("owner") || "SSkylar1";
   const repo = sp.get("repo") || "Roadmap-Kit-Starter";
+  const project = sp.get("project");
 
-  const { data, err } = useStatus(owner, repo);
+  const { data, err } = useStatus(owner, repo, project);
   const weeks = useMemo(() => data?.weeks ?? [], [data]);
 
   return (
@@ -36,7 +43,7 @@ export default function HomeClient() {
         Repo: <b>{owner}/{repo}</b>{" "}
         <a
           className="underline ml-2 text-slate-400 hover:text-slate-200"
-          href={`/api/status/${owner}/${repo}`}
+          href={`/api/status/${owner}/${repo}${project ? `?project=${project}` : ""}`}
           target="_blank"
         >
           (view JSON)

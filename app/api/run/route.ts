@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import yaml from "js-yaml";
 import { getFileRaw, putFile } from "@/lib/github";
+import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 type Check = {
   type: "files_exist" | "http_ok" | "sql_exists";
@@ -45,20 +46,35 @@ async function sql_exists(probeUrl: string, query: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { owner, repo, branch = "main", probeUrl } = await req.json();
+    const payload = await req.json();
+    const owner = typeof payload?.owner === "string" ? payload.owner.trim() : "";
+    const repo = typeof payload?.repo === "string" ? payload.repo.trim() : "";
+    const branch =
+      typeof payload?.branch === "string" && payload.branch.trim() ? payload.branch.trim() : "main";
+    const probeUrl = typeof payload?.probeUrl === "string" ? payload.probeUrl : undefined;
+    const projectKey = normalizeProjectKey(payload?.project);
+    const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
 
     // Load roadmap spec
-    const rmRaw = await getFileRaw(owner, repo, "docs/roadmap.yml", branch);
+    const roadmapPath = projectAwarePath("docs/roadmap.yml", projectKey);
+    const rmRaw = await getFileRaw(owner, repo, roadmapPath, branch, token);
     if (rmRaw === null) {
-      return NextResponse.json({ error: "docs/roadmap.yml missing" }, { status: 404 });
+      return NextResponse.json({ error: `${describeProjectFile("docs/roadmap.yml", projectKey)} missing` }, { status: 404 });
     }
     const rm: any = yaml.load(rmRaw);
 
     // Execute checks
-    const status: any = { generated_at: new Date().toISOString(), owner, repo, branch, weeks: [] as any[] };
+    const status: any = {
+      generated_at: new Date().toISOString(),
+      owner,
+      repo,
+      branch,
+      project: projectKey || undefined,
+      weeks: [] as any[],
+    };
     for (const w of rm.weeks ?? []) {
       const W: any = { id: w.id, title: w.title, items: [] as any[] };
       for (const it of w.items ?? []) {
@@ -86,7 +102,7 @@ export async function POST(req: NextRequest) {
 
     async function safePut(p: string, content: string, msg: string) {
       try {
-        await putFile(owner, repo, p, content, branch, msg);
+        await putFile(owner, repo, p, content, branch, msg, token);
         wrote.push(p);
       } catch (e: any) {
         wrote.push(`${p} (FAILED: ${e?.message || e})`);
@@ -94,8 +110,11 @@ export async function POST(req: NextRequest) {
     }
 
     // 1) machine artifact(s)
-    await safePut("docs/roadmap-status.json", pretty, "chore(roadmap): update status [skip ci]");
-    await safePut("docs/roadmap/roadmap-status.json", pretty, "chore(roadmap): mirror status [skip ci]");
+    const statusMessage = projectKey
+      ? `chore(${projectKey}): update status [skip ci]`
+      : "chore(roadmap): update status [skip ci]";
+    await safePut(projectAwarePath("docs/roadmap-status.json", projectKey), pretty, statusMessage);
+    await safePut(projectAwarePath("docs/roadmap/roadmap-status.json", projectKey), pretty, statusMessage);
 
     // 2) human-readable plan
     let plan = `# Project Plan\nGenerated: ${status.generated_at}\n\n`;
@@ -104,8 +123,11 @@ export async function POST(req: NextRequest) {
       for (const it of w.items) plan += `${it.done ? "✅" : "❌"} **${it.name}** (${it.id})\n`;
       plan += `\n`;
     }
-    await safePut("docs/project-plan.md", plan, "chore(roadmap): update plan [skip ci]");
-    await safePut("docs/roadmap/project-plan.md", plan, "chore(roadmap): update plan [skip ci]");
+    const planMessage = projectKey
+      ? `chore(${projectKey}): update plan [skip ci]`
+      : "chore(roadmap): update plan [skip ci]";
+    await safePut(projectAwarePath("docs/project-plan.md", projectKey), plan, planMessage);
+    await safePut(projectAwarePath("docs/roadmap/project-plan.md", projectKey), plan, planMessage);
 
     return NextResponse.json({ ok: true, wrote }, { headers: { "cache-control": "no-store" } });
   } catch (e: any) {
