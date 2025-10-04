@@ -97,9 +97,9 @@ export async function POST(req: NextRequest) {
     const rawRequestProbeHeaders =
       req.headers.get("x-supabase-headers") ??
       req.headers.get("x-probe-headers") ??
-      req.headers.get("x-discovery-headers") ??
-      undefined;
+      req.headers.get("x-discovery-headers");
     const requestProbeHeaders = parseProbeHeaders(rawRequestProbeHeaders);
+
     const payloadProbeHeadersRaw =
       (payload &&
         (payload.probeHeaders ??
@@ -108,17 +108,20 @@ export async function POST(req: NextRequest) {
           payload.supabase_headers ??
           payload.headers)) ||
       undefined;
-    const payloadProbeHeaders = parseProbeHeaders(payloadProbeHeadersRaw);
-    const combinedProbeHeaders = {
+    const overrideProbeHeaders = parseProbeHeaders(payloadProbeHeadersRaw);
+    const combinedProbeHeaders: ProbeHeaders = {
       ...ENV_PROBE_HEADERS,
       ...requestProbeHeaders,
-      ...payloadProbeHeaders,
+      ...overrideProbeHeaders,
     };
     const projectKey = normalizeProjectKey(payload?.project);
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
+
+    const overrideHeaders = parseProbeHeaders(probeHeaders);
+    const probeHeadersFinal: ProbeHeaders = { ...ENV_PROBE_HEADERS, ...(overrideHeaders || {}) };
 
     // Load roadmap spec
     const roadmapPath = projectAwarePath("docs/roadmap.yml", projectKey);

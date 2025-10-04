@@ -119,16 +119,97 @@ const EDGE_FUNCTION_SNIPPET = [
   "  \"Access-Control-Allow-Headers\": \"authorization, x-client-info, apikey, content-type\",",
   "};",
   "",
-  "const connectionString = Deno.env.get(\"SUPABASE_DB_URL\") ?? Deno.env.get(\"DATABASE_URL\");",
+  "const connectionString =",
+  "  Deno.env.get(\"SB_DB_URL\") ??",
+  "  Deno.env.get(\"SUPABASE_DB_URL\") ??",
+  "  Deno.env.get(\"DATABASE_URL\");",
   "",
   "if (!connectionString) {",
-  "  throw new Error(\"Set the SUPABASE_DB_URL secret before deploying this function.\");",
+  "  throw new Error(\"Set the SB_DB_URL (or SUPABASE_DB_URL) secret before deploying this function.\");",
   "}",
   "",
   "const pool = new Pool(connectionString, 1, true);",
   "const READ_ROLES = [\"anon\", \"authenticated\"];",
   "const READ_ROLES_SQL = READ_ROLES.map((role) => \"'\" + role + \"'\").join(\", \");",
-  "const allowed = /^(ext:[a-z0-9_]+|table:[a-z0-9_]+:[a-z0-9_]+|rls:[a-z0-9_]+:[a-z0-9_]+|policy:[a-z0-9_]+:[a-z0-9_]+:[a-z0-9_]+)$/;",
+  "const allowed = /^(ext:[a-z0-9_]+|table:[a-z0-9_]+:[a-z0-9_]+|rls:[a-z0-9_]+:[a-z0-9_]+|policy:[a-z0-9_]+:[a-z0-9_]+:[^:]+)$/i;",
+  "",
+  "function pickSymbol(payload: unknown): string | null {",
+  "  if (!payload) return null;",
+  "  if (typeof payload === \"string\") return payload;",
+  "  if (Array.isArray(payload)) {",
+  "    for (const entry of payload) {",
+  "      const candidate = pickSymbol(entry);",
+  "      if (candidate) return candidate;",
+  "    }",
+  "    return null;",
+  "  }",
+  "  if (typeof payload === \"object\") {",
+  "    const record = payload as Record<string, unknown>;",
+  "    const direct = [record.query, record.symbol, record.q];",
+  "    for (const entry of direct) {",
+  "      if (typeof entry === \"string\") return entry;",
+  "    }",
+  "    const multi = [record.queries, record.symbols];",
+  "    for (const entry of multi) {",
+  "      if (!entry) continue;",
+  "      if (typeof entry === \"string\") return entry;",
+  "      if (Array.isArray(entry)) {",
+  "        for (const value of entry) {",
+  "          const candidate = pickSymbol(value);",
+  "          if (candidate) return candidate;",
+  "        }",
+  "        continue;",
+  "      }",
+  "      const candidate = pickSymbol(entry);",
+  "      if (candidate) return candidate;",
+  "    }",
+  "    const nestedKeys = [\"result\", \"results\", \"data\", \"payload\"];",
+  "    for (const key of nestedKeys) {",
+  "      const candidate = pickSymbol(record[key]);",
+  "      if (candidate) return candidate;",
+  "    }",
+  "  }",
+  "  return null;",
+  "}",
+  "",
+  "function pickSymbol(payload: unknown): string | null {",
+  "  if (!payload) return null;",
+  "  if (typeof payload === \"string\") return payload;",
+  "  if (Array.isArray(payload)) {",
+  "    for (const entry of payload) {",
+  "      const candidate = pickSymbol(entry);",
+  "      if (candidate) return candidate;",
+  "    }",
+  "    return null;",
+  "  }",
+  "  if (typeof payload === \"object\") {",
+  "    const record = payload as Record<string, unknown>;",
+  "    const direct = [record.query, record.symbol, record.q];",
+  "    for (const entry of direct) {",
+  "      if (typeof entry === \"string\") return entry;",
+  "    }",
+  "    const multi = [record.queries, record.symbols];",
+  "    for (const entry of multi) {",
+  "      if (!entry) continue;",
+  "      if (typeof entry === \"string\") return entry;",
+  "      if (Array.isArray(entry)) {",
+  "        for (const value of entry) {",
+  "          const candidate = pickSymbol(value);",
+  "          if (candidate) return candidate;",
+  "        }",
+  "        continue;",
+  "      }",
+  "      const candidate = pickSymbol(entry);",
+  "      if (candidate) return candidate;",
+  "    }",
+  "    const nestedKeys = [\"result\", \"results\", \"data\", \"payload\"];",
+  "    for (const key of nestedKeys) {",
+  "      const candidate = pickSymbol(record[key]);",
+  "      if (candidate) return candidate;",
+  "    }",
+  "  }",
+  "  return null;",
+  "}",
   "",
   "async function withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {",
   "  const client = await pool.connect();",
@@ -197,6 +278,15 @@ const EDGE_FUNCTION_SNIPPET = [
   "    return new Response(null, { status: 204, headers: corsHeaders });",
   "  }",
   "",
+  "  const url = new URL(req.url);",
+  "",
+  "  if (req.method === \"GET\" && url.pathname === \"/_health\") {",
+  "    return new Response(JSON.stringify({ ok: true }), {",
+  "      status: 200,",
+  "      headers: Object.assign({ \"Content-Type\": \"application/json\" }, corsHeaders),",
+  "    });",
+  "  }",
+  "",
   "  if (req.method !== \"POST\") {",
   "    return new Response(\"Method Not Allowed\", { status: 405, headers: corsHeaders });",
   "  }",
@@ -211,7 +301,7 @@ const EDGE_FUNCTION_SNIPPET = [
   "    });",
   "  }",
   "",
-  "  const symbol = (body as { query?: unknown })?.query;",
+  "  const symbol = pickSymbol(body);",
   "  if (typeof symbol !== \"string\" || !allowed.test(symbol)) {",
   "    return new Response(JSON.stringify({ ok: false, error: \"invalid symbol\" }), {",
   "      status: 400,",
@@ -244,22 +334,22 @@ const EDGE_FUNCTION_COMMANDS = [
   "supabase functions new read_only_checks --no-verify-jwt",
   "",
   "# Store the Postgres connection string as a secret for deploys",
-  "supabase secrets set SUPABASE_DB_URL=\"postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres\"",
+  "supabase secrets set SB_DB_URL=\"postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres\" SUPABASE_DB_URL=\"postgresql://postgres:<db-password>@db.<project-ref>.supabase.co:5432/postgres\"",
   "",
-  "# Optional: run locally once you add SUPABASE_DB_URL to supabase/.env",
+  "# Optional: run locally once you add SB_DB_URL (or SUPABASE_DB_URL) to supabase/.env",
   "supabase functions serve read_only_checks --env-file supabase/.env",
   "",
   "# Deploy and smoke test from the CLI",
   "supabase functions deploy read_only_checks --no-verify-jwt",
   "supabase functions list",
   "supabase secrets list",
-  "supabase functions invoke read_only_checks --project-ref <project-ref> --no-verify-jwt --body '{\"query\":\"ext:pgcrypto\"}'",
+  "supabase functions invoke read_only_checks --project-ref <project-ref> --no-verify-jwt --body '{\"queries\":[\"ext:pgcrypto\"]}'",
 ].join("\n");
 
 const EDGE_FUNCTION_CURL = [
   "curl -X POST https://<project-ref>.functions.supabase.co/read_only_checks \\",
   "  -H \"Content-Type: application/json\" \\",
-  "  -d '{\"query\":\"ext:pgcrypto\"}'",
+  "  -d '{\"queries\":[\"ext:pgcrypto\"]}'",
 ].join("\n");
 
 const ROADMAP_YAML_SNIPPET = [
@@ -2073,8 +2163,11 @@ function OnboardingChecklist({
               <div className="onboarding-step-title">5. Expose a read-only database checker</div>
               <p className="onboarding-step-description">
                 Deploy the <code>read_only_checks</code> Supabase Edge Function (or an equivalent API)
-                and store its URL in the <code>READ_ONLY_CHECKS_URL</code> repository secret. The
-                roadmap checks call this endpoint to validate database state without full credentials.
+                using the drop-in source from <code>docs/supabase-read-only-checks.md</code>. That
+                version accepts every payload shape the dashboard sends, preventing
+                <code>invalid symbol</code> probe failures. Store the function URL in the
+                <code>READ_ONLY_CHECKS_URL</code> repository secret so roadmap checks can validate
+                database state without full credentials.
               </p>
             </div>
             <StatusBadge
@@ -2096,6 +2189,8 @@ function OnboardingChecklist({
             {httpUrl
               ? `Latest run checked ${httpUrl}. Verify that the GitHub secret still points to this URL.`
               : "Add the secret under Settings → Secrets and variables → Actions → New repository secret."}
+            {" "}Use the guide below whenever the Supabase function changes—the onboarding panel always
+            mirrors the latest snippet.
           </p>
         </li>
 
@@ -2171,15 +2266,17 @@ function CreateEdgeFunctionGuide() {
             <code>{EDGE_FUNCTION_COMMANDS}</code>
           </pre>
           <p className="guide-inline">
-            Create a <code>supabase/.env</code> file with <code>SUPABASE_DB_URL=postgresql://postgres:{"<db-password>"}@db.
-            {"<project-ref>"}.supabase.co:5432/postgres</code> before running <code>supabase functions serve</code> locally.
+            Create a <code>supabase/.env</code> file with <code>SB_DB_URL=postgresql://postgres:{"<db-password>"}@db.
+            {"<project-ref>"}.supabase.co:5432/postgres</code> (and optionally mirror it to
+            <code>SUPABASE_DB_URL</code>) before running <code>supabase functions serve</code> locally.
           </p>
         </li>
         <li>
           <strong>Paste the edge function source.</strong>
           <p className="guide-inline">
             The CLI scaffolds <code>supabase/functions/read_only_checks/index.ts</code>. Replace its contents with the snippet
-            below—the logic mirrors the dashboard’s <code>/api/verify</code> endpoint and only allows safe symbol checks.
+            below (also stored in <code>docs/supabase-read-only-checks.md</code>) so the function matches the dashboard’s
+            payload parsing and only allows safe symbol checks.
           </p>
           <div className="guide-actions">
             <CopyButton label="Copy edge function" text={EDGE_FUNCTION_SNIPPET} />
