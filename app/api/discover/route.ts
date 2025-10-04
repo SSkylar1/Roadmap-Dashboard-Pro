@@ -265,3 +265,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: String(error?.message || error) }, { status: 500 });
   }
 }
+
+export async function OPTIONS() {
+  return NextResponse.json({ ok: true }, { status: 200 });
+}
+
+export async function GET(req: NextRequest) {
+  const redirectUrl = new URL("/wizard/midproject/workspace#discover", req.url);
+  return NextResponse.redirect(redirectUrl, { status: 307 });
+}
