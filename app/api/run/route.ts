@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import yaml from "js-yaml";
 import { getFileRaw, putFile } from "@/lib/github";
+import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 type Check = {
   type: "files_exist" | "http_ok" | "sql_exists";
@@ -14,6 +15,48 @@ type Check = {
   must_match?: string[];
   query?: string;
 };
+
+type ProbeHeaders = Record<string, string>;
+
+function parseProbeHeaders(source: unknown): ProbeHeaders {
+  if (!source) return {};
+
+  if (typeof source === "object" && !Array.isArray(source)) {
+    const entries = Object.entries(source as Record<string, unknown>)
+      .map(([key, value]) => [key.trim(), typeof value === "string" ? value.trim() : ""] as const)
+      .filter(([key, value]) => key.length > 0 && value.length > 0);
+    return Object.fromEntries(entries) as ProbeHeaders;
+  }
+
+  if (typeof source !== "string") return {};
+
+  const trimmed = source.trim();
+  if (!trimmed) return {};
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parseProbeHeaders(parsed as Record<string, unknown>);
+    }
+  } catch {
+    // fall through to newline parsing when JSON fails
+  }
+
+  const headers: ProbeHeaders = {};
+  for (const line of trimmed.split(/\r?\n|,/)) {
+    const text = line.trim();
+    if (!text) continue;
+    const separatorIndex = text.indexOf(":");
+    if (separatorIndex === -1) continue;
+    const key = text.slice(0, separatorIndex).trim();
+    const value = text.slice(separatorIndex + 1).trim();
+    if (!key || !value) continue;
+    headers[key] = value;
+  }
+  return headers;
+}
+
+const ENV_PROBE_HEADERS: ProbeHeaders = parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS);
 
 async function files_exist(owner: string, repo: string, globs: string[], ref?: string) {
   for (const p of globs) {
@@ -31,10 +74,10 @@ async function http_ok(url: string, must_match: string[] = []) {
   return { ok, code: r.status };
 }
 
-async function sql_exists(probeUrl: string, query: string) {
+async function sql_exists(probeUrl: string, query: string, headers: ProbeHeaders) {
   const r = await fetch(probeUrl, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify({ queries: [query] }),
   });
   if (!r.ok) return { ok: false, code: r.status };
@@ -45,20 +88,52 @@ async function sql_exists(probeUrl: string, query: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { owner, repo, branch = "main", probeUrl } = await req.json();
+    const payload = await req.json();
+    const owner = typeof payload?.owner === "string" ? payload.owner.trim() : "";
+    const repo = typeof payload?.repo === "string" ? payload.repo.trim() : "";
+    const branch =
+      typeof payload?.branch === "string" && payload.branch.trim() ? payload.branch.trim() : "main";
+    const probeUrl = typeof payload?.probeUrl === "string" ? payload.probeUrl : undefined;
+    const requestProbeHeaders = parseProbeHeaders(
+      req.headers.get("x-supabase-headers") ?? req.headers.get("x-probe-headers")
+    );
+    const payloadProbeHeaders = parseProbeHeaders(
+      (payload &&
+        (payload.probeHeaders ??
+          payload.probe_headers ??
+          payload.supabaseHeaders ??
+          payload.supabase_headers ??
+          payload.headers)) ||
+        undefined
+    );
+    const combinedProbeHeaders: ProbeHeaders = {
+      ...ENV_PROBE_HEADERS,
+      ...requestProbeHeaders,
+      ...payloadProbeHeaders,
+    };
+    const projectKey = normalizeProjectKey(payload?.project);
+    const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
 
     // Load roadmap spec
-    const rmRaw = await getFileRaw(owner, repo, "docs/roadmap.yml", branch);
+    const roadmapPath = projectAwarePath("docs/roadmap.yml", projectKey);
+    const rmRaw = await getFileRaw(owner, repo, roadmapPath, branch, token);
     if (rmRaw === null) {
-      return NextResponse.json({ error: "docs/roadmap.yml missing" }, { status: 404 });
+      return NextResponse.json({ error: `${describeProjectFile("docs/roadmap.yml", projectKey)} missing` }, { status: 404 });
     }
     const rm: any = yaml.load(rmRaw);
 
     // Execute checks
-    const status: any = { generated_at: new Date().toISOString(), owner, repo, branch, weeks: [] as any[] };
+    const status: any = {
+      generated_at: new Date().toISOString(),
+      owner,
+      repo,
+      branch,
+      project: projectKey || undefined,
+      weeks: [] as any[],
+    };
     for (const w of rm.weeks ?? []) {
       const W: any = { id: w.id, title: w.title, items: [] as any[] };
       for (const it of w.items ?? []) {
@@ -70,7 +145,7 @@ export async function POST(req: NextRequest) {
           else if (c.type === "http_ok") r = await http_ok(c.url!, c.must_match || []);
           else if (c.type === "sql_exists") {
             if (!probeUrl) r = { ok: false, error: "probeUrl not provided" };
-            else r = await sql_exists(probeUrl, c.query!);
+            else r = await sql_exists(probeUrl, c.query!, combinedProbeHeaders);
           } else r = { ok: false, error: "unknown check" };
           results.push({ ...c, ...r });
           if (!r.ok) passed = false;
@@ -86,7 +161,7 @@ export async function POST(req: NextRequest) {
 
     async function safePut(p: string, content: string, msg: string) {
       try {
-        await putFile(owner, repo, p, content, branch, msg);
+        await putFile(owner, repo, p, content, branch, msg, token);
         wrote.push(p);
       } catch (e: any) {
         wrote.push(`${p} (FAILED: ${e?.message || e})`);
@@ -94,8 +169,11 @@ export async function POST(req: NextRequest) {
     }
 
     // 1) machine artifact(s)
-    await safePut("docs/roadmap-status.json", pretty, "chore(roadmap): update status [skip ci]");
-    await safePut("docs/roadmap/roadmap-status.json", pretty, "chore(roadmap): mirror status [skip ci]");
+    const statusMessage = projectKey
+      ? `chore(${projectKey}): update status [skip ci]`
+      : "chore(roadmap): update status [skip ci]";
+    await safePut(projectAwarePath("docs/roadmap-status.json", projectKey), pretty, statusMessage);
+    await safePut(projectAwarePath("docs/roadmap/roadmap-status.json", projectKey), pretty, statusMessage);
 
     // 2) human-readable plan
     let plan = `# Project Plan\nGenerated: ${status.generated_at}\n\n`;
@@ -104,8 +182,11 @@ export async function POST(req: NextRequest) {
       for (const it of w.items) plan += `${it.done ? "✅" : "❌"} **${it.name}** (${it.id})\n`;
       plan += `\n`;
     }
-    await safePut("docs/project-plan.md", plan, "chore(roadmap): update plan [skip ci]");
-    await safePut("docs/roadmap/project-plan.md", plan, "chore(roadmap): update plan [skip ci]");
+    const planMessage = projectKey
+      ? `chore(${projectKey}): update plan [skip ci]`
+      : "chore(roadmap): update plan [skip ci]";
+    await safePut(projectAwarePath("docs/project-plan.md", projectKey), plan, planMessage);
+    await safePut(projectAwarePath("docs/roadmap/project-plan.md", projectKey), plan, planMessage);
 
     return NextResponse.json({ ok: true, wrote }, { headers: { "cache-control": "no-store" } });
   } catch (e: any) {
