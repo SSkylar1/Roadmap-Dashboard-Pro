@@ -32,16 +32,18 @@ async function http_ok(url: string, must_match: string[] = []) {
   return { ok, code: r.status };
 }
 
-async function sql_exists(probeUrl: string, query: string) {
-  const r = await fetch(probeUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ queries: [query] }),
-  });
-  if (!r.ok) return { ok: false, code: r.status };
-  const j = await r.json();
-  const res = Array.isArray(j.results) ? j.results[0] : null;
-  return { ok: !!res?.ok };
+const ENV_PROBE_HEADERS: ProbeHeaders = parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS);
+
+async function sql_exists(probeUrl: string, query: string, headers: ProbeHeaders) {
+  if (!probeUrl) return { ok: false, error: "probeUrl not provided" };
+  const outcome = await probeReadOnlyCheck(probeUrl, query, headers);
+  return outcome.ok
+    ? { ok: true }
+    : {
+        ok: false,
+        ...(typeof outcome.status === "number" ? { code: outcome.status } : {}),
+        ...(outcome.why ? { error: outcome.why } : {}),
+      };
 }
 
 export async function POST(req: NextRequest) {
@@ -57,6 +59,9 @@ export async function POST(req: NextRequest) {
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
+
+    const overrideHeaders = parseProbeHeaders(probeHeaders);
+    const probeHeadersFinal: ProbeHeaders = { ...ENV_PROBE_HEADERS, ...(overrideHeaders || {}) };
 
     // Load roadmap spec
     const roadmapPath = projectAwarePath("docs/roadmap.yml", projectKey);
@@ -85,8 +90,7 @@ export async function POST(req: NextRequest) {
           if (c.type === "files_exist") r = await files_exist(owner, repo, c.globs || [], branch);
           else if (c.type === "http_ok") r = await http_ok(c.url!, c.must_match || []);
           else if (c.type === "sql_exists") {
-            if (!probeUrl) r = { ok: false, error: "probeUrl not provided" };
-            else r = await sql_exists(probeUrl, c.query!);
+            r = await sql_exists(probeUrl || "", c.query!, probeHeadersFinal);
           } else r = { ok: false, error: "unknown check" };
           results.push({ ...c, ...r });
           if (!r.ok) passed = false;
