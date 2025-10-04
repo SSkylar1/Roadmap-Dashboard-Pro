@@ -13,6 +13,8 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
+import { useLocalSecrets } from "@/lib/use-local-secrets";
+
 type ErrorState = { title: string; detail?: string } | null;
 type SuccessState = string | null;
 
@@ -119,6 +121,9 @@ function ConceptWizardPageInner() {
   const [isCommitting, setIsCommitting] = useState(false);
   const previewRef = useRef<HTMLPreElement | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  const secrets = useLocalSecrets();
+  const openAiConfigured = Boolean(secrets.openaiKey);
+  const githubConfigured = Boolean(secrets.githubPat);
 
   const combinedPrompt = useMemo(() => {
     if (conceptText && uploadText) {
@@ -153,9 +158,14 @@ function ConceptWizardPageInner() {
     setSuccess(null);
 
     try {
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (secrets.openaiKey) {
+        headers["x-openai-key"] = secrets.openaiKey;
+      }
+
       const response = await fetch("/api/concept/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ prompt: combinedPrompt }),
       });
 
@@ -236,9 +246,14 @@ function ConceptWizardPageInner() {
     setSuccess(null);
 
     try {
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (secrets.githubPat) {
+        headers["x-github-pat"] = secrets.githubPat;
+      }
+
       const response = await fetch("/api/concept/commit", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ owner, repo, branch: branch || "main", content: roadmap }),
       });
 
@@ -278,6 +293,14 @@ function ConceptWizardPageInner() {
         <p className="tw-text-lg tw-leading-relaxed tw-text-slate-300">
           Paste your concept brief or upload research notes, generate a structured roadmap, and push docs/roadmap.yml to your repo.
         </p>
+        <div className="tw-flex tw-flex-wrap tw-gap-3">
+          <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+            {openAiConfigured ? "OpenAI ready" : "Add an OpenAI key in Settings"}
+          </span>
+          <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+            {githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings"}
+          </span>
+        </div>
       </div>
 
       <form onSubmit={onGenerate} className="tw-grid tw-gap-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6">

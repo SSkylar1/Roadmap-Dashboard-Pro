@@ -33,11 +33,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   const branch = normalizeBranch(url.searchParams.get("branch"));
 
   try {
+    const token = req.headers.get("x-github-pat")?.trim() || undefined;
+
     const entries = await Promise.all(
       CONTEXT_FILES.map(async (file) => ({
         path: file.path,
         optional: file.optional ?? false,
-        content: await getFileRaw(owner, repo, file.path, branch),
+        content: await getFileRaw(owner, repo, file.path, branch, token),
       })),
     );
 

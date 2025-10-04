@@ -27,9 +27,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Provide concept text or an uploaded document" }, { status: 400 });
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const headerKey = req.headers.get("x-openai-key")?.trim();
+    const apiKey = headerKey || process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "OpenAI API key is not configured" }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "OpenAI API key is not configured",
+          detail: "Add a key in Settings so the wizard can generate a roadmap.",
+        },
+        { status: 500 },
+      );
     }
 
     const payload = {

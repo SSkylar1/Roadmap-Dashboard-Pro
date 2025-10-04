@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useCallback, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 import StatusGrid from "@/components/StatusGrid";
+import { useLocalSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
 
@@ -74,6 +75,7 @@ export default function MidProjectSyncWorkspace() {
   const [isExporting, setIsExporting] = useState(false);
 
   const [contextPack, setContextPack] = useState<ContextPack | null>(null);
+  const secrets = useLocalSecrets();
 
   const trimmedOwner = owner.trim();
   const trimmedRepo = repo.trim();
@@ -85,6 +87,12 @@ export default function MidProjectSyncWorkspace() {
   const canSubmit = Boolean(!isSyncing && repoSlug);
   const canDiscover = Boolean(!isDiscovering && !isSyncing && repoSlug);
   const branchParam = branch.trim() || "main";
+
+  useEffect(() => {
+    if (secrets.supabaseReadOnlyUrl && !probeUrl) {
+      setProbeUrl(secrets.supabaseReadOnlyUrl);
+    }
+  }, [probeUrl, secrets.supabaseReadOnlyUrl]);
 
   async function handleSync(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,9 +123,14 @@ export default function MidProjectSyncWorkspace() {
     };
 
     try {
+      const runHeaders: HeadersInit = { "Content-Type": "application/json" };
+      if (secrets.githubPat) {
+        runHeaders["x-github-pat"] = secrets.githubPat;
+      }
+
       const runResponse = await fetch("/api/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: runHeaders,
         body: JSON.stringify(payload),
       });
       const runJson = (await runResponse.json()) as RunResponse;
@@ -126,9 +139,10 @@ export default function MidProjectSyncWorkspace() {
       }
       setRunArtifacts(runJson?.wrote ?? []);
 
+      const statusHeaders: HeadersInit = secrets.githubPat ? { "x-github-pat": secrets.githubPat } : {};
       const statusResponse = await fetch(
         `/api/status/${payload.owner}/${payload.repo}?branch=${encodeURIComponent(payload.branch)}`,
-        { cache: "no-store" },
+        { cache: "no-store", headers: statusHeaders },
       );
       if (statusResponse.ok) {
         const statusJson = (await statusResponse.json()) as RoadmapStatus;
@@ -177,9 +191,13 @@ export default function MidProjectSyncWorkspace() {
 
   const runDiscovery = useCallback(
     async (payload: { owner: string; repo: string; branch: string; probeUrl?: string }) => {
+      const discoverHeaders: HeadersInit = { "Content-Type": "application/json" };
+      if (secrets.githubPat) {
+        discoverHeaders["x-github-pat"] = secrets.githubPat;
+      }
       const discoverResponse = await fetch("/api/discover", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: discoverHeaders,
         body: JSON.stringify(payload),
       });
       const discoverJson = (await discoverResponse.json()) as DiscoverResponse;
@@ -194,7 +212,7 @@ export default function MidProjectSyncWorkspace() {
         throw new Error(discoverJson?.detail || discoverJson?.error || "Discover run failed");
       }
     },
-    [],
+    [secrets.githubPat],
   );
 
   const handleDiscoverOnly = useCallback(async () => {
@@ -252,9 +270,13 @@ export default function MidProjectSyncWorkspace() {
     setIsExporting(true);
 
     try {
+      const contextHeaders: HeadersInit = { Accept: "application/json" };
+      if (secrets.githubPat) {
+        contextHeaders["x-github-pat"] = secrets.githubPat;
+      }
       const response = await fetch(
         `/api/context/${encodeURIComponent(trimmedOwner)}/${encodeURIComponent(trimmedRepo)}?branch=${encodeURIComponent(trimmedBranch)}`,
-        { cache: "no-store" },
+        { cache: "no-store", headers: contextHeaders },
       );
       const json = (await response.json()) as ContextPack & { error?: string; missing?: string[] };
       if (!response.ok || json?.error) {
@@ -270,7 +292,7 @@ export default function MidProjectSyncWorkspace() {
     } finally {
       setIsExporting(false);
     }
-  }, [branchParam, owner, repo, repoSlug]);
+  }, [branchParam, owner, repo, repoSlug, secrets.githubPat]);
 
   const handleDownloadContext = useCallback(() => {
     if (!contextPack) return;
@@ -306,6 +328,14 @@ export default function MidProjectSyncWorkspace() {
         <p className="tw-text-base tw-leading-relaxed tw-text-slate-300">
           Connect an active repository to regenerate roadmap status and discovery insights before diving into the full dashboard.
         </p>
+        <div className="tw-flex tw-flex-wrap tw-gap-3 tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+          <span>{secrets.githubPat ? "GitHub token ready" : "Add a GitHub PAT in Settings"}</span>
+          <span>
+            {secrets.supabaseReadOnlyUrl
+              ? "Supabase probe ready from Settings"
+              : "Optional: add Supabase probe in Settings"}
+          </span>
+        </div>
       </header>
 
       <form onSubmit={handleSync} className="tw-grid tw-gap-8 lg:tw-grid-cols-[1.4fr,1fr]">

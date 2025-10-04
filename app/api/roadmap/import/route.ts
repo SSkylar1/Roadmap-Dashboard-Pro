@@ -86,6 +86,7 @@ export async function POST(req: Request) {
   const repo = typeof body?.repo === "string" ? body.repo.trim() : "";
   const branch = typeof body?.branch === "string" && body.branch.trim() ? body.branch.trim() : "main";
   const roadmap = typeof body?.roadmap === "string" ? body.roadmap : "";
+  const token = req.headers.get("x-github-pat")?.trim() || undefined;
 
   if (!owner || !repo) {
     return NextResponse.json({ error: "owner and repo are required" }, { status: 400 });
@@ -118,6 +119,7 @@ export async function POST(req: Request) {
       roadmap,
       branch,
       "feat(roadmap): import roadmap definition",
+      token,
     );
     created.push("docs/roadmap.yml");
 
@@ -140,14 +142,14 @@ export async function POST(req: Request) {
     ] as const;
 
     for (const target of scaffoldTargets) {
-      const existing = await getFileRaw(owner, repo, target.path, branch);
+      const existing = await getFileRaw(owner, repo, target.path, branch, token);
 
       if (existing !== null) {
         skipped.push(target.path);
         continue;
       }
 
-      await putFile(owner, repo, target.path, target.content, branch, target.message);
+      await putFile(owner, repo, target.path, target.content, branch, target.message, token);
       created.push(target.path);
     }
 

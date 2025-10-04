@@ -17,6 +17,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
+import { useLocalSecrets } from "@/lib/use-local-secrets";
 
 type Check = {
   id?: string;
@@ -1310,6 +1311,8 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
   const [success, setSuccess] = useState<string | null>(null);
   const [planExists, setPlanExists] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const secrets = useLocalSecrets();
+  const githubConfigured = Boolean(secrets.githubPat);
 
   useEffect(() => {
     if (!owner || !repoName) {
@@ -1338,7 +1341,12 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/gtm/${owner}/${repoName}${query}`, { cache: "no-store" })
+    const requestInit: RequestInit = { cache: "no-store" };
+    if (secrets.githubPat) {
+      requestInit.headers = { "x-github-pat": secrets.githubPat };
+    }
+
+    fetch(`/api/gtm/${owner}/${repoName}${query}`, requestInit)
       .then(async (response) => {
         if (response.status === 404) {
           if (!cancelled) {
@@ -1375,7 +1383,7 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
     return () => {
       cancelled = true;
     };
-  }, [owner, repoName, branch, reloadKey]);
+  }, [owner, repoName, branch, reloadKey, secrets.githubPat]);
 
   const planUrl = planExists
     ? `https://github.com/${owner}/${repoName}/blob/${encodeURIComponent(branch)}/docs/gtm-plan.md`
@@ -1421,9 +1429,13 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
     setError(null);
     setSuccess(null);
     try {
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (secrets.githubPat) {
+        headers["x-github-pat"] = secrets.githubPat;
+      }
       const response = await fetch(`/api/gtm/${owner}/${repoName}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ branch }),
       });
       const data = (await response.json().catch(() => ({}))) as CommitApiResponse;
@@ -1441,7 +1453,7 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
     } finally {
       setSaving(false);
     }
-  }, [branch, draft, owner, repoName]);
+  }, [branch, draft, owner, repoName, secrets.githubPat]);
 
   const onSave = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -1456,9 +1468,13 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
       setError(null);
       setSuccess(null);
       try {
+        const headers: HeadersInit = { "Content-Type": "application/json" };
+        if (secrets.githubPat) {
+          headers["x-github-pat"] = secrets.githubPat;
+        }
         const response = await fetch(`/api/gtm/${owner}/${repoName}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ branch, content: draft }),
         });
         const data = (await response.json().catch(() => ({}))) as CommitApiResponse;
@@ -1477,7 +1493,7 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
         setSaving(false);
       }
     },
-    [branch, draft, owner, repoName],
+    [branch, draft, owner, repoName, secrets.githubPat],
   );
 
   if (!owner || !repoName) {
@@ -1499,6 +1515,7 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
       <div className="gtm-plan-header">
         <h2>Go-to-market plan</h2>
         <p className="hint">Keep launch, pricing, and success metrics in lockstep with the engineering roadmap.</p>
+        <p className="hint small">{githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings to save changes."}</p>
       </div>
       <div className="repo-line">
         <span className="repo-label">Repo:</span>

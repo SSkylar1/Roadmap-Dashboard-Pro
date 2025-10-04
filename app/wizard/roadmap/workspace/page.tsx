@@ -11,6 +11,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { load } from "js-yaml";
 
+import { useLocalSecrets } from "@/lib/use-local-secrets";
+
 type ErrorState = { title: string; detail?: string } | null;
 type SuccessState = {
   created: string[];
@@ -58,6 +60,8 @@ function RoadmapProvisionerInner() {
   const [success, setSuccess] = useState<SuccessState>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadKey, setUploadKey] = useState(0);
+  const secrets = useLocalSecrets();
+  const githubConfigured = Boolean(secrets.githubPat);
 
   const roadmapPreview = useMemo(() => roadmap.trim(), [roadmap]);
   const hasRoadmap = Boolean(roadmapPreview);
@@ -112,9 +116,14 @@ function RoadmapProvisionerInner() {
     setSuccess(null);
 
     try {
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (secrets.githubPat) {
+        headers["x-github-pat"] = secrets.githubPat;
+      }
+
       const response = await fetch("/api/roadmap/import", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ owner, repo, branch, roadmap }),
       });
 
@@ -153,6 +162,9 @@ function RoadmapProvisionerInner() {
         </h1>
         <p className="tw-text-base tw-leading-relaxed tw-text-slate-300">
           Upload your finalized roadmap to sync docs/roadmap.yml, then generate the foundational artifacts that power status checks and team context.
+        </p>
+        <p className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+          {githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings to allow commits"}
         </p>
       </header>
 

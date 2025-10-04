@@ -57,10 +57,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const openAiKey = process.env.OPENAI_API_KEY;
+  const headerKey = req.headers.get("x-openai-key")?.trim();
+  const openAiKey = headerKey || process.env.OPENAI_API_KEY;
 
   if (!openAiKey) {
-    return NextResponse.json({ error: "OpenAI API key is not configured" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "OpenAI API key is not configured",
+        detail: "Add a key in Settings so the wizard can call OpenAI.",
+      },
+      { status: 500 },
+    );
   }
 
   const history = normalizeHistory(body.history);

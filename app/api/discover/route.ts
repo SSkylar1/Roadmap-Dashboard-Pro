@@ -178,9 +178,10 @@ async function safePut(
   message: string,
   wrote: string[],
   failures: string[],
+  token?: string,
 ) {
   try {
-    await putFile(owner, repo, path, content, branch, message);
+    await putFile(owner, repo, path, content, branch, message, token);
     wrote.push(path);
   } catch (error: any) {
     const detail = error?.message || String(error);
@@ -192,6 +193,7 @@ async function safePut(
 export async function POST(req: NextRequest) {
   try {
     const { owner, repo, branch = "main", probeUrl } = await req.json();
+    const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
@@ -199,7 +201,7 @@ export async function POST(req: NextRequest) {
     const wrote: string[] = [];
     const failures: string[] = [];
 
-    const statusRaw = await getFileRaw(owner, repo, "docs/roadmap-status.json", branch).catch(() => null);
+    const statusRaw = await getFileRaw(owner, repo, "docs/roadmap-status.json", branch, token).catch(() => null);
     const doneNames = new Set<string>();
     if (statusRaw) {
       try {
@@ -214,7 +216,7 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
-    const discoverRaw = await getFileRaw(owner, repo, "docs/discover.yml", branch).catch(() => null);
+    const discoverRaw = await getFileRaw(owner, repo, "docs/discover.yml", branch, token).catch(() => null);
     const missingDiscover = !discoverRaw;
     const config = parseDiscoverConfig(discoverRaw);
 
@@ -228,6 +230,7 @@ export async function POST(req: NextRequest) {
         "chore(roadmap): seed discover config [skip ci]",
         wrote,
         failures,
+        token,
       );
       config.notes.push("Seeded docs/discover.yml with default discovery settings. Update this file to refine probes.");
     }
@@ -236,7 +239,7 @@ export async function POST(req: NextRequest) {
     const dbSuccesses = dbResults.filter((result) => result.ok).map((result) => result.q);
     const dbFailures = dbResults.filter((result) => !result.ok);
 
-    const treePaths = await listRepoTree(owner, repo, branch);
+    const treePaths = await listRepoTree(owner, repo, branch, token);
     const matchedPaths = config.code_globs.length
       ? Array.from(new Set(micromatch(treePaths, config.code_globs, { dot: true }))).sort()
       : [];
@@ -267,6 +270,7 @@ export async function POST(req: NextRequest) {
       "chore(roadmap): update backlog-discovered [skip ci]",
       wrote,
       failures,
+      token,
     );
 
     const summary = buildSummary({
@@ -289,6 +293,7 @@ export async function POST(req: NextRequest) {
       "chore(roadmap): update summary [skip ci]",
       wrote,
       failures,
+      token,
     );
 
     const ok = failures.length === 0;

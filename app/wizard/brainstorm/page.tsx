@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
+import { useLocalSecrets } from "@/lib/use-local-secrets";
+
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -27,6 +29,8 @@ export default function BrainstormPage() {
   const [promoteMessage, setPromoteMessage] = useState<string | null>(null);
   const [isPromoting, setIsPromoting] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const secrets = useLocalSecrets();
+  const openAiConfigured = Boolean(secrets.openaiKey);
 
   useEffect(() => {
     if (bottomRef.current) {
@@ -64,11 +68,16 @@ export default function BrainstormPage() {
     setError(null);
 
     try {
+      const headers: HeadersInit = {
+        "Content-Type": "application/json",
+      };
+      if (secrets.openaiKey) {
+        headers["x-openai-key"] = secrets.openaiKey;
+      }
+
       const response = await fetch("/api/brainstorm/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify(payload),
       });
 
@@ -102,11 +111,16 @@ export default function BrainstormPage() {
     setError(null);
 
     try {
+      const headers: HeadersInit = {
+        "Content-Type": "application/json",
+      };
+      if (secrets.githubPat) {
+        headers["x-github-pat"] = secrets.githubPat;
+      }
+
       const response = await fetch("/api/brainstorm/promote", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({ conversationId, messages }),
       });
 
@@ -207,7 +221,13 @@ export default function BrainstormPage() {
         />
         <div className="tw-flex tw-items-center tw-justify-between">
           <p className="tw-text-xs tw-text-slate-400">
-            OpenAI key required: set <code className="tw-text-[0.75rem]">OPENAI_API_KEY</code> in your environment.
+            {openAiConfigured ? (
+              <span>Using your saved OpenAI key from Settings.</span>
+            ) : (
+              <span>
+                Add an OpenAI key in <Link href="/settings">Settings</Link> so the assistant can respond.
+              </span>
+            )}
           </p>
           <button
             type="submit"

@@ -2,7 +2,11 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 
-const STORAGE_KEY = "rdp.settings.secrets";
+import {
+  LOCAL_SECRETS_EVENT,
+  LOCAL_SECRETS_STORAGE_KEY,
+  readLocalSecrets,
+} from "@/lib/use-local-secrets";
 
 type SecretsFormState = {
   githubPat: string;
@@ -24,9 +28,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (!stored) return;
-      const parsed = JSON.parse(stored) as Partial<SecretsFormState>;
+      const parsed = readLocalSecrets() as Partial<SecretsFormState>;
       setFormState((prev) => ({ ...prev, ...parsed }));
     } catch (err) {
       console.error("Failed to load stored secrets", err);
@@ -35,7 +37,7 @@ export default function SettingsPage() {
 
   const hasChanges = useMemo(() => {
     try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
+      const stored = window.localStorage.getItem(LOCAL_SECRETS_STORAGE_KEY);
       if (!stored) {
         return Object.values(formState).some(Boolean);
       }
@@ -73,7 +75,8 @@ export default function SettingsPage() {
         throw new Error(data?.error || "Failed to save settings");
       }
 
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(formState));
+      window.localStorage.setItem(LOCAL_SECRETS_STORAGE_KEY, JSON.stringify(formState));
+      window.dispatchEvent(new Event(LOCAL_SECRETS_EVENT));
       setLastSaved(new Date().toISOString());
     } catch (err) {
       console.error(err);

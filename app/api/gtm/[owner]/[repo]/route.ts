@@ -74,7 +74,8 @@ export async function GET(req: NextRequest, context: RouteParams) {
   try {
     const url = new URL(req.url);
     const branch = url.searchParams.get("branch") || undefined;
-    const raw = await getFileRaw(owner, repo, "docs/gtm-plan.md", branch);
+    const token = req.headers.get("x-github-pat")?.trim() || undefined;
+    const raw = await getFileRaw(owner, repo, "docs/gtm-plan.md", branch, token);
     if (raw === null) {
       return NextResponse.json({ error: "not_found" }, { status: 404 });
     }
@@ -107,12 +108,13 @@ export async function POST(req: NextRequest, context: RouteParams) {
   const finalContent = providedContent ?? GTM_TEMPLATE;
 
   try {
-    const existing = await getFileRaw(owner, repo, "docs/gtm-plan.md", branch);
+    const token = req.headers.get("x-github-pat")?.trim() || undefined;
+    const existing = await getFileRaw(owner, repo, "docs/gtm-plan.md", branch, token);
     const message = existing === null
       ? "feat(gtm): add docs/gtm-plan.md"
       : "chore(gtm): update docs/gtm-plan.md";
 
-    await putFile(owner, repo, "docs/gtm-plan.md", finalContent, branch, message);
+    await putFile(owner, repo, "docs/gtm-plan.md", finalContent, branch, message, token);
 
     const response: CommitResponse = { ok: true, content: finalContent, created: existing === null };
     return NextResponse.json(response);
