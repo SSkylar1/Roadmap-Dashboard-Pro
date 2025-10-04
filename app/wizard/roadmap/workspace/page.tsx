@@ -11,7 +11,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { load } from "js-yaml";
 
-import { useResolvedSecrets } from "@/lib/use-local-secrets";
+import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
 type SuccessState = {
@@ -22,6 +23,7 @@ type SuccessState = {
   branch?: string;
   prUrl?: string;
   pullRequestNumber?: number;
+  path?: string;
 } | null;
 
 type UploadState = {
@@ -60,18 +62,46 @@ function RoadmapProvisionerInner() {
   const [owner, setOwner] = useState(() => params.get("owner") ?? "");
   const [repo, setRepo] = useState(() => params.get("repo") ?? "");
   const [branch, setBranch] = useState(() => params.get("branch") ?? "main");
+  const [project, setProject] = useState(() => params.get("project") ?? "");
   const [upload, setUpload] = useState<UploadState | null>(null);
   const [roadmap, setRoadmap] = useState("");
   const [error, setError] = useState<ErrorState>(null);
   const [success, setSuccess] = useState<SuccessState>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadKey, setUploadKey] = useState(0);
-  const secrets = useResolvedSecrets(owner, repo);
+  const secretsStore = useLocalSecrets();
+  const secrets = useResolvedSecrets(owner, repo, project || undefined);
   const githubConfigured = Boolean(secrets.githubPat);
   const [openAsPr, setOpenAsPr] = useState(false);
+  const repoEntries = secretsStore.repos;
+  const repoSlug = useMemo(() => {
+    const ownerSlug = owner.trim().toLowerCase();
+    const repoSlugValue = repo.trim().toLowerCase();
+    return ownerSlug && repoSlugValue ? `${ownerSlug}/${repoSlugValue}` : "";
+  }, [owner, repo]);
+  const matchedRepoEntry = useMemo(() => {
+    if (!repoSlug) return undefined;
+    return repoEntries.find(
+      (entry) => `${entry.owner.toLowerCase()}/${entry.repo.toLowerCase()}` === repoSlug,
+    );
+  }, [repoEntries, repoSlug]);
 
   const roadmapPreview = useMemo(() => roadmap.trim(), [roadmap]);
   const hasRoadmap = Boolean(roadmapPreview);
+  const projectKey = useMemo(() => normalizeProjectKey(project), [project]);
+  const roadmapPath = describeProjectFile("docs/roadmap.yml", projectKey);
+  const infraPath = describeProjectFile("docs/infra-facts.md", projectKey);
+  const stackPath = describeProjectFile("docs/tech-stack.yml", projectKey);
+  const workflowPath = describeProjectFile(".github/workflows/roadmap.yml", projectKey);
+  const projectOptions = useMemo(() => matchedRepoEntry?.projects ?? [], [matchedRepoEntry]);
+  const activeProjectId = useMemo(() => {
+    if (!project) return "";
+    const matchById = projectOptions.find((option) => option.id === project);
+    if (matchById) return matchById.id;
+    const normalized = normalizeProjectKey(project);
+    const matchByKey = projectOptions.find((option) => normalizeProjectKey(option.id) === normalized);
+    return matchByKey?.id ?? project;
+  }, [project, projectOptions]);
   const canSubmit = Boolean(!isSubmitting && owner && repo && branch && hasRoadmap);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -132,7 +162,7 @@ function RoadmapProvisionerInner() {
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify({ owner, repo, branch, roadmap }),
+        body: JSON.stringify({ owner, repo, branch, roadmap, project: project || undefined }),
       });
 
       const payload = (await response.json().catch(() => ({}))) as ImportResponse;
@@ -158,8 +188,9 @@ function RoadmapProvisionerInner() {
     }
   }
 
+  const projectQuery = projectKey ? `&project=${encodeURIComponent(projectKey)}` : "";
   const dashboardHref = success && success.owner && success.repo
-    ? `/dashboard?owner=${encodeURIComponent(success.owner.trim())}&repo=${encodeURIComponent(success.repo.trim())}`
+    ? `/dashboard?owner=${encodeURIComponent(success.owner.trim())}&repo=${encodeURIComponent(success.repo.trim())}${projectQuery}`
     : null;
 
   return (
@@ -209,11 +240,88 @@ function RoadmapProvisionerInner() {
                 className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
               />
             </label>
+            <label className="tw-flex tw-flex-col tw-gap-2">
+              <span className="tw-text-sm tw-font-medium tw-text-slate-200">Project (optional)</span>
+              <input
+                value={project}
+                onChange={(event) => setProject(event.target.value)}
+                placeholder="growth-experiments"
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
+              />
+            </label>
           </div>
+
+          {repoEntries.length > 0 && (
+            <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-p-4 tw-space-y-3">
+              <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+                <h3 className="tw-text-sm tw-font-semibold tw-text-slate-200">Linked repositories</h3>
+                <p className="tw-text-xs tw-text-slate-400">Pick a repo to auto-fill owner, branch, and project details.</p>
+              </div>
+              <div className="tw-flex tw-flex-wrap tw-gap-2">
+                {repoEntries.map((entry) => {
+                  const label = entry.displayName?.trim() || `${entry.owner}/${entry.repo}`;
+                  const entrySlug = `${entry.owner.toLowerCase()}/${entry.repo.toLowerCase()}`;
+                  const isActive = repoSlug === entrySlug;
+                  return (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      onClick={() => {
+                        setOwner(entry.owner);
+                        setRepo(entry.repo);
+                        if (entry.projects.length === 1) {
+                          setProject(entry.projects[0].id);
+                        }
+                      }}
+                      className={`tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-transition tw-duration-200 tw-ease-out ${
+                        isActive
+                          ? "tw-border-emerald-500 tw-bg-emerald-600/10 tw-text-emerald-200"
+                          : "tw-border-slate-700 tw-bg-slate-900 tw-text-slate-200 hover:tw-border-slate-600"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {projectOptions.length > 0 && (
+            <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-p-4">
+              <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+                <h3 className="tw-text-sm tw-font-semibold tw-text-slate-200">Projects in {matchedRepoEntry?.displayName ?? `${owner || "repo"}`}</h3>
+                <p className="tw-text-xs tw-text-slate-400">Select a saved project or continue typing a new one above.</p>
+              </div>
+              <div className="tw-flex tw-flex-wrap tw-gap-2">
+                {projectOptions.map((option) => {
+                  const isActive = activeProjectId === option.id || project === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setProject(option.id)}
+                      className={`tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-transition tw-duration-200 tw-ease-out ${
+                        isActive
+                          ? "tw-border-emerald-500 tw-bg-emerald-600/10 tw-text-emerald-200"
+                          : "tw-border-slate-700 tw-bg-slate-900 tw-text-slate-200 hover:tw-border-slate-600"
+                      }`}
+                    >
+                      {option.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="tw-text-xs tw-text-slate-400">
+                Target files include <code className="tw-font-mono tw-text-[11px]">{roadmapPath}</code>, <code className="tw-font-mono tw-text-[11px]">{infraPath}</code>,
+                and <code className="tw-font-mono tw-text-[11px]">{stackPath}</code>.
+              </p>
+            </div>
+          )}
 
           <div className="tw-space-y-3">
             <label htmlFor="roadmap-upload" className="tw-block tw-text-sm tw-font-medium tw-text-slate-200">
-              Upload docs/roadmap.yml
+              Upload {roadmapPath}
             </label>
             <input
               key={uploadKey}

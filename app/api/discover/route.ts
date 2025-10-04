@@ -7,7 +7,7 @@ import micromatch from "micromatch";
 import yaml from "js-yaml";
 
 import { getFileRaw, listRepoTreePaths, putFile } from "@/lib/github";
-import { parseProbeHeaders, probeReadOnlyCheck, type ProbeHeaders } from "@/lib/read-only-probe";
+import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 const READ_ONLY_CHECKS_URL = process.env.READ_ONLY_CHECKS_URL || "";
 
@@ -22,7 +22,7 @@ code_globs:
   - src/screens/**/*.{tsx,ts}
 `;
 
-type ProbeResult = { q: string; ok: boolean; why?: string; status?: number };
+type ProbeResult = { q: string; ok: boolean; why?: string };
 type DiscoverConfig = {
   db_queries: string[];
   code_globs: string[];
@@ -35,6 +35,7 @@ type DiscoverSummary = {
   owner: string;
   repo: string;
   branch: string;
+  project?: string;
   config: DiscoverConfig;
   dbSuccesses: string[];
   dbFailures: ProbeResult[];
@@ -50,33 +51,42 @@ function ensureStringList(value: unknown, fallback: string[]): string[] {
   return filtered.length ? filtered : fallback;
 }
 
-const ENV_PROBE_HEADERS: ProbeHeaders = parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS);
-
-async function probeSupabase(
-  queries: string[],
-  overrideUrl?: string,
-  overrideHeaders?: ProbeHeaders,
-): Promise<ProbeResult[]> {
+async function probeSupabase(queries: string[], overrideUrl?: string): Promise<ProbeResult[]> {
   const url = overrideUrl?.trim() || READ_ONLY_CHECKS_URL;
   if (!url) {
     return queries.map((q) => ({ q, ok: false, why: "READ_ONLY_CHECKS_URL not configured" }));
   }
 
-  const headers: ProbeHeaders = { ...ENV_PROBE_HEADERS, ...(overrideHeaders || {}) };
-  const results = await Promise.all(
-    queries.map(async (query) => {
-      const outcome = await probeReadOnlyCheck(url, query, headers);
-      return { q: query, ok: outcome.ok, why: outcome.why, status: outcome.status };
-    }),
-  );
-  return results;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ queries }),
+    });
+
+    if (!response.ok) {
+      const detail = await response
+        .text()
+        .then((text) => text.trim())
+        .catch(() => "");
+      const why = detail ? `${response.status} ${detail}` : String(response.status);
+      return queries.map((q) => ({ q, ok: false, why }));
+    }
+
+    const json = await response.json().catch(() => ({}));
+    const arr = Array.isArray(json?.results) ? json.results : [];
+    const byQuery = new Map(arr.map((entry: any) => [entry?.q, !!entry?.ok]));
+    return queries.map((q) => ({ q, ok: !!byQuery.get(q) }));
+  } catch (error: any) {
+    return queries.map((q) => ({ q, ok: false, why: error?.message || String(error) }));
+  }
 }
 
-function parseDiscoverConfig(raw: string | null): DiscoverConfig {
+function parseDiscoverConfig(raw: string | null, pathLabel: string): DiscoverConfig {
   const notes: string[] = [];
 
   if (!raw) {
-    notes.push("docs/discover.yml not found — using defaults");
+    notes.push(`${pathLabel} not found — using defaults`);
     return { db_queries: DEFAULT_DB_QUERIES, code_globs: DEFAULT_CODE_GLOBS, notes };
   }
 
@@ -86,7 +96,7 @@ function parseDiscoverConfig(raw: string | null): DiscoverConfig {
     const codeGlobs = ensureStringList(parsed?.code_globs ?? parsed?.codeGlobs, DEFAULT_CODE_GLOBS);
     return { db_queries: dbQueries, code_globs: codeGlobs, notes };
   } catch (error: any) {
-    notes.push(`Failed to parse docs/discover.yml (${error?.message || String(error)})`);
+    notes.push(`Failed to parse ${pathLabel} (${error?.message || String(error)})`);
     return { db_queries: DEFAULT_DB_QUERIES, code_globs: DEFAULT_CODE_GLOBS, notes };
   }
 }
@@ -99,26 +109,27 @@ function slugify(input: string) {
     .slice(0, 64) || "item";
 }
 
-function backlogYaml(items: BacklogItem[]) {
+function backlogYaml(items: BacklogItem[], configPath: string) {
   if (!items.length) {
     return [
-      "# Auto-discovered items generated from docs/discover.yml",
+      `# Auto-discovered items generated from ${configPath}`,
       "# (none detected)",
       "",
     ].join("\n");
   }
 
   return [
-    "# Auto-discovered items generated from docs/discover.yml",
+    `# Auto-discovered items generated from ${configPath}`,
     ...items.map((item) => `- id: ${item.id}\n  title: "${item.title.replace(/"/g, '\\"')}"\n  status: complete`),
     "",
   ].join("\n");
 }
 
 function buildSummary(details: DiscoverSummary) {
-  const { owner, repo, branch, config, dbSuccesses, dbFailures, matchedPaths, discovered } = details;
+  const { owner, repo, branch, project, config, dbSuccesses, dbFailures, matchedPaths, discovered } = details;
   const lines: string[] = [
     `Repo: ${owner}/${repo}`,
+    ...(project ? [`Project: ${project}`] : []),
     `Branch: ${branch}`,
     `Generated: ${new Date().toISOString()}`,
     "",
@@ -184,7 +195,12 @@ async function safePut(
 
 export async function POST(req: NextRequest) {
   try {
-    const { owner, repo, branch = "main", probeUrl, probeHeaders } = await req.json();
+    const payload = await req.json();
+    const owner = typeof payload?.owner === "string" ? payload.owner.trim() : "";
+    const repo = typeof payload?.repo === "string" ? payload.repo.trim() : "";
+    const branch = typeof payload?.branch === "string" && payload.branch.trim() ? payload.branch.trim() : "main";
+    const probeUrl = typeof payload?.probeUrl === "string" ? payload.probeUrl : undefined;
+    const projectKey = normalizeProjectKey(payload?.project);
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
@@ -193,7 +209,13 @@ export async function POST(req: NextRequest) {
     const wrote: string[] = [];
     const failures: string[] = [];
 
-    const statusRaw = await getFileRaw(owner, repo, "docs/roadmap-status.json", branch, token).catch(() => null);
+    const statusRaw = await getFileRaw(
+      owner,
+      repo,
+      projectAwarePath("docs/roadmap-status.json", projectKey),
+      branch,
+      token,
+    ).catch(() => null);
     const doneNames = new Set<string>();
     if (statusRaw) {
       try {
@@ -208,27 +230,32 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
-    const discoverRaw = await getFileRaw(owner, repo, "docs/discover.yml", branch, token).catch(() => null);
+    const discoverPath = projectAwarePath("docs/discover.yml", projectKey);
+    const discoverLabel = describeProjectFile("docs/discover.yml", projectKey);
+    const discoverRaw = await getFileRaw(owner, repo, discoverPath, branch, token).catch(() => null);
     const missingDiscover = !discoverRaw;
-    const config = parseDiscoverConfig(discoverRaw);
+    const config = parseDiscoverConfig(discoverRaw, discoverLabel);
 
     if (missingDiscover) {
       await safePut(
         owner,
         repo,
         branch,
-        "docs/discover.yml",
+        discoverPath,
         DEFAULT_DISCOVER_YAML,
-        "chore(roadmap): seed discover config [skip ci]",
+        projectKey
+          ? `chore(${projectKey}): seed discover config [skip ci]`
+          : "chore(roadmap): seed discover config [skip ci]",
         wrote,
         failures,
         token,
       );
-      config.notes.push("Seeded docs/discover.yml with default discovery settings. Update this file to refine probes.");
+      config.notes.push(
+        `Seeded ${describeProjectFile("docs/discover.yml", projectKey)} with default discovery settings. Update this file to refine probes.`,
+      );
     }
 
-    const overrideHeaders = parseProbeHeaders(probeHeaders);
-    const dbResults = await probeSupabase(config.db_queries, probeUrl, overrideHeaders);
+    const dbResults = await probeSupabase(config.db_queries, probeUrl);
     const dbSuccesses = dbResults.filter((result) => result.ok).map((result) => result.q);
     const dbFailures = dbResults.filter((result) => !result.ok);
 
@@ -254,13 +281,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const backlogPath = projectAwarePath("docs/backlog-discovered.yml", projectKey);
     await safePut(
       owner,
       repo,
       branch,
-      "docs/backlog-discovered.yml",
-      backlogYaml(discovered),
-      "chore(roadmap): update backlog-discovered [skip ci]",
+      backlogPath,
+      backlogYaml(discovered, discoverLabel),
+      projectKey
+        ? `chore(${projectKey}): update backlog-discovered [skip ci]`
+        : "chore(roadmap): update backlog-discovered [skip ci]",
       wrote,
       failures,
       token,
@@ -270,6 +300,7 @@ export async function POST(req: NextRequest) {
       owner,
       repo,
       branch,
+      project: projectKey || undefined,
       config,
       dbSuccesses,
       dbFailures,
@@ -277,13 +308,14 @@ export async function POST(req: NextRequest) {
       discovered,
     });
 
+    const summaryPath = projectAwarePath("docs/summary.txt", projectKey);
     await safePut(
       owner,
       repo,
       branch,
-      "docs/summary.txt",
+      summaryPath,
       summary,
-      "chore(roadmap): update summary [skip ci]",
+      projectKey ? `chore(${projectKey}): update summary [skip ci]` : "chore(roadmap): update summary [skip ci]",
       wrote,
       failures,
       token,

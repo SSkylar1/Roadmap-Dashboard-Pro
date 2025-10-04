@@ -13,7 +13,8 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
-import { useResolvedSecrets } from "@/lib/use-local-secrets";
+import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
 type SuccessState = { message: string; prUrl?: string } | null;
@@ -117,6 +118,7 @@ function ConceptWizardPageInner() {
   const [owner, setOwner] = useState(() => params.get("owner") ?? "");
   const [repo, setRepo] = useState(() => params.get("repo") ?? "");
   const [branch, setBranch] = useState(() => params.get("branch") ?? "main");
+  const [project, setProject] = useState(() => params.get("project") ?? "");
   const [conceptText, setConceptText] = useState("");
   const [upload, setUpload] = useState<UploadState | null>(null);
   const [uploadText, setUploadText] = useState("");
@@ -129,9 +131,31 @@ function ConceptWizardPageInner() {
   const [isCommitting, setIsCommitting] = useState(false);
   const previewRef = useRef<HTMLPreElement | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
-  const secrets = useResolvedSecrets(owner, repo);
+  const secretsStore = useLocalSecrets();
+  const secrets = useResolvedSecrets(owner, repo, project || undefined);
   const openAiConfigured = Boolean(secrets.openaiKey);
   const githubConfigured = Boolean(secrets.githubPat);
+  const repoEntries = secretsStore.repos;
+  const repoSlug = useMemo(() => {
+    const ownerSlug = owner.trim().toLowerCase();
+    const repoSlugValue = repo.trim().toLowerCase();
+    return ownerSlug && repoSlugValue ? `${ownerSlug}/${repoSlugValue}` : "";
+  }, [owner, repo]);
+  const matchedRepoEntry = useMemo(() => {
+    if (!repoSlug) return undefined;
+    return repoEntries.find(
+      (entry) => `${entry.owner.toLowerCase()}/${entry.repo.toLowerCase()}` === repoSlug,
+    );
+  }, [repoEntries, repoSlug]);
+  const projectOptions = useMemo(() => matchedRepoEntry?.projects ?? [], [matchedRepoEntry]);
+  const activeProjectId = useMemo(() => {
+    if (!project) return "";
+    const matchById = projectOptions.find((option) => option.id === project);
+    if (matchById) return matchById.id;
+    const normalized = normalizeProjectKey(project);
+    const matchByKey = projectOptions.find((option) => normalizeProjectKey(option.id) === normalized);
+    return matchByKey?.id ?? project;
+  }, [project, projectOptions]);
 
   const combinedPrompt = useMemo(() => {
     if (conceptText && uploadText) {
@@ -152,6 +176,8 @@ function ConceptWizardPageInner() {
   }, [roadmap]);
 
   const canGenerate = Boolean(!isGenerating && combinedPrompt);
+  const projectKey = normalizeProjectKey(project);
+  const targetPath = describeProjectFile("docs/roadmap.yml", projectKey);
   const canCommit = Boolean(!isCommitting && roadmap.trim() && owner && repo && branch);
 
   async function onGenerate(event: FormEvent<HTMLFormElement>) {
@@ -263,7 +289,7 @@ function ConceptWizardPageInner() {
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify({ owner, repo, branch: branch || "main", content: roadmap }),
+        body: JSON.stringify({ owner, repo, branch: branch || "main", content: roadmap, project: project || undefined }),
       });
 
       const detail = (await response.json().catch(() => ({}))) as CommitResponse;
@@ -280,17 +306,17 @@ function ConceptWizardPageInner() {
           if (detail.prUrl) {
             const label = detail.pullRequestNumber ? `PR #${detail.pullRequestNumber}` : "Pull request";
             setSuccess({
-              message: `${label} opened for docs/roadmap.yml.`,
+              message: `${label} opened for ${targetPath}.`,
               prUrl: detail.prUrl,
             });
           } else {
             setSuccess({
-              message: "Pull request opened for docs/roadmap.yml. Check GitHub to review and merge.",
+              message: `Pull request opened for ${targetPath}. Check GitHub to review and merge.`,
             });
           }
         } else {
           const targetBranch = detail.branch ?? branch;
-          setSuccess({ message: `docs/roadmap.yml committed to ${targetBranch}.` });
+          setSuccess({ message: `${targetPath} committed to ${targetBranch}.` });
         }
       } else {
         setError({ title: detail?.error ?? "Unexpected response", detail: detail?.detail });
@@ -415,14 +441,14 @@ function ConceptWizardPageInner() {
         </div>
       )}
 
-      <div className="tw-grid tw-gap-4">
-        <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
-          <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">docs/roadmap.yml</h2>
-        <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
-          <input
-            value={owner}
-            onChange={(event) => setOwner(event.target.value)}
-            placeholder="owner"
+      <div className="tw-grid tw-gap-6">
+        <header className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+          <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">{targetPath}</h2>
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
+            <input
+              value={owner}
+              onChange={(event) => setOwner(event.target.value)}
+              placeholder="owner"
               className="tw-w-32 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
             />
             <span className="tw-text-slate-400">/</span>
@@ -436,8 +462,85 @@ function ConceptWizardPageInner() {
               value={branch}
               onChange={(event) => setBranch(event.target.value)}
               placeholder="branch"
-            className="tw-w-32 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
-          />
+              className="tw-w-32 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
+            />
+            <input
+              value={project}
+              onChange={(event) => setProject(event.target.value)}
+              placeholder="project (optional)"
+              className="tw-w-44 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
+            />
+          </div>
+        </header>
+
+        {repoEntries.length > 0 && (
+          <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-p-4 tw-space-y-3">
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+              <h3 className="tw-text-sm tw-font-semibold tw-text-slate-200">Linked repositories</h3>
+              <p className="tw-text-xs tw-text-slate-400">Pick a repo to auto-fill owner and project settings.</p>
+            </div>
+            <div className="tw-flex tw-flex-wrap tw-gap-2">
+              {repoEntries.map((entry) => {
+                const label = entry.displayName?.trim() || `${entry.owner}/${entry.repo}`;
+                const entrySlug = `${entry.owner.toLowerCase()}/${entry.repo.toLowerCase()}`;
+                const isActive = repoSlug === entrySlug;
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => {
+                      setOwner(entry.owner);
+                      setRepo(entry.repo);
+                      if (entry.projects.length === 1) {
+                        setProject(entry.projects[0].id);
+                      }
+                    }}
+                    className={`tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-transition tw-duration-200 tw-ease-out ${
+                      isActive
+                        ? "tw-border-emerald-500 tw-bg-emerald-600/10 tw-text-emerald-200"
+                        : "tw-border-slate-700 tw-bg-slate-900 tw-text-slate-200 hover:tw-border-slate-600"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {projectOptions.length > 0 && (
+          <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-p-4">
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+              <h3 className="tw-text-sm tw-font-semibold tw-text-slate-200">Projects in {matchedRepoEntry?.displayName ?? `${owner || "repo"}`}</h3>
+              <p className="tw-text-xs tw-text-slate-400">Select a saved project or keep typing a new one above.</p>
+            </div>
+            <div className="tw-flex tw-flex-wrap tw-gap-2">
+              {projectOptions.map((option) => {
+                const isActive = activeProjectId === option.id || project === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setProject(option.id)}
+                    className={`tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-transition tw-duration-200 tw-ease-out ${
+                      isActive
+                        ? "tw-border-emerald-500 tw-bg-emerald-600/10 tw-text-emerald-200"
+                        : "tw-border-slate-700 tw-bg-slate-900 tw-text-slate-200 hover:tw-border-slate-600"
+                    }`}
+                  >
+                    {option.name}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="tw-text-xs tw-text-slate-400">
+              Target file: <code className="tw-font-mono tw-text-[11px]">{targetPath}</code>
+            </p>
+          </div>
+        )}
+
+        <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
           <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-px-3 tw-py-1.5 tw-text-xs tw-font-medium tw-text-slate-200">
             <input
               type="checkbox"
@@ -453,15 +556,14 @@ function ConceptWizardPageInner() {
             disabled={!canCommit}
             className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-emerald-400/90 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out disabled:tw-cursor-not-allowed disabled:tw-border-slate-800/60 disabled:tw-bg-slate-700/40 disabled:tw-text-slate-400 hover:tw-bg-emerald-300"
           >
-            {isCommitting ? "Committing…" : "Commit to Repo"}
+            {isCommitting ? "Committing…" : openAsPr ? "Open PR" : "Commit to Repo"}
           </button>
         </div>
-      </div>
-      <p className="tw-text-xs tw-text-slate-400">
+        <p className="tw-text-xs tw-text-slate-400">
           {openAsPr
             ? "Creates a new branch and opens a PR with the generated roadmap."
-            : `Commits docs/roadmap.yml directly to ${branch || "main"}.`}
-      </p>
+            : `Commits ${targetPath} directly to ${branch || "main"}.`}
+        </p>
 
         <div className="code-editor">
           <pre

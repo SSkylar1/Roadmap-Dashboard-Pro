@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getFileRaw, putFile } from "@/lib/github";
+import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +62,7 @@ type CommitResponse = { ok: true; content: string; created: boolean };
 type CommitPayload = {
   branch?: string;
   content?: string;
+  project?: string;
 };
 
 function normalizeBranch(value: unknown) {
@@ -74,8 +76,10 @@ export async function GET(req: NextRequest, context: RouteParams) {
   try {
     const url = new URL(req.url);
     const branch = url.searchParams.get("branch") || undefined;
+    const projectKey = normalizeProjectKey(url.searchParams.get("project"));
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
-    const raw = await getFileRaw(owner, repo, "docs/gtm-plan.md", branch, token);
+    const path = projectAwarePath("docs/gtm-plan.md", projectKey);
+    const raw = await getFileRaw(owner, repo, path, branch, token);
     if (raw === null) {
       return NextResponse.json({ error: "not_found" }, { status: 404 });
     }
@@ -100,6 +104,7 @@ export async function POST(req: NextRequest, context: RouteParams) {
 
   const branch = normalizeBranch(payload?.branch);
   const providedContent = typeof payload?.content === "string" ? payload.content : undefined;
+  const projectKey = normalizeProjectKey(payload?.project);
 
   if (providedContent !== undefined && !providedContent.trim()) {
     return NextResponse.json({ error: "GTM plan content cannot be empty" }, { status: 400 });
@@ -109,12 +114,14 @@ export async function POST(req: NextRequest, context: RouteParams) {
 
   try {
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
-    const existing = await getFileRaw(owner, repo, "docs/gtm-plan.md", branch, token);
+    const path = projectAwarePath("docs/gtm-plan.md", projectKey);
+    const existing = await getFileRaw(owner, repo, path, branch, token);
+    const label = describeProjectFile("docs/gtm-plan.md", projectKey);
     const message = existing === null
-      ? "feat(gtm): add docs/gtm-plan.md"
-      : "chore(gtm): update docs/gtm-plan.md";
+      ? `feat(gtm): add ${label}`
+      : `chore(gtm): update ${label}`;
 
-    await putFile(owner, repo, "docs/gtm-plan.md", finalContent, branch, message, token);
+    await putFile(owner, repo, path, finalContent, branch, message, token);
 
     const response: CommitResponse = { ok: true, content: finalContent, created: existing === null };
     return NextResponse.json(response);

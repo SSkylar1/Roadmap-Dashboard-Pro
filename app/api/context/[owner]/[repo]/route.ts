@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getFileRaw } from "@/lib/github";
+import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,15 +32,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   const { owner, repo } = params;
   const url = new URL(req.url);
   const branch = normalizeBranch(url.searchParams.get("branch"));
+  const projectKey = normalizeProjectKey(url.searchParams.get("project"));
 
   try {
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
 
     const entries = await Promise.all(
       CONTEXT_FILES.map(async (file) => ({
-        path: file.path,
+        path: describeProjectFile(file.path, projectKey),
         optional: file.optional ?? false,
-        content: await getFileRaw(owner, repo, file.path, branch, token),
+        content: await getFileRaw(owner, repo, projectAwarePath(file.path, projectKey), branch, token),
       })),
     );
 
@@ -70,6 +72,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         owner,
         name: repo,
         branch: branch ?? "HEAD",
+        project: projectKey || undefined,
       },
       files,
     };

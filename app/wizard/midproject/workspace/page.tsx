@@ -4,6 +4,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } fro
 import Link from "next/link";
 
 import StatusGrid from "@/components/StatusGrid";
+import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
@@ -48,7 +49,7 @@ type RoadmapStatus = {
 
 type ContextPack = {
   generated_at?: string;
-  repo?: { owner?: string; name?: string; branch?: string };
+  repo?: { owner?: string; name?: string; branch?: string; project?: string };
   files?: Record<string, string>;
 };
 
@@ -59,6 +60,7 @@ export default function MidProjectSyncWorkspace() {
   const [probeUrl, setProbeUrl] = useState("");
   const [selectedRepoId, setSelectedRepoId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectOverride, setProjectOverride] = useState("");
   const [probeCustomized, setProbeCustomized] = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
 
@@ -107,6 +109,15 @@ export default function MidProjectSyncWorkspace() {
     [secretsStore, trimmedOwner, trimmedRepo, selectedProjectId],
   );
 
+  const rawProjectInput = projectOverride.trim() || selectedProjectId;
+  const projectKey = normalizeProjectKey(rawProjectInput);
+  const roadmapPath = describeProjectFile("docs/roadmap.yml", projectKey);
+  const projectPlanPath = describeProjectFile("docs/project-plan.md", projectKey);
+  const statusPath = describeProjectFile("docs/roadmap-status.json", projectKey);
+  const discoverPath = describeProjectFile("docs/discover.yml", projectKey);
+  const backlogPath = describeProjectFile("docs/backlog-discovered.yml", projectKey);
+  const summaryPath = describeProjectFile("docs/summary.txt", projectKey);
+
   const describeSource = (source?: "project" | "repo" | "default") => {
     if (!source) return null;
     if (source === "project") return "project override";
@@ -147,12 +158,22 @@ export default function MidProjectSyncWorkspace() {
       if (selectedProjectId) {
         setSelectedProjectId("");
       }
+      if (projectOverride) {
+        setProjectOverride("");
+      }
       return;
     }
     if (selectedProjectId && !projectOptions.some((project) => project.id === selectedProjectId)) {
       setSelectedProjectId(projectOptions[0].id);
     }
-  }, [projectOptions, selectedProjectId]);
+  }, [projectOptions, projectOverride, selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      return;
+    }
+    setProjectOverride((current) => (current ? current : selectedProjectId));
+  }, [selectedProjectId]);
 
   useEffect(() => {
     setProbeCustomized(false);
@@ -170,6 +191,7 @@ export default function MidProjectSyncWorkspace() {
       if (!value) {
         setSelectedRepoId("");
         setSelectedProjectId("");
+        setProjectOverride("");
         return;
       }
       const entry = repoOptions.find((option) => option.id === value);
@@ -178,12 +200,15 @@ export default function MidProjectSyncWorkspace() {
       setOwner(entry.owner);
       setRepo(entry.repo);
       setSelectedProjectId(entry.projects[0]?.id ?? "");
+      setProjectOverride(entry.projects[0]?.id ?? "");
     },
     [repoOptions],
   );
 
   const handleProjectSelect = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
-    setSelectedProjectId(event.target.value);
+    const value = event.target.value;
+    setSelectedProjectId(value);
+    setProjectOverride(value);
   }, []);
 
   const handleProbeChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
@@ -226,6 +251,7 @@ export default function MidProjectSyncWorkspace() {
       repo: repo.trim(),
       branch: branch.trim() || "main",
       ...(probeUrl.trim() ? { probeUrl: probeUrl.trim() } : {}),
+      ...(projectKey ? { project: projectKey } : {}),
     };
 
     try {
@@ -248,8 +274,9 @@ export default function MidProjectSyncWorkspace() {
       const statusHeaders: HeadersInit = resolvedSecrets.githubPat
         ? { "x-github-pat": resolvedSecrets.githubPat }
         : {};
+      const statusProjectQuery = projectKey ? `&project=${encodeURIComponent(projectKey)}` : "";
       const statusResponse = await fetch(
-        `/api/status/${payload.owner}/${payload.repo}?branch=${encodeURIComponent(payload.branch)}`,
+        `/api/status/${payload.owner}/${payload.repo}?branch=${encodeURIComponent(payload.branch)}${statusProjectQuery}`,
         { cache: "no-store", headers: statusHeaders },
       );
       if (statusResponse.ok) {
@@ -284,8 +311,8 @@ export default function MidProjectSyncWorkspace() {
     : null;
 
   const seededDiscover = useMemo(
-    () => discoverArtifacts.some((path) => path.startsWith("docs/discover.yml")),
-    [discoverArtifacts],
+    () => (discoverPath ? discoverArtifacts.some((path) => path.startsWith(discoverPath)) : false),
+    [discoverArtifacts, discoverPath],
   );
 
   const contextGeneratedAt = contextPack?.generated_at
@@ -298,7 +325,7 @@ export default function MidProjectSyncWorkspace() {
   const contextFiles = useMemo(() => Object.keys(contextPack?.files ?? {}), [contextPack]);
 
   const runDiscovery = useCallback(
-    async (payload: { owner: string; repo: string; branch: string; probeUrl?: string }) => {
+    async (payload: { owner: string; repo: string; branch: string; probeUrl?: string; project?: string }) => {
       const discoverHeaders: HeadersInit = { "Content-Type": "application/json" };
       if (resolvedSecrets.githubPat) {
         discoverHeaders["x-github-pat"] = resolvedSecrets.githubPat;
@@ -337,6 +364,7 @@ export default function MidProjectSyncWorkspace() {
       repo: repo.trim(),
       branch: branch.trim() || "main",
       ...(probeUrl.trim() ? { probeUrl: probeUrl.trim() } : {}),
+      ...(projectKey ? { project: projectKey } : {}),
     };
 
     setIsDiscovering(true);
@@ -358,7 +386,7 @@ export default function MidProjectSyncWorkspace() {
     } finally {
       setIsDiscovering(false);
     }
-  }, [branch, owner, probeUrl, repo, repoSlug, runDiscovery]);
+  }, [branch, owner, probeUrl, projectKey, repo, repoSlug, runDiscovery]);
 
   const handleExportContext = useCallback(async () => {
     if (!repoSlug) {
@@ -382,8 +410,9 @@ export default function MidProjectSyncWorkspace() {
       if (resolvedSecrets.githubPat) {
         contextHeaders["x-github-pat"] = resolvedSecrets.githubPat;
       }
+      const projectQuery = projectKey ? `&project=${encodeURIComponent(projectKey)}` : "";
       const response = await fetch(
-        `/api/context/${encodeURIComponent(trimmedOwner)}/${encodeURIComponent(trimmedRepo)}?branch=${encodeURIComponent(trimmedBranch)}`,
+        `/api/context/${encodeURIComponent(trimmedOwner)}/${encodeURIComponent(trimmedRepo)}?branch=${encodeURIComponent(trimmedBranch)}${projectQuery}`,
         { cache: "no-store", headers: contextHeaders },
       );
       const json = (await response.json()) as ContextPack & { error?: string; missing?: string[] };
@@ -400,7 +429,7 @@ export default function MidProjectSyncWorkspace() {
     } finally {
       setIsExporting(false);
     }
-  }, [branchParam, owner, repo, repoSlug, resolvedSecrets.githubPat]);
+  }, [branchParam, owner, projectKey, repo, repoSlug, resolvedSecrets.githubPat]);
 
   const handleDownloadContext = useCallback(() => {
     if (!contextPack) return;
@@ -507,6 +536,16 @@ export default function MidProjectSyncWorkspace() {
               </label>
             ) : null}
             <label className="tw-flex tw-flex-col tw-gap-2">
+              <span className="tw-text-sm tw-font-medium tw-text-slate-200">Project slug (optional)</span>
+              <input
+                value={projectOverride}
+                onChange={(event) => setProjectOverride(event.target.value)}
+                placeholder={selectedProjectId || "growth-experiments"}
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
+              />
+              <p className="tw-text-[11px] tw-text-slate-500">Roadmap file: {roadmapPath}</p>
+            </label>
+            <label className="tw-flex tw-flex-col tw-gap-2">
               <span className="tw-text-sm tw-font-medium tw-text-slate-200">Branch</span>
               <input
                 value={branch}
@@ -573,10 +612,10 @@ export default function MidProjectSyncWorkspace() {
           <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">What this sync runs</h2>
           <ul className="tw-space-y-3 tw-text-sm tw-text-slate-300 tw-list-disc tw-pl-5">
             <li>
-              <span className="tw-font-medium tw-text-slate-100">/api/run</span> regenerates docs/roadmap-status.json and project-plan context.
+              <span className="tw-font-medium tw-text-slate-100">/api/run</span> regenerates <code className="tw-rounded tw-bg-slate-950 tw-px-1 tw-py-0.5">{statusPath}</code> and <code className="tw-rounded tw-bg-slate-950 tw-px-1 tw-py-0.5">{projectPlanPath}</code>.
             </li>
             <li>
-              <span className="tw-font-medium tw-text-slate-100">/api/discover</span> looks for completed work outside the roadmap and updates docs/backlog-discovered.yml.
+              <span className="tw-font-medium tw-text-slate-100">/api/discover</span> looks for completed work outside the roadmap and updates <code className="tw-rounded tw-bg-slate-950 tw-px-1 tw-py-0.5">{backlogPath}</code>.
             </li>
             <li>Bring a Supabase probe URL to surface database checks along with code signals.</li>
           </ul>
@@ -600,7 +639,7 @@ export default function MidProjectSyncWorkspace() {
           <div className="tw-flex tw-items-center tw-justify-between tw-gap-3">
             <div>
               <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Roadmap status</h2>
-              <p className="tw-text-sm tw-text-slate-300">Snapshot of docs/roadmap-status.json after the latest run.</p>
+              <p className="tw-text-sm tw-text-slate-300">Snapshot of {statusPath} after the latest run.</p>
             </div>
             {statusGeneratedAt ? (
               <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
@@ -621,7 +660,7 @@ export default function MidProjectSyncWorkspace() {
           <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
             <div>
               <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Backlog discoveries</h2>
-              <p className="tw-text-sm tw-text-slate-300">Preview of docs/backlog-discovered.yml entries to triage.</p>
+              <p className="tw-text-sm tw-text-slate-300">Preview of {backlogPath} entries to triage.</p>
             </div>
             <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
               {discoverArtifacts.length ? (
@@ -670,7 +709,7 @@ export default function MidProjectSyncWorkspace() {
             <div className="tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4 tw-text-xs tw-text-emerald-100">
               <div className="tw-font-semibold">Default discovery config created</div>
               <p className="tw-mt-1 tw-text-emerald-100/80">
-                We added <code className="tw-rounded tw-bg-emerald-500/20 tw-px-1 tw-py-0.5">docs/discover.yml</code> to your repo with starter queries and globs. Update that file in GitHub to refine discovery results.
+                We added <code className="tw-rounded tw-bg-emerald-500/20 tw-px-1 tw-py-0.5">{discoverPath}</code> to your repo with starter queries and globs. Update that file in GitHub to refine discovery results.
               </p>
             </div>
           ) : null}
@@ -686,7 +725,7 @@ export default function MidProjectSyncWorkspace() {
             ) : null}
           </div>
           <p className="tw-text-sm tw-text-slate-300">
-            Results from <code className="tw-rounded tw-bg-slate-950 tw-px-1.5 tw-py-0.5">db_queries</code> in docs/discover.yml.
+            Results from <code className="tw-rounded tw-bg-slate-950 tw-px-1.5 tw-py-0.5">db_queries</code> in {discoverPath}.
           </p>
           {discoverConfig?.db_queries?.length ? (
             <p className="tw-text-xs tw-uppercase tw-tracking-wide tw-text-slate-400">
@@ -714,7 +753,7 @@ export default function MidProjectSyncWorkspace() {
             </ul>
           ) : (
             <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-8 tw-text-center tw-text-sm tw-text-slate-400">
-              Run discovery to execute Supabase probes defined in docs/discover.yml.
+              Run discovery to execute Supabase probes defined in {discoverPath}.
             </div>
           )}
           {discoverConfig?.notes?.length ? (
@@ -734,7 +773,7 @@ export default function MidProjectSyncWorkspace() {
             <div>
               <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Code path matches</h2>
               <p className="tw-text-sm tw-text-slate-300">
-                Globs from docs/discover.yml matched against the repository tree.
+                Globs from {discoverPath} matched against the repository tree.
               </p>
             </div>
             {discoveryGeneratedAt ? (
@@ -808,7 +847,7 @@ export default function MidProjectSyncWorkspace() {
             <div className="tw-space-y-1">
               <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Context pack export</h2>
               <p className="tw-text-sm tw-text-slate-300">
-                Bundle roadmap, backlog, tech stack, and summary artifacts into a single JSON payload for AI copilots.
+                Bundle {roadmapPath}, {statusPath}, {backlogPath}, {summaryPath}, and the supporting stack docs into a single JSON payload for AI copilots.
               </p>
             </div>
             <button
@@ -832,6 +871,11 @@ export default function MidProjectSyncWorkspace() {
                 {contextGeneratedAt ? (
                   <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
                     Generated {contextGeneratedAt}
+                  </span>
+                ) : null}
+                {contextPack.repo?.project ? (
+                  <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
+                    Project {contextPack.repo.project}
                   </span>
                 ) : null}
                 {contextPack.repo?.branch ? (

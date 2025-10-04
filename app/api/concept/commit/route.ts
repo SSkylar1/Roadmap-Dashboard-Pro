@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { putFile } from "@/lib/github";
+import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,8 @@ export async function POST(req: Request) {
     const repo = typeof body?.repo === "string" ? body.repo.trim() : "";
     const branch = typeof body?.branch === "string" && body.branch.trim() ? body.branch.trim() : "main";
     const content = typeof body?.content === "string" ? body.content : "";
+    const projectInput = typeof body?.project === "string" ? body.project : "";
+    const projectKey = normalizeProjectKey(projectInput);
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
 
     if (!owner || !repo) {
@@ -24,11 +27,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Roadmap content is empty" }, { status: 400 });
     }
 
-    const message = "feat(roadmap): add generated docs/roadmap.yml";
+    const targetPath = projectAwarePath("docs/roadmap.yml", projectKey);
+    const message = projectKey
+      ? `feat(${projectKey}): add generated ${describeProjectFile("docs/roadmap.yml", projectKey)}`
+      : "feat(roadmap): add generated docs/roadmap.yml";
     const result = await putFile(
       owner,
       repo,
-      "docs/roadmap.yml",
+      targetPath,
       content,
       branch,
       message,
@@ -48,6 +54,7 @@ export async function POST(req: Request) {
       branch: result.branch,
       prUrl: result.pullRequest?.html_url ?? result.pullRequest?.url,
       pullRequestNumber: result.pullRequest?.number,
+      path: targetPath,
     });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? "Failed to commit roadmap" }, { status: 500 });

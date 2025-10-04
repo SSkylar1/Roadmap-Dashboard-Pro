@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { load } from "js-yaml";
 
 import { getFileRaw, putFile } from "@/lib/github";
+import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +62,7 @@ type ImportRequestBody = {
   repo?: string;
   branch?: string;
   roadmap?: string;
+  project?: string;
 };
 
 type ImportSuccess = {
@@ -92,6 +94,7 @@ export async function POST(req: Request) {
   const repo = typeof body?.repo === "string" ? body.repo.trim() : "";
   const branch = typeof body?.branch === "string" && body.branch.trim() ? body.branch.trim() : "main";
   const roadmap = typeof body?.roadmap === "string" ? body.roadmap : "";
+  const projectKey = normalizeProjectKey(body?.project);
   const token = req.headers.get("x-github-pat")?.trim() || undefined;
 
   if (!owner || !repo) {
@@ -118,11 +121,14 @@ export async function POST(req: Request) {
   const skipped: string[] = [];
 
   try {
-    const message = "feat(roadmap): import roadmap definition";
+    const targetPath = projectAwarePath("docs/roadmap.yml", projectKey);
+    const message = projectKey
+      ? `feat(${projectKey}): import roadmap definition`
+      : "feat(roadmap): import roadmap definition";
     const result = await putFile(
       owner,
       repo,
-      "docs/roadmap.yml",
+      targetPath,
       roadmap,
       branch,
       message,
@@ -135,25 +141,31 @@ export async function POST(req: Request) {
           }
         : undefined,
     );
-    created.push("docs/roadmap.yml");
+    created.push(targetPath);
 
     const workingBranch = asPR ? result.branch : branch;
 
     const scaffoldTargets = [
       {
-        path: "docs/infra-facts.md",
+        path: projectAwarePath("docs/infra-facts.md", projectKey),
         content: INFRA_FACTS_TEMPLATE,
-        message: "chore(roadmap): scaffold docs/infra-facts.md",
+        message: projectKey
+          ? `chore(${projectKey}): scaffold ${describeProjectFile("docs/infra-facts.md", projectKey)}`
+          : "chore(roadmap): scaffold docs/infra-facts.md",
       },
       {
-        path: "docs/tech-stack.yml",
+        path: projectAwarePath("docs/tech-stack.yml", projectKey),
         content: TECH_STACK_TEMPLATE,
-        message: "chore(roadmap): scaffold docs/tech-stack.yml",
+        message: projectKey
+          ? `chore(${projectKey}): scaffold ${describeProjectFile("docs/tech-stack.yml", projectKey)}`
+          : "chore(roadmap): scaffold docs/tech-stack.yml",
       },
       {
-        path: ".github/workflows/roadmap.yml",
+        path: projectAwarePath(".github/workflows/roadmap.yml", projectKey),
         content: ROADMAP_WORKFLOW_TEMPLATE,
-        message: "chore(roadmap): add roadmap workflow",
+        message: projectKey
+          ? `chore(${projectKey}): add roadmap workflow`
+          : "chore(roadmap): add roadmap workflow",
       },
     ] as const;
 
