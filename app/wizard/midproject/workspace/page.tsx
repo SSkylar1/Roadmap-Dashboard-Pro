@@ -1,10 +1,10 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 import StatusGrid from "@/components/StatusGrid";
-import { useLocalSecrets } from "@/lib/use-local-secrets";
+import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
 
@@ -57,6 +57,10 @@ export default function MidProjectSyncWorkspace() {
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("main");
   const [probeUrl, setProbeUrl] = useState("");
+  const [selectedRepoId, setSelectedRepoId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [probeCustomized, setProbeCustomized] = useState(false);
+  const [bootstrapped, setBootstrapped] = useState(false);
 
   const [status, setStatus] = useState<RoadmapStatus | null>(null);
   const [backlog, setBacklog] = useState<BacklogItem[]>([]);
@@ -75,10 +79,46 @@ export default function MidProjectSyncWorkspace() {
   const [isExporting, setIsExporting] = useState(false);
 
   const [contextPack, setContextPack] = useState<ContextPack | null>(null);
-  const secrets = useLocalSecrets();
+  const secretsStore = useLocalSecrets();
 
   const trimmedOwner = owner.trim();
   const trimmedRepo = repo.trim();
+
+  const repoOptions = secretsStore.repos;
+  const matchedRepoEntry = useMemo(() => {
+    if (selectedRepoId) {
+      return repoOptions.find((entry) => entry.id === selectedRepoId) ?? null;
+    }
+    if (trimmedOwner && trimmedRepo) {
+      return (
+        repoOptions.find(
+          (entry) =>
+            entry.owner.trim().toLowerCase() === trimmedOwner.toLowerCase() &&
+            entry.repo.trim().toLowerCase() === trimmedRepo.toLowerCase(),
+        ) ?? null
+      );
+    }
+    return null;
+  }, [repoOptions, selectedRepoId, trimmedOwner, trimmedRepo]);
+  const projectOptions = useMemo(() => matchedRepoEntry?.projects ?? [], [matchedRepoEntry]);
+
+  const resolvedSecrets = useMemo(
+    () => resolveSecrets(secretsStore, trimmedOwner, trimmedRepo, selectedProjectId || undefined),
+    [secretsStore, trimmedOwner, trimmedRepo, selectedProjectId],
+  );
+
+  const describeSource = (source?: "project" | "repo" | "default") => {
+    if (!source) return null;
+    if (source === "project") return "project override";
+    if (source === "repo") return "repo default";
+    return "global default";
+  };
+
+  const githubReady = Boolean(resolvedSecrets.githubPat);
+  const supabaseReady = Boolean(resolvedSecrets.supabaseReadOnlyUrl);
+  const githubSourceLabel = describeSource(resolvedSecrets.sources.githubPat);
+  const supabaseSourceLabel = describeSource(resolvedSecrets.sources.supabaseReadOnlyUrl);
+
   const repoSlug = trimmedOwner && trimmedRepo ? `${trimmedOwner}/${trimmedRepo}` : null;
   const dashboardHref = repoSlug
     ? `/dashboard?owner=${encodeURIComponent(trimmedOwner)}&repo=${encodeURIComponent(trimmedRepo)}`
@@ -89,10 +129,76 @@ export default function MidProjectSyncWorkspace() {
   const branchParam = branch.trim() || "main";
 
   useEffect(() => {
-    if (secrets.supabaseReadOnlyUrl && !probeUrl) {
-      setProbeUrl(secrets.supabaseReadOnlyUrl);
+    if (bootstrapped) return;
+    if (!owner && !repo && repoOptions.length) {
+      const first = repoOptions[0];
+      setSelectedRepoId(first.id);
+      setOwner(first.owner);
+      setRepo(first.repo);
+      setSelectedProjectId(first.projects[0]?.id ?? "");
+      setBootstrapped(true);
+    } else if (owner || repo) {
+      setBootstrapped(true);
     }
-  }, [probeUrl, secrets.supabaseReadOnlyUrl]);
+  }, [bootstrapped, owner, repo, repoOptions]);
+
+  useEffect(() => {
+    if (!projectOptions.length) {
+      if (selectedProjectId) {
+        setSelectedProjectId("");
+      }
+      return;
+    }
+    if (selectedProjectId && !projectOptions.some((project) => project.id === selectedProjectId)) {
+      setSelectedProjectId(projectOptions[0].id);
+    }
+  }, [projectOptions, selectedProjectId]);
+
+  useEffect(() => {
+    setProbeCustomized(false);
+  }, [selectedRepoId, selectedProjectId]);
+
+  useEffect(() => {
+    if (!probeCustomized && resolvedSecrets.supabaseReadOnlyUrl) {
+      setProbeUrl(resolvedSecrets.supabaseReadOnlyUrl);
+    }
+  }, [probeCustomized, resolvedSecrets.supabaseReadOnlyUrl]);
+
+  const handleRepoSelect = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      const value = event.target.value;
+      if (!value) {
+        setSelectedRepoId("");
+        setSelectedProjectId("");
+        return;
+      }
+      const entry = repoOptions.find((option) => option.id === value);
+      if (!entry) return;
+      setSelectedRepoId(entry.id);
+      setOwner(entry.owner);
+      setRepo(entry.repo);
+      setSelectedProjectId(entry.projects[0]?.id ?? "");
+    },
+    [repoOptions],
+  );
+
+  const handleProjectSelect = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    setSelectedProjectId(event.target.value);
+  }, []);
+
+  const handleProbeChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setProbeCustomized(true);
+    setProbeUrl(event.target.value);
+  }, []);
+
+  const resetProbeToDefault = useCallback(() => {
+    setProbeCustomized(false);
+    if (resolvedSecrets.supabaseReadOnlyUrl) {
+      setProbeUrl(resolvedSecrets.supabaseReadOnlyUrl);
+    } else {
+      setProbeUrl("");
+    }
+  }, [resolvedSecrets.supabaseReadOnlyUrl]);
 
   async function handleSync(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -124,8 +230,8 @@ export default function MidProjectSyncWorkspace() {
 
     try {
       const runHeaders: HeadersInit = { "Content-Type": "application/json" };
-      if (secrets.githubPat) {
-        runHeaders["x-github-pat"] = secrets.githubPat;
+      if (resolvedSecrets.githubPat) {
+        runHeaders["x-github-pat"] = resolvedSecrets.githubPat;
       }
 
       const runResponse = await fetch("/api/run", {
@@ -139,7 +245,9 @@ export default function MidProjectSyncWorkspace() {
       }
       setRunArtifacts(runJson?.wrote ?? []);
 
-      const statusHeaders: HeadersInit = secrets.githubPat ? { "x-github-pat": secrets.githubPat } : {};
+      const statusHeaders: HeadersInit = resolvedSecrets.githubPat
+        ? { "x-github-pat": resolvedSecrets.githubPat }
+        : {};
       const statusResponse = await fetch(
         `/api/status/${payload.owner}/${payload.repo}?branch=${encodeURIComponent(payload.branch)}`,
         { cache: "no-store", headers: statusHeaders },
@@ -192,8 +300,8 @@ export default function MidProjectSyncWorkspace() {
   const runDiscovery = useCallback(
     async (payload: { owner: string; repo: string; branch: string; probeUrl?: string }) => {
       const discoverHeaders: HeadersInit = { "Content-Type": "application/json" };
-      if (secrets.githubPat) {
-        discoverHeaders["x-github-pat"] = secrets.githubPat;
+      if (resolvedSecrets.githubPat) {
+        discoverHeaders["x-github-pat"] = resolvedSecrets.githubPat;
       }
       const discoverResponse = await fetch("/api/discover", {
         method: "POST",
@@ -212,7 +320,7 @@ export default function MidProjectSyncWorkspace() {
         throw new Error(discoverJson?.detail || discoverJson?.error || "Discover run failed");
       }
     },
-    [secrets.githubPat],
+    [resolvedSecrets.githubPat],
   );
 
   const handleDiscoverOnly = useCallback(async () => {
@@ -271,8 +379,8 @@ export default function MidProjectSyncWorkspace() {
 
     try {
       const contextHeaders: HeadersInit = { Accept: "application/json" };
-      if (secrets.githubPat) {
-        contextHeaders["x-github-pat"] = secrets.githubPat;
+      if (resolvedSecrets.githubPat) {
+        contextHeaders["x-github-pat"] = resolvedSecrets.githubPat;
       }
       const response = await fetch(
         `/api/context/${encodeURIComponent(trimmedOwner)}/${encodeURIComponent(trimmedRepo)}?branch=${encodeURIComponent(trimmedBranch)}`,
@@ -292,7 +400,7 @@ export default function MidProjectSyncWorkspace() {
     } finally {
       setIsExporting(false);
     }
-  }, [branchParam, owner, repo, repoSlug, secrets.githubPat]);
+  }, [branchParam, owner, repo, repoSlug, resolvedSecrets.githubPat]);
 
   const handleDownloadContext = useCallback(() => {
     if (!contextPack) return;
@@ -329,11 +437,15 @@ export default function MidProjectSyncWorkspace() {
           Connect an active repository to regenerate roadmap status and discovery insights before diving into the full dashboard.
         </p>
         <div className="tw-flex tw-flex-wrap tw-gap-3 tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
-          <span>{secrets.githubPat ? "GitHub token ready" : "Add a GitHub PAT in Settings"}</span>
           <span>
-            {secrets.supabaseReadOnlyUrl
-              ? "Supabase probe ready from Settings"
-              : "Optional: add Supabase probe in Settings"}
+            {githubReady
+              ? `GitHub token ready (${githubSourceLabel ?? "global default"})`
+              : "Add a GitHub PAT in Settings"}
+          </span>
+          <span>
+            {supabaseReady
+              ? `Supabase probe ready (${supabaseSourceLabel ?? "global default"})`
+              : "Optional: add a Supabase probe in Settings"}
           </span>
         </div>
       </header>
@@ -341,6 +453,24 @@ export default function MidProjectSyncWorkspace() {
       <form onSubmit={handleSync} className="tw-grid tw-gap-8 lg:tw-grid-cols-[1.4fr,1fr]">
         <section className="tw-space-y-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
           <div className="tw-grid tw-gap-4 md:tw-grid-cols-2">
+            <label className="tw-flex tw-flex-col tw-gap-2 md:tw-col-span-2">
+              <span className="tw-text-sm tw-font-medium tw-text-slate-200">Linked repository</span>
+              <select
+                value={selectedRepoId}
+                onChange={handleRepoSelect}
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-500 focus:tw-outline-none"
+              >
+                <option value="">Manual entry</option>
+                {repoOptions.map((option) => {
+                  const label = option.displayName?.trim() || `${option.owner}/${option.repo}`;
+                  return (
+                    <option key={option.id} value={option.id}>
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
             <label className="tw-flex tw-flex-col tw-gap-2">
               <span className="tw-text-sm tw-font-medium tw-text-slate-200">Owner</span>
               <input
@@ -359,6 +489,23 @@ export default function MidProjectSyncWorkspace() {
                 className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
               />
             </label>
+            {projectOptions.length ? (
+              <label className="tw-flex tw-flex-col tw-gap-2">
+                <span className="tw-text-sm tw-font-medium tw-text-slate-200">Project</span>
+                <select
+                  value={selectedProjectId}
+                  onChange={handleProjectSelect}
+                  className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-500 focus:tw-outline-none"
+                >
+                  <option value="">Use repo defaults</option>
+                  {projectOptions.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="tw-flex tw-flex-col tw-gap-2">
               <span className="tw-text-sm tw-font-medium tw-text-slate-200">Branch</span>
               <input
@@ -372,10 +519,28 @@ export default function MidProjectSyncWorkspace() {
               <span className="tw-text-sm tw-font-medium tw-text-slate-200">Supabase probe URL (optional)</span>
               <input
                 value={probeUrl}
-                onChange={(event) => setProbeUrl(event.target.value)}
-                placeholder="https://.../rest/v1/rpc/roadmap_probe"
+                onChange={handleProbeChange}
+                placeholder={resolvedSecrets.supabaseReadOnlyUrl ?? "https://.../rest/v1/rpc/roadmap_probe"}
                 className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
               />
+              {resolvedSecrets.supabaseReadOnlyUrl ? (
+                <div className="tw-flex tw-items-center tw-justify-between tw-text-[11px] tw-text-slate-500">
+                  <span>Default from {supabaseSourceLabel ?? "settings"}</span>
+                  {probeCustomized ? (
+                    <button
+                      type="button"
+                      onClick={resetProbeToDefault}
+                      className="tw-text-[11px] tw-font-medium tw-text-slate-200 hover:tw-text-slate-100"
+                    >
+                      Use configured
+                    </button>
+                  ) : null}
+                </div>
+              ) : (
+                <span className="tw-text-[11px] tw-text-slate-500">
+                  Provide a checks endpoint or configure one in Settings.
+                </span>
+              )}
             </label>
           </div>
 
