@@ -58,6 +58,30 @@ function parseProbeHeaders(source: unknown): ProbeHeaders {
 
 const ENV_PROBE_HEADERS: ProbeHeaders = parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS);
 
+function extractProbeHeaders(req: NextRequest, payload: any): ProbeHeaders {
+  const rawRequestProbeHeaders =
+    req.headers.get("x-supabase-headers") ??
+    req.headers.get("x-probe-headers") ??
+    req.headers.get("x-discovery-headers");
+  const requestProbeHeaders = parseProbeHeaders(rawRequestProbeHeaders);
+
+  const payloadProbeHeadersRaw =
+    (payload &&
+      (payload.probeHeaders ??
+        payload.probe_headers ??
+        payload.supabaseHeaders ??
+        payload.supabase_headers ??
+        payload.headers)) ||
+    undefined;
+  const payloadProbeHeaders = parseProbeHeaders(payloadProbeHeadersRaw);
+
+  return {
+    ...ENV_PROBE_HEADERS,
+    ...requestProbeHeaders,
+    ...payloadProbeHeaders,
+  };
+}
+
 async function files_exist(owner: string, repo: string, globs: string[], ref?: string) {
   for (const p of globs) {
     const raw = await getFileRaw(owner, repo, p, ref).catch(() => null);
@@ -94,26 +118,7 @@ export async function POST(req: NextRequest) {
     const branch =
       typeof payload?.branch === "string" && payload.branch.trim() ? payload.branch.trim() : "main";
     const probeUrl = typeof payload?.probeUrl === "string" ? payload.probeUrl : undefined;
-    const rawRequestProbeHeaders =
-      req.headers.get("x-supabase-headers") ??
-      req.headers.get("x-probe-headers") ??
-      req.headers.get("x-discovery-headers");
-    const requestProbeHeaders = parseProbeHeaders(rawRequestProbeHeaders);
-
-    const rawPayloadProbeHeaders =
-      (payload &&
-        (payload.probeHeaders ??
-          payload.probe_headers ??
-          payload.supabaseHeaders ??
-          payload.supabase_headers ??
-          payload.headers)) ||
-      undefined;
-    const payloadProbeHeaders = parseProbeHeaders(rawPayloadProbeHeaders);
-    const combinedProbeHeaders: ProbeHeaders = {
-      ...ENV_PROBE_HEADERS,
-      ...requestProbeHeaders,
-      ...payloadProbeHeaders,
-    };
+    const combinedProbeHeaders = extractProbeHeaders(req, payload);
     const projectKey = normalizeProjectKey(payload?.project);
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
