@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
-import { useLocalSecrets } from "@/lib/use-local-secrets";
+import { useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -29,7 +29,7 @@ export default function BrainstormPage() {
   const [promoteMessage, setPromoteMessage] = useState<string | null>(null);
   const [isPromoting, setIsPromoting] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const secrets = useLocalSecrets();
+  const secrets = useResolvedSecrets();
   const openAiConfigured = Boolean(secrets.openaiKey);
 
   useEffect(() => {

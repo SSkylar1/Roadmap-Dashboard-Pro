@@ -17,7 +17,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
-import { useLocalSecrets } from "@/lib/use-local-secrets";
+import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
 
 type Check = {
   id?: string;
@@ -1311,8 +1311,9 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
   const [success, setSuccess] = useState<string | null>(null);
   const [planExists, setPlanExists] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const secrets = useLocalSecrets();
-  const githubConfigured = Boolean(secrets.githubPat);
+  const secretsStore = useLocalSecrets();
+  const resolvedSecrets = useMemo(() => resolveSecrets(secretsStore, owner, repoName), [secretsStore, owner, repoName]);
+  const githubConfigured = Boolean(resolvedSecrets.githubPat);
 
   useEffect(() => {
     if (!owner || !repoName) {
@@ -1342,8 +1343,8 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
     setError(null);
 
     const requestInit: RequestInit = { cache: "no-store" };
-    if (secrets.githubPat) {
-      requestInit.headers = { "x-github-pat": secrets.githubPat };
+    if (resolvedSecrets.githubPat) {
+      requestInit.headers = { "x-github-pat": resolvedSecrets.githubPat };
     }
 
     fetch(`/api/gtm/${owner}/${repoName}${query}`, requestInit)
@@ -1383,7 +1384,7 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
     return () => {
       cancelled = true;
     };
-  }, [owner, repoName, branch, reloadKey, secrets.githubPat]);
+  }, [owner, repoName, branch, reloadKey, resolvedSecrets.githubPat]);
 
   const planUrl = planExists
     ? `https://github.com/${owner}/${repoName}/blob/${encodeURIComponent(branch)}/docs/gtm-plan.md`
@@ -1430,8 +1431,8 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
     setSuccess(null);
     try {
       const headers: HeadersInit = { "Content-Type": "application/json" };
-      if (secrets.githubPat) {
-        headers["x-github-pat"] = secrets.githubPat;
+      if (resolvedSecrets.githubPat) {
+        headers["x-github-pat"] = resolvedSecrets.githubPat;
       }
       const response = await fetch(`/api/gtm/${owner}/${repoName}`, {
         method: "POST",
@@ -1453,7 +1454,7 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
     } finally {
       setSaving(false);
     }
-  }, [branch, draft, owner, repoName, secrets.githubPat]);
+  }, [branch, draft, owner, repoName, resolvedSecrets.githubPat]);
 
   const onSave = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -1469,8 +1470,8 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
       setSuccess(null);
       try {
         const headers: HeadersInit = { "Content-Type": "application/json" };
-        if (secrets.githubPat) {
-          headers["x-github-pat"] = secrets.githubPat;
+        if (resolvedSecrets.githubPat) {
+          headers["x-github-pat"] = resolvedSecrets.githubPat;
         }
         const response = await fetch(`/api/gtm/${owner}/${repoName}`, {
           method: "POST",
@@ -1493,7 +1494,7 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
         setSaving(false);
       }
     },
-    [branch, draft, owner, repoName, secrets.githubPat],
+    [branch, draft, owner, repoName, resolvedSecrets.githubPat],
   );
 
   if (!owner || !repoName) {
