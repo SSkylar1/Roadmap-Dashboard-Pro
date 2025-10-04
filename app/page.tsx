@@ -1,9 +1,23 @@
 "use client";
 
-import { Suspense, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import {
+  Suspense,
+  type ChangeEvent,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
+import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
+import { useLocalSecrets } from "@/lib/use-local-secrets";
 
 type Check = {
   id?: string;
@@ -65,17 +79,34 @@ type ManualState = Record<string, ManualWeekState>;
 type DecoratedItem = Item & { manualKey?: string; manual?: boolean };
 type DecoratedWeek = Week & { manualKey: string; manualState: ManualWeekState; items?: DecoratedItem[] };
 
-type TabKey = "projects" | "onboarding" | "add";
+type GtmPlanTabProps = {
+  repo: RepoRef | null;
+};
+
+type CommitApiResponse = {
+  ok?: boolean;
+  content?: string;
+  created?: boolean;
+  error?: string;
+};
+
+type TabKey = "projects" | "gtm" | "onboarding" | "add";
 
 const DEFAULT_REPOS: RepoRef[] = [{ owner: "SSkylar1", repo: "Roadmap-Kit-Starter" }];
 const REPO_STORAGE_KEY = "roadmap-dashboard.repos";
 const MANUAL_STORAGE_PREFIX = "roadmap-dashboard.manual.";
 const TAB_LABELS: Record<TabKey, string> = {
   projects: "Projects",
+  gtm: "GTM Plan",
   onboarding: "Onboarding Checklist",
   add: "Add New Project",
 };
-const TAB_KEYS: TabKey[] = ["projects", "onboarding", "add"];
+const TAB_KEYS: TabKey[] = ["projects", "gtm", "onboarding", "add"];
+
+function normalizeTab(value: string | null): TabKey {
+  if (value === "gtm" || value === "onboarding" || value === "add") return value;
+  return "projects";
+}
 
 const EDGE_FUNCTION_SNIPPET = [
   "import { Pool, type PoolClient } from \"https://deno.land/x/postgres@v0.17.0/mod.ts\";",
@@ -1261,17 +1292,299 @@ function ProjectSidebar({
   );
 }
 
-function AddProjectTab({
-  onAdd,
-  onSelect,
-  wizardHref,
-  hasProjects,
-}: {
+type AddProjectTabProps = {
   onAdd: (repo: RepoRef) => RepoRef | null;
   onSelect?: (repo: RepoRef) => void;
   wizardHref: string;
   hasProjects: boolean;
-}) {
+};
+
+function GtmPlanTab({ repo }: GtmPlanTabProps) {
+  const owner = repo?.owner ?? "";
+  const repoName = repo?.repo ?? "";
+  const [branchInput, setBranchInput] = useState("main");
+  const [branch, setBranch] = useState("main");
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [planExists, setPlanExists] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const secrets = useLocalSecrets();
+  const githubConfigured = Boolean(secrets.githubPat);
+
+  useEffect(() => {
+    if (!owner || !repoName) {
+      setBranchInput("main");
+      setBranch("main");
+      setDraft("");
+      setPlanExists(false);
+      setSuccess(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    setBranchInput("main");
+    setBranch("main");
+    setDraft("");
+    setPlanExists(false);
+    setSuccess(null);
+    setError(null);
+    setReloadKey((value) => value + 1);
+  }, [owner, repoName]);
+
+  useEffect(() => {
+    if (!owner || !repoName) return;
+    let cancelled = false;
+    const query = branch ? `?branch=${encodeURIComponent(branch)}` : "";
+    setLoading(true);
+    setError(null);
+
+    const requestInit: RequestInit = { cache: "no-store" };
+    if (secrets.githubPat) {
+      requestInit.headers = { "x-github-pat": secrets.githubPat };
+    }
+
+    fetch(`/api/gtm/${owner}/${repoName}${query}`, requestInit)
+      .then(async (response) => {
+        if (response.status === 404) {
+          if (!cancelled) {
+            setPlanExists(false);
+            setDraft("");
+          }
+          return;
+        }
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          const message =
+            typeof (body as { error?: string })?.error === "string"
+              ? (body as { error: string }).error
+              : response.statusText || "Failed to load GTM plan";
+          throw new Error(message);
+        }
+        const data = (await response.json()) as { content?: string };
+        if (!cancelled) {
+          setPlanExists(true);
+          setDraft(typeof data?.content === "string" ? data.content : "");
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, repoName, branch, reloadKey, secrets.githubPat]);
+
+  const planUrl = planExists
+    ? `https://github.com/${owner}/${repoName}/blob/${encodeURIComponent(branch)}/docs/gtm-plan.md`
+    : null;
+  const planPath = "docs/gtm-plan.md";
+
+  const onBranchInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setBranchInput(event.currentTarget.value);
+  }, []);
+
+  const onDraftChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {
+    setDraft(event.currentTarget.value);
+  }, []);
+
+  const onBranchSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!owner || !repoName) return;
+      const next = branchInput.trim() || "main";
+      setBranchInput(next);
+      setSuccess(null);
+      setError(null);
+      if (next === branch) {
+        setReloadKey((value) => value + 1);
+      } else {
+        setBranch(next);
+      }
+    },
+    [branch, branchInput, owner, repoName],
+  );
+
+  const refreshPlan = useCallback(() => {
+    if (!loading) {
+      setSuccess(null);
+      setError(null);
+      setReloadKey((value) => value + 1);
+    }
+  }, [loading]);
+
+  const createTemplate = useCallback(async () => {
+    if (!owner || !repoName) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (secrets.githubPat) {
+        headers["x-github-pat"] = secrets.githubPat;
+      }
+      const response = await fetch(`/api/gtm/${owner}/${repoName}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ branch }),
+      });
+      const data = (await response.json().catch(() => ({}))) as CommitApiResponse;
+      if (!response.ok || typeof data?.error === "string") {
+        const message = typeof data?.error === "string" ? data.error : "Failed to scaffold GTM plan";
+        throw new Error(message);
+      }
+      const content = typeof data?.content === "string" ? data.content : draft;
+      setDraft(content);
+      setPlanExists(true);
+      const created = data?.created ?? true;
+      setSuccess(created ? `Created ${planPath} on ${branch}` : `Updated ${planPath} on ${branch}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [branch, draft, owner, repoName, secrets.githubPat]);
+
+  const onSave = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!owner || !repoName) return;
+      if (!draft.trim()) {
+        setError("Add details to the GTM plan before saving.");
+        setSuccess(null);
+        return;
+      }
+      setSaving(true);
+      setError(null);
+      setSuccess(null);
+      try {
+        const headers: HeadersInit = { "Content-Type": "application/json" };
+        if (secrets.githubPat) {
+          headers["x-github-pat"] = secrets.githubPat;
+        }
+        const response = await fetch(`/api/gtm/${owner}/${repoName}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ branch, content: draft }),
+        });
+        const data = (await response.json().catch(() => ({}))) as CommitApiResponse;
+        if (!response.ok || typeof data?.error === "string") {
+          const message = typeof data?.error === "string" ? data.error : "Failed to save GTM plan";
+          throw new Error(message);
+        }
+        const updated = typeof data?.content === "string" ? data.content : draft;
+        setDraft(updated);
+        setPlanExists(true);
+        const created = data?.created ?? false;
+        setSuccess(created ? `Created ${planPath} on ${branch}` : `Updated ${planPath} on ${branch}`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [branch, draft, owner, repoName, secrets.githubPat],
+  );
+
+  if (!owner || !repoName) {
+    return (
+      <section className="card gtm-plan-card">
+        <div className="gtm-plan-header">
+          <h2>GTM plan workspace</h2>
+          <p className="hint">Select a project to review or scaffold its go-to-market plan.</p>
+        </div>
+        <div className="gtm-plan-empty">
+          Add a repository from the sidebar and reopen this tab to capture launch strategy alongside your roadmap.
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="card gtm-plan-card">
+      <div className="gtm-plan-header">
+        <h2>Go-to-market plan</h2>
+        <p className="hint">Keep launch, pricing, and success metrics in lockstep with the engineering roadmap.</p>
+        <p className="hint small">{githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings to save changes."}</p>
+      </div>
+      <div className="repo-line">
+        <span className="repo-label">Repo:</span>
+        <code>
+          {owner}/{repoName}
+        </code>
+        {planUrl ? (
+          <a href={planUrl} target="_blank" rel="noreferrer">
+            View on GitHub ↗
+          </a>
+        ) : null}
+      </div>
+      <form className="gtm-plan-branch-form" onSubmit={onBranchSubmit}>
+        <label htmlFor="gtm-plan-branch">Branch</label>
+        <input
+          id="gtm-plan-branch"
+          name="branch"
+          value={branchInput}
+          onChange={onBranchInputChange}
+          autoComplete="off"
+          placeholder="main"
+        />
+        <div className="gtm-plan-branch-controls">
+          <button type="submit" className="ghost-button compact" disabled={loading || saving}>
+            Load branch
+          </button>
+          <button type="button" className="ghost-button compact" onClick={refreshPlan} disabled={loading}>
+            Refresh
+          </button>
+        </div>
+      </form>
+      {error ? <div className="gtm-plan-error">{error}</div> : null}
+      {success ? <div className="gtm-plan-success">{success}</div> : null}
+      {loading ? <div className="hint">Loading GTM plan…</div> : null}
+      {planExists ? (
+        <form className="gtm-plan-editor" onSubmit={onSave}>
+          <label htmlFor="gtm-plan-editor">{planPath}</label>
+          <textarea
+            id="gtm-plan-editor"
+            value={draft}
+            onChange={onDraftChange}
+            disabled={saving}
+          />
+          <div className="gtm-plan-actions">
+            <button type="submit" className="primary-button" disabled={saving}>
+              Save GTM Plan
+            </button>
+            <span className="hint">Commits update <code>{planPath}</code> on {branch}.</span>
+          </div>
+        </form>
+      ) : (
+        <div className="gtm-plan-empty">
+          <p>
+            No GTM plan found on <code>{planPath}</code> in <code>{branch}</code>.
+          </p>
+          <div className="gtm-plan-actions">
+            <button type="button" className="primary-button" onClick={createTemplate} disabled={saving || loading}>
+              Create GTM Plan
+            </button>
+            <span className="hint">We will scaffold market, channel, pricing, and metrics sections automatically.</span>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AddProjectTab(props: AddProjectTabProps) {
+  const { onAdd, onSelect, wizardHref, hasProjects } = props;
   return (
     <section className="card add-project-card">
       <div className="add-project-header">
@@ -1287,6 +1600,18 @@ function AddProjectTab({
         </a>
         <p className="hint">The wizard walks through secrets, workflows, and Supabase setup for a fresh project.</p>
       </div>
+      <div className="add-project-wizard">
+        <h3>Choose a guided workflow</h3>
+        <p>
+          Match the onboarding wizard to your current milestone. Jump into the playbook for an overview or launch the workspace tools
+          directly when you are ready to build.
+        </p>
+        <div className="add-project-wizard-grid">
+          {WIZARD_ENTRY_POINTS.map((entry) => (
+            <WizardEntryCard key={entry.slug} entry={entry} />
+          ))}
+        </div>
+      </div>
       <ProjectForm onAdd={onAdd} onSelect={onSelect} className="project-form" submitLabel="Save project" />
       <ul className="add-project-hints">
         <li>Use owner/repo to add quickly, e.g. <code>acme-co/roadmap</code>.</li>
@@ -1294,6 +1619,78 @@ function AddProjectTab({
         {hasProjects ? null : <li>Your first project will also appear in the sidebar for quick access.</li>}
       </ul>
     </section>
+  );
+}
+
+function WizardEntryCard({ entry }: { entry: WizardEntryPoint }) {
+  const router = useRouter();
+
+  const handleNavigate = useCallback(() => {
+    router.push(`/wizard/${entry.slug}`);
+  }, [entry.slug, router]);
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        handleNavigate();
+      }
+    },
+    [handleNavigate],
+  );
+
+  const stopPropagation = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+  }, []);
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      className="add-project-wizard-card"
+      onClick={handleNavigate}
+      onKeyDown={handleKeyDown}
+    >
+      <div className="add-project-wizard-meta">
+        <span className="add-project-wizard-label">{entry.label}</span>
+        <span className="add-project-wizard-sub">Entry point</span>
+      </div>
+      <div className="add-project-wizard-copy">
+        <h4>{entry.title}</h4>
+        <p>{entry.description}</p>
+      </div>
+      <ul>
+        {entry.bullets.map((bullet) => (
+          <li key={bullet}>{bullet}</li>
+        ))}
+      </ul>
+      <div className="add-project-wizard-actions">
+        <Link
+          href={`/wizard/${entry.slug}`}
+          className="add-project-wizard-action add-project-wizard-action--primary"
+          onClick={stopPropagation}
+        >
+          View playbook
+        </Link>
+        {entry.tools?.map((tool) => (
+          <Link
+            key={tool.href}
+            href={tool.href}
+            className="add-project-wizard-action"
+            onClick={stopPropagation}
+          >
+            {tool.label}
+          </Link>
+        ))}
+      </div>
+      {entry.tools?.map((tool) =>
+        tool.description ? (
+          <p key={`${tool.href}-note`} className="add-project-wizard-note">
+            {tool.description}
+          </p>
+        ) : null
+      )}
+    </article>
   );
 }
 
@@ -1790,12 +2187,12 @@ function DashboardPage() {
 
   const { repos, initialized, addRepo, removeRepo } = useStoredRepos();
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const initialTab: TabKey = searchTab === "onboarding" ? "onboarding" : searchTab === "add" ? "add" : "projects";
+  const initialTab: TabKey = normalizeTab(searchTab);
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const lastSearchKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const normalized: TabKey = searchTab === "onboarding" ? "onboarding" : searchTab === "add" ? "add" : "projects";
+    const normalized = normalizeTab(searchTab);
     setActiveTab((prev) => (prev === normalized ? prev : normalized));
   }, [searchTab]);
 
@@ -2096,6 +2493,12 @@ function DashboardPage() {
                 Add a project from the sidebar to load its roadmap and weekly progress.
               </div>
             )}
+          </div>
+        ) : null}
+
+        {activeTab === "gtm" ? (
+          <div id="panel-gtm" role="tabpanel" aria-labelledby="tab-gtm" className="tab-panel">
+            <GtmPlanTab repo={activeRepo} />
           </div>
         ) : null}
 
