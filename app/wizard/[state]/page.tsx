@@ -197,6 +197,12 @@ const STAGES = {
         description:
           "Upload an existing roadmap.yml, validate it, and scaffold infra-facts, tech stack, and roadmap workflow files.",
       },
+      {
+        href: "/?tab=gtm",
+        label: "Open GTM plan workspace",
+        description:
+          "Jump into the dashboard GTM tab to scaffold docs/gtm-plan.md alongside your connected repository.",
+      },
     ],
     sections: [
       {
@@ -243,7 +249,7 @@ const STAGES = {
     resources: [
       { label: "Back to wizard", href: "/wizard" },
       { label: "Launch provisioning workspace", href: "/wizard/roadmap/workspace" },
-      { label: "Provision automations", href: "/api/setup" },
+      { label: "Open GTM plan workspace", href: "/?tab=gtm" },
     ],
   },
   "mid-build": {

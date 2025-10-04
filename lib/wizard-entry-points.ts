@@ -70,6 +70,12 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
         description:
           "Upload an existing roadmap.yml, validate it, and scaffold infra-facts, tech stack, and roadmap workflow files.",
       },
+      {
+        href: "/?tab=gtm",
+        label: "Open GTM plan workspace",
+        description:
+          "Jump straight to the dashboard GTM tab to capture market, channel, pricing, and metrics notes in docs/gtm-plan.md.",
+      },
     ],
   },
   {
