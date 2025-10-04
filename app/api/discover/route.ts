@@ -177,12 +177,15 @@ async function safePut(
   content: string,
   message: string,
   wrote: string[],
+  failures: string[],
 ) {
   try {
     await putFile(owner, repo, path, content, branch, message);
     wrote.push(path);
   } catch (error: any) {
-    wrote.push(`${path} (FAILED: ${error?.message || String(error)})`);
+    const detail = error?.message || String(error);
+    wrote.push(`${path} (FAILED: ${detail})`);
+    failures.push(`${path}: ${detail}`);
   }
 }
 
@@ -194,6 +197,7 @@ export async function POST(req: NextRequest) {
     }
 
     const wrote: string[] = [];
+    const failures: string[] = [];
 
     const statusRaw = await getFileRaw(owner, repo, "docs/roadmap-status.json", branch).catch(() => null);
     const doneNames = new Set<string>();
@@ -223,6 +227,7 @@ export async function POST(req: NextRequest) {
         DEFAULT_DISCOVER_YAML,
         "chore(roadmap): seed discover config [skip ci]",
         wrote,
+        failures,
       );
       config.notes.push("Seeded docs/discover.yml with default discovery settings. Update this file to refine probes.");
     }
@@ -261,6 +266,7 @@ export async function POST(req: NextRequest) {
       backlogYaml(discovered),
       "chore(roadmap): update backlog-discovered [skip ci]",
       wrote,
+      failures,
     );
 
     const summary = buildSummary({
@@ -274,19 +280,45 @@ export async function POST(req: NextRequest) {
       discovered,
     });
 
-    await safePut(owner, repo, branch, "docs/summary.txt", summary, "chore(roadmap): update summary [skip ci]", wrote);
+    await safePut(
+      owner,
+      repo,
+      branch,
+      "docs/summary.txt",
+      summary,
+      "chore(roadmap): update summary [skip ci]",
+      wrote,
+      failures,
+    );
+
+    const ok = failures.length === 0;
+    if (!ok) {
+      config.notes.push(
+        ...failures.map(
+          (failure) => `GitHub write failed: ${failure}. Ensure the dashboard has push access to ${owner}/${repo}.`,
+        ),
+      );
+    }
+    const detail =
+      failures.length > 0
+        ? `Some files could not be written to GitHub. Check your token permissions and branch settings.\n${failures.join("\n")}`
+        : undefined;
 
     return NextResponse.json(
       {
-        ok: true,
+        ok,
         discovered: discovered.length,
         items: discovered,
         wrote,
         config,
         db: dbResults,
         code_matches: matchedPaths,
+        ...(detail ? { error: "GitHub writes failed", detail } : {}),
       },
-      { headers: { "cache-control": "no-store" } },
+      {
+        status: ok ? 200 : 207,
+        headers: { "cache-control": "no-store" },
+      },
     );
   } catch (error: any) {
     return NextResponse.json({ error: String(error?.message || error) }, { status: 500 });

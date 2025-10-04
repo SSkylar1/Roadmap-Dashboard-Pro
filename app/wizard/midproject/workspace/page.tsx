@@ -183,9 +183,6 @@ export default function MidProjectSyncWorkspace() {
         body: JSON.stringify(payload),
       });
       const discoverJson = (await discoverResponse.json()) as DiscoverResponse;
-      if (!discoverResponse.ok || discoverJson?.ok === false || discoverJson?.error) {
-        throw new Error(discoverJson?.error || "Discover run failed");
-      }
       setDiscoverArtifacts(discoverJson?.wrote ?? []);
       setBacklog(discoverJson?.items ?? []);
       setDiscoverConfig(discoverJson?.config ?? null);
@@ -193,6 +190,9 @@ export default function MidProjectSyncWorkspace() {
       setCodeMatches(discoverJson?.code_matches ?? []);
       const nowIso = new Date().toISOString();
       setLastDiscoveryAt(nowIso);
+      if (!discoverResponse.ok || discoverJson?.ok === false || discoverJson?.error) {
+        throw new Error(discoverJson?.detail || discoverJson?.error || "Discover run failed");
+      }
     },
     [],
   );
