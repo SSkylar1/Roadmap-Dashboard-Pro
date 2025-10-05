@@ -20,6 +20,25 @@ type ErrorState = {
   detail?: string;
 };
 
+type WizardHandoffPayload = {
+  path: string;
+  label?: string;
+  content?: string;
+  createdAt: number;
+};
+
+function formatTranscript(messages: ChatMessage[]): string {
+  return messages
+    .map((message, index) => {
+      const speaker = message.role === "user" ? "Founder" : "AI Partner";
+      const formattedContent = message.content.replace(/\n/g, "\n  ");
+      return `${index + 1}. **${speaker}:** ${formattedContent}`;
+    })
+    .join("\n");
+}
+
+const CONCEPT_HANDOFF_KEY = "wizard:handoff:concept";
+
 export default function BrainstormPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -27,6 +46,7 @@ export default function BrainstormPage() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<ErrorState | null>(null);
   const [promoteMessage, setPromoteMessage] = useState<string | null>(null);
+  const [handoffPath, setHandoffPath] = useState<string | null>(null);
   const [isPromoting, setIsPromoting] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const secrets = useResolvedSecrets();
@@ -133,6 +153,21 @@ export default function BrainstormPage() {
       }
 
       setPromoteMessage("Idea log exported to docs/idea-log.md. You can now turn this into a roadmap.");
+      setHandoffPath("docs/idea-log.md");
+
+      try {
+        const payload: WizardHandoffPayload = {
+          path: "docs/idea-log.md",
+          label: "docs/idea-log.md",
+          content: formatTranscript(messages),
+          createdAt: Date.now(),
+        };
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(CONCEPT_HANDOFF_KEY, JSON.stringify(payload));
+        }
+      } catch (storeError) {
+        console.error("Failed to persist wizard handoff", storeError);
+      }
     } catch (err) {
       setError({ title: "Promotion failed", detail: err instanceof Error ? err.message : undefined });
     } finally {
@@ -177,8 +212,22 @@ export default function BrainstormPage() {
       )}
 
       {promoteMessage && (
-        <div className="tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4 tw-text-sm tw-text-emerald-200">
-          {promoteMessage}
+        <div className="tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4 tw-text-sm tw-text-emerald-200 tw-space-y-2">
+          <p>{promoteMessage}</p>
+          {handoffPath && (
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
+              <Link
+                href={`/wizard/concept/workspace?handoff=${encodeURIComponent(handoffPath)}`}
+                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400 tw-bg-emerald-500/20 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-emerald-100 hover:tw-border-emerald-300 hover:tw-text-white"
+              >
+                Continue in roadmap drafting workspace
+                <span aria-hidden="true">→</span>
+              </Link>
+              <span className="tw-text-xs tw-text-emerald-100/80">
+                The concept step will pre-load <code className="tw-text-[11px]">{handoffPath}</code> for you.
+              </span>
+            </div>
+          )}
         </div>
       )}
 
