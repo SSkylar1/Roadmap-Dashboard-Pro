@@ -24,6 +24,12 @@ npm run dev
 - `POST /api/verify` — proxy to your READ_ONLY_CHECKS_URL
 - `POST /api/webhook` — optional GitHub webhook endpoint
 
+> **Secrets persistence**: Add `SB_URL` and `SB_SERVICE_ROLE_KEY` to `.env.local` (or your deployment
+> environment) so settings saved in the dashboard are encrypted and stored in Supabase. Provision the
+> `dashboard_secrets` table with `docs/supabase-dashboard-secrets.sql` before using the API routes. The
+> [Supabase setup guide](docs/supabase-setup.md) walks through these steps and explains how to migrate any
+> local secrets into the new storage.
+
 ### Verify your GitHub App env vars
 
 1. Run `npm run check-env` (or `node scripts/check-env.mjs`) locally. The script prints whether `GH_APP_ID` and the private-key
@@ -41,5 +47,6 @@ Add env vars (Production + Preview):
 - `READ_ONLY_CHECKS_URL` for the verify API (see `docs/supabase-read-only-checks.md` for a compatible edge function)
 - (optional) `READ_ONLY_CHECKS_HEADERS` when your Supabase function requires auth headers (JSON string or `Key: Value` pairs separated by semicolons/newlines)
 - (optional) `GITHUB_WEBHOOK_SECRET` if you add a webhook
+- `SB_URL` + `SB_SERVICE_ROLE_KEY` for encrypted settings storage (`docs/supabase-dashboard-secrets.sql` sets up the table & RLS policies)
 
 > **Security tip:** Store these secrets in your deployment platform (e.g., Vercel env vars) or in a local `.env.local` file for development. Do **not** commit GitHub App credentials to your roadmap repo—no branch should contain the raw private key.
