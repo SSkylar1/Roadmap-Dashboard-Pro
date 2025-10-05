@@ -17,7 +17,7 @@ import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
-type SuccessState = { message: string; prUrl?: string } | null;
+type SuccessState = { message: string; prUrl?: string; handoffPath?: string } | null;
 
 type GenerateResponse = { roadmap: string };
 
@@ -34,6 +34,15 @@ type UploadState = {
   name: string;
   sizeLabel: string;
 };
+
+type HandoffHint = {
+  path: string;
+  label?: string;
+  content?: string;
+};
+
+const CONCEPT_HANDOFF_KEY = "wizard:handoff:concept";
+const ROADMAP_HANDOFF_KEY = "wizard:handoff:roadmap";
 
 function escapeHtml(value: string) {
   return value
@@ -115,6 +124,7 @@ function formatBytes(bytes: number) {
 
 function ConceptWizardPageInner() {
   const params = useSearchParams();
+  const handoffParam = params.get("handoff");
   const [owner, setOwner] = useState(() => params.get("owner") ?? "");
   const [repo, setRepo] = useState(() => params.get("repo") ?? "");
   const [branch, setBranch] = useState(() => params.get("branch") ?? "main");
@@ -123,6 +133,10 @@ function ConceptWizardPageInner() {
   const [upload, setUpload] = useState<UploadState | null>(null);
   const [uploadText, setUploadText] = useState("");
   const [filePickerKey, setFilePickerKey] = useState(0);
+  const [handoffHint, setHandoffHint] = useState<HandoffHint | null>(null);
+  const [handoffNotice, setHandoffNotice] = useState<string | null>(null);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const [isImportingHandoff, setIsImportingHandoff] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [roadmap, setRoadmap] = useState("");
   const [error, setError] = useState<ErrorState>(null);
@@ -168,6 +182,8 @@ function ConceptWizardPageInner() {
 
   const highlighted = useMemo(() => highlightYaml(roadmap || ""), [roadmap]);
 
+  const projectKey = normalizeProjectKey(project);
+
   useEffect(() => {
     if (previewRef.current && editorRef.current) {
       previewRef.current.scrollTop = editorRef.current.scrollTop;
@@ -175,8 +191,64 @@ function ConceptWizardPageInner() {
     }
   }, [roadmap]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      if (handoffParam) {
+        setHandoffHint({ path: handoffParam });
+      }
+      return;
+    }
+
+    try {
+      const storedRaw = window.localStorage.getItem(CONCEPT_HANDOFF_KEY);
+      const stored = storedRaw ? (JSON.parse(storedRaw) as HandoffHint & { createdAt?: number }) : null;
+
+      if (handoffParam) {
+        if (stored && stored.path === handoffParam) {
+          setHandoffHint({ path: stored.path, label: stored.label, content: stored.content });
+        } else {
+          setHandoffHint({ path: handoffParam });
+        }
+      } else if (stored?.path) {
+        setHandoffHint({ path: stored.path, label: stored.label, content: stored.content });
+      } else {
+        setHandoffHint(null);
+      }
+    } catch (err) {
+      console.error("Failed to read concept handoff", err);
+      if (handoffParam) {
+        setHandoffHint({ path: handoffParam });
+      }
+    }
+  }, [handoffParam]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const trimmed = roadmap.trim();
+    if (!trimmed) {
+      window.localStorage.removeItem(ROADMAP_HANDOFF_KEY);
+      return;
+    }
+
+    const label = describeProjectFile("docs/roadmap.yml", projectKey);
+    const payload = {
+      path: label,
+      label,
+      content: trimmed,
+      createdAt: Date.now(),
+    };
+
+    try {
+      window.localStorage.setItem(ROADMAP_HANDOFF_KEY, JSON.stringify(payload));
+    } catch (err) {
+      console.error("Failed to persist roadmap handoff", err);
+    }
+  }, [roadmap, projectKey]);
+
   const canGenerate = Boolean(!isGenerating && combinedPrompt);
-  const projectKey = normalizeProjectKey(project);
   const targetPath = describeProjectFile("docs/roadmap.yml", projectKey);
   const canCommit = Boolean(!isCommitting && roadmap.trim() && owner && repo && branch);
 
@@ -230,6 +302,8 @@ function ConceptWizardPageInner() {
   }
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
+    setHandoffNotice(null);
+    setHandoffError(null);
     const file = event.target.files?.[0];
     if (!file) {
       setUpload(null);
@@ -263,6 +337,68 @@ function ConceptWizardPageInner() {
     setUpload(null);
     setUploadText("");
     setFilePickerKey((value) => value + 1);
+    setHandoffNotice(null);
+    setHandoffError(null);
+  }
+
+  async function importHandoff() {
+    if (!handoffHint) {
+      return;
+    }
+
+    setIsImportingHandoff(true);
+    setHandoffNotice(null);
+    setHandoffError(null);
+
+    try {
+      let content = handoffHint.content ?? "";
+      let name = handoffHint.label ?? handoffHint.path;
+      let sizeLabel = "";
+
+      if (!content) {
+        const response = await fetch(`/api/wizard/handoff?path=${encodeURIComponent(handoffHint.path)}`);
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || !payload?.ok) {
+          const title = typeof payload?.error === "string" ? payload.error : "Failed to import shared file";
+          setHandoffError(title);
+          return;
+        }
+
+        content = typeof payload.content === "string" ? payload.content : "";
+        name = typeof payload.name === "string" ? payload.name : name;
+        sizeLabel = typeof payload.sizeLabel === "string" ? payload.sizeLabel : sizeLabel;
+        const normalizedPath = typeof payload.path === "string" ? payload.path : handoffHint.path;
+        const updatedHint: HandoffHint = {
+          path: normalizedPath,
+          label: name,
+          content,
+        };
+        setHandoffHint(updatedHint);
+        if (typeof window !== "undefined") {
+          const storedPayload = { ...updatedHint, createdAt: Date.now() };
+          window.localStorage.setItem(CONCEPT_HANDOFF_KEY, JSON.stringify(storedPayload));
+        }
+      } else {
+        sizeLabel = formatBytes(new TextEncoder().encode(content).length);
+      }
+
+      const trimmed = content.trim();
+      if (!trimmed) {
+        setHandoffError("Shared file is empty");
+        return;
+      }
+
+      const effectiveSizeLabel = sizeLabel || formatBytes(new TextEncoder().encode(trimmed).length);
+      setUpload({ name, sizeLabel: effectiveSizeLabel });
+      setUploadText(trimmed);
+      setFilePickerKey((value) => value + 1);
+      setHandoffNotice(`Imported ${name} from ideation workspace.`);
+    } catch (err) {
+      setHandoffError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsImportingHandoff(false);
+    }
   }
 
   async function onCommit() {
@@ -302,21 +438,24 @@ function ConceptWizardPageInner() {
       }
 
       if (detail.ok) {
+        const committedPath = typeof detail.path === "string" ? detail.path : targetPath;
         if (openAsPr) {
           if (detail.prUrl) {
             const label = detail.pullRequestNumber ? `PR #${detail.pullRequestNumber}` : "Pull request";
             setSuccess({
-              message: `${label} opened for ${targetPath}.`,
+              message: `${label} opened for ${committedPath}.`,
               prUrl: detail.prUrl,
+              handoffPath: committedPath,
             });
           } else {
             setSuccess({
-              message: `Pull request opened for ${targetPath}. Check GitHub to review and merge.`,
+              message: `Pull request opened for ${committedPath}. Check GitHub to review and merge.`,
+              handoffPath: committedPath,
             });
           }
         } else {
           const targetBranch = detail.branch ?? branch;
-          setSuccess({ message: `${targetPath} committed to ${targetBranch}.` });
+          setSuccess({ message: `${committedPath} committed to ${targetBranch}.`, handoffPath: committedPath });
         }
       } else {
         setError({ title: detail?.error ?? "Unexpected response", detail: detail?.detail });
@@ -363,6 +502,31 @@ function ConceptWizardPageInner() {
             placeholder="Paste the problem statement, audience, constraints, or existing brainstorming transcript."
           />
         </div>
+
+        {handoffHint && (
+          <div className="tw-space-y-2 tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4">
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+              <div className="tw-space-y-1">
+                <p className="tw-text-sm tw-font-semibold tw-text-emerald-100">
+                  Use {handoffHint.label ?? handoffHint.path} from Ideation
+                </p>
+                <p className="tw-text-xs tw-text-emerald-100/80">
+                  Pull the promoted brainstorm transcript into this step without re-uploading.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={importHandoff}
+                disabled={isImportingHandoff}
+                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400 tw-bg-emerald-500/20 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-emerald-100 hover:tw-border-emerald-300 hover:tw-text-white disabled:tw-opacity-60"
+              >
+                {isImportingHandoff ? "Importing…" : "Import file"}
+              </button>
+            </div>
+            {handoffNotice && <p className="tw-text-xs tw-text-emerald-100/80">{handoffNotice}</p>}
+            {handoffError && <p className="tw-text-xs tw-text-red-200">{handoffError}</p>}
+          </div>
+        )}
 
         <div className="tw-space-y-2">
           <label className="tw-text-sm tw-font-medium tw-text-slate-200">Or upload supporting brief</label>
@@ -435,6 +599,15 @@ function ConceptWizardPageInner() {
                   View on GitHub
                   <span aria-hidden="true">↗</span>
                 </a>
+              )}
+              {success.handoffPath && (
+                <Link
+                  href={`/wizard/roadmap/workspace?handoff=${encodeURIComponent(success.handoffPath)}`}
+                  className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400 tw-bg-emerald-500/20 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-emerald-100 hover:tw-border-emerald-300 hover:tw-text-white"
+                >
+                  Continue to provisioning workspace
+                  <span aria-hidden="true">→</span>
+                </Link>
               )}
             </div>
           )}
