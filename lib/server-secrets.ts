@@ -41,7 +41,9 @@ function getEncryptionKey(): Buffer {
 function handleTableError(error: PostgrestErrorLike): never {
   const code = error?.code ?? "";
   const message = error?.message ?? "";
-  if (code === "42P01" || /does not exist/i.test(message)) {
+  const missingTablePatterns = [/does not exist/i, /could not find the table/i, /schema cache/i];
+
+  if (code === "42P01" || missingTablePatterns.some((pattern) => pattern.test(message))) {
     throw new Error(
       "Supabase table dashboard_secrets not found. Apply the SQL in docs/supabase-dashboard-secrets.sql to provision it.",
     );

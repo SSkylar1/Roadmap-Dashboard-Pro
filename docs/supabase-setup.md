@@ -48,6 +48,8 @@ The script will:
 
 No other roles (e.g., `anon`, `authenticated`) will be able to read secrets, so they remain server-only.
 
+> **Troubleshooting:** until this migration runs, any dashboard API call will fail with messages such as `Could not find the table 'public.dashboard_secrets' in the schema cache`. That's Supabase reporting that the table is missing—run the SQL above and redeploy to resolve it.
+
 ## 5. Deploy with the new env vars
 
 Redeploy your Next.js app (e.g., `npm run build` locally, or trigger a Vercel redeploy). During boot, the API routes will read `SB_URL` + `SB_SERVICE_ROLE_KEY` and start persisting secrets to the database.
