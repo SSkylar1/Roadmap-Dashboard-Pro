@@ -234,17 +234,7 @@ export default function MidProjectSyncWorkspace() {
 
     setIsSyncing(true);
     setError(null);
-    setStatus(null);
-    setBacklog([]);
-    setRunArtifacts([]);
-    setDiscoverArtifacts([]);
-    setDiscoverConfig(null);
-    setDbProbes([]);
-    setCodeMatches([]);
-    setContextPack(null);
     setContextError(null);
-    setLastSyncedAt(null);
-    setLastDiscoveryAt(null);
 
     const payload = {
       owner: owner.trim(),
@@ -310,6 +300,24 @@ export default function MidProjectSyncWorkspace() {
     ? new Date(lastDiscoveryAt).toLocaleString()
     : null;
 
+  const syncSummaryLabel = statusGeneratedAt
+    ? `Last synced ${statusGeneratedAt}`
+    : "Run discovery to generate the latest status and backlog files.";
+
+  const syncStatusLabel = isSyncing
+    ? statusGeneratedAt
+      ? `Sync in progress… (last synced ${statusGeneratedAt})`
+      : "Sync in progress…"
+    : syncSummaryLabel;
+
+  const discoveryStatusLabel = isDiscovering
+    ? discoveryGeneratedAt
+      ? `Discovery running… (last ${discoveryGeneratedAt})`
+      : "Discovery running…"
+    : discoveryGeneratedAt
+    ? `Discovery ${discoveryGeneratedAt}`
+    : null;
+
   const seededDiscover = useMemo(
     () => (discoverPath ? discoverArtifacts.some((path) => path.startsWith(discoverPath)) : false),
     [discoverArtifacts, discoverPath],
@@ -369,13 +377,6 @@ export default function MidProjectSyncWorkspace() {
 
     setIsDiscovering(true);
     setError(null);
-    setDiscoverArtifacts([]);
-    setBacklog([]);
-    setDiscoverConfig(null);
-    setDbProbes([]);
-    setCodeMatches([]);
-    setLastDiscoveryAt(null);
-
     try {
       await runDiscovery(payload);
     } catch (err: any) {
@@ -585,11 +586,7 @@ export default function MidProjectSyncWorkspace() {
 
           <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-4">
             <div className="tw-text-sm tw-text-slate-400">
-              {statusGeneratedAt ? (
-                <span>Last synced {statusGeneratedAt}</span>
-              ) : (
-                <span>Run discovery to generate the latest status and backlog files.</span>
-              )}
+              <span aria-live="polite">{syncStatusLabel}</span>
             </div>
             <button
               type="submit"
@@ -668,15 +665,18 @@ export default function MidProjectSyncWorkspace() {
                   {discoverArtifacts.length} files touched
                 </span>
               ) : null}
-              {discoveryGeneratedAt ? (
-                <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
-                  Discovery {discoveryGeneratedAt}
+              {discoveryStatusLabel ? (
+                <span
+                  className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400 tw-whitespace-nowrap"
+                  aria-live="polite"
+                >
+                  {discoveryStatusLabel}
                 </span>
               ) : null}
               <button
                 type="button"
                 onClick={handleDiscoverOnly}
-                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-xs tw-font-semibold tw-text-slate-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100 disabled:tw-cursor-not-allowed disabled:tw-border-slate-800 disabled:tw-text-slate-500"
+                className="tw-inline-flex tw-items-center tw-justify-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-xs tw-font-semibold tw-text-slate-200 tw-whitespace-nowrap tw-min-w-[160px] tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100 focus-visible:tw-outline-none focus-visible:tw-ring-2 focus-visible:tw-ring-sky-400/60 focus-visible:tw-ring-offset-2 focus-visible:tw-ring-offset-slate-950 disabled:tw-cursor-not-allowed disabled:tw-border-slate-800 disabled:tw-text-slate-500"
                 disabled={!canDiscover}
               >
                 {isDiscovering ? "Running…" : "Run discovery"}
@@ -718,9 +718,12 @@ export default function MidProjectSyncWorkspace() {
         <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
           <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-2">
             <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Supabase probes</h2>
-            {discoveryGeneratedAt ? (
-              <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
-                Discovery {discoveryGeneratedAt}
+            {discoveryStatusLabel ? (
+              <span
+                className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400 tw-whitespace-nowrap"
+                aria-live="polite"
+              >
+                {discoveryStatusLabel}
               </span>
             ) : null}
           </div>
@@ -776,9 +779,12 @@ export default function MidProjectSyncWorkspace() {
                 Globs from {discoverPath} matched against the repository tree.
               </p>
             </div>
-            {discoveryGeneratedAt ? (
-              <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
-                Discovery {discoveryGeneratedAt}
+            {discoveryStatusLabel ? (
+              <span
+                className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400 tw-whitespace-nowrap"
+                aria-live="polite"
+              >
+                {discoveryStatusLabel}
               </span>
             ) : null}
           </div>
