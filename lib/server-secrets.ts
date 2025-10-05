@@ -22,9 +22,13 @@ type DashboardSecretRow = {
 };
 
 function requireServiceRoleKey(): string {
-  const key = process.env.SB_SERVICE_ROLE_KEY;
+  const key =
+    process.env.SB_SERVICE_ROLE_KEY ??
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.NEXT_PUBLIC_SB_SERVICE_ROLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
   if (!key) {
-    throw new Error("Missing SB_SERVICE_ROLE_KEY env var");
+    throw new Error("Missing SB_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_ROLE_KEY) env var");
   }
   return key;
 }

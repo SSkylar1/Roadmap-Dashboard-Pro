@@ -28,7 +28,9 @@ npm run dev
 > environment) so settings saved in the dashboard are encrypted and stored in Supabase. Provision the
 > `dashboard_secrets` table with `docs/supabase-dashboard-secrets.sql` before using the API routes. The
 > [Supabase setup guide](docs/supabase-setup.md) walks through these steps and explains how to migrate any
-> local secrets into the new storage.
+> local secrets into the new storage. For backward compatibility the code still falls back to
+> `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`, but migrate to the `SB_` names when you can to avoid
+> confusion when reading runtime errors.
 
 ### Verify your GitHub App env vars
 

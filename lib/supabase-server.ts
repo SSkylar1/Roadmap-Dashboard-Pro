@@ -11,9 +11,13 @@ function getBaseUrl(): string {
   if (cachedBaseUrl) {
     return cachedBaseUrl;
   }
-  const url = process.env.SB_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url =
+    process.env.SB_URL ??
+    process.env.SUPABASE_URL ??
+    process.env.NEXT_PUBLIC_SB_URL ??
+    process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!url) {
-    throw new Error("Missing SB_URL env var");
+    throw new Error("Missing SB_URL (or SUPABASE_URL) env var");
   }
   cachedBaseUrl = url.replace(/\/$/, "");
   return cachedBaseUrl;
@@ -23,9 +27,13 @@ function getServiceRoleKey(): string {
   if (cachedKey) {
     return cachedKey;
   }
-  const key = process.env.SB_SERVICE_ROLE_KEY;
+  const key =
+    process.env.SB_SERVICE_ROLE_KEY ??
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.NEXT_PUBLIC_SB_SERVICE_ROLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
   if (!key) {
-    throw new Error("Missing SB_SERVICE_ROLE_KEY env var");
+    throw new Error("Missing SB_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_ROLE_KEY) env var");
   }
   cachedKey = key;
   return key;

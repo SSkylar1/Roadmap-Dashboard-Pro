@@ -29,6 +29,8 @@ SB_SERVICE_ROLE_KEY="<service-role-key>"
 ```
 
 > These values are required wherever the Next.js server runs. The browser never sees the service-role key because only the API routes reference it.
+>
+> **Migrating from older env vars?** The code still recognizes `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` (and their `NEXT_PUBLIC_` counterparts) as a fallback, but prefer the new `SB_` names so runtime errors point at a single source of truth.
 
 ## 4. Provision the `dashboard_secrets` table
 
