@@ -6,14 +6,12 @@ import {
   createProjectEntry,
   createRepoEntry,
   normalizeSecretsForSave,
-  readLocalSecrets,
+  resolveSecrets,
   type RepoProjectSecrets,
   type RepoSecrets,
   type SecretsStore,
-  resolveSecrets,
-  useLocalSecrets,
-  writeSecretsToStorage,
-} from "@/lib/use-local-secrets";
+} from "@/lib/secrets";
+import { loadSecretsFromServer, updateSecretsCache, useLocalSecrets } from "@/lib/use-local-secrets";
 
 const EMPTY_STORE: SecretsStore = { defaults: {}, repos: [] };
 
@@ -43,20 +41,29 @@ export default function SettingsPage() {
   const liveStore = useLocalSecrets();
 
   useEffect(() => {
-    try {
-      const loaded = normalizeSecretsForSave(readLocalSecrets());
-      setStore(loaded);
-      const serialized = JSON.stringify(loaded);
-      setInitialSerialized(serialized);
-      if (loaded.repos.length) {
-        setSelectedRepoId(loaded.repos[0].id);
-        if (loaded.repos[0].projects.length) {
-          setSelectedProjectId(loaded.repos[0].projects[0].id);
+    let cancelled = false;
+    loadSecretsFromServer(true)
+      .then((loaded) => {
+        if (cancelled) return;
+        setStore(loaded);
+        setError(null);
+        const serialized = JSON.stringify(loaded);
+        setInitialSerialized(serialized);
+        if (loaded.repos.length) {
+          setSelectedRepoId(loaded.repos[0].id);
+          if (loaded.repos[0].projects.length) {
+            setSelectedProjectId(loaded.repos[0].projects[0].id);
+          }
         }
-      }
-    } catch (err) {
-      console.error("Failed to load stored secrets", err);
-    }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("Failed to load secrets", err);
+        setError(err instanceof Error ? err.message : "Unable to load secrets");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -247,13 +254,14 @@ export default function SettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(normalized),
       });
+      const payload = (await response.json().catch(() => ({}))) as { secrets?: SecretsStore; error?: string };
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error((data as { error?: string })?.error || "Failed to save settings");
+        throw new Error(payload?.error || "Failed to save settings");
       }
-      writeSecretsToStorage(normalized);
-      setStore(normalized);
-      const serialized = JSON.stringify(normalized);
+      const saved = normalizeSecretsForSave(payload?.secrets ?? normalized);
+      updateSecretsCache(saved);
+      setStore(saved);
+      const serialized = JSON.stringify(saved);
       setInitialSerialized(serialized);
       setLastSaved(new Date().toISOString());
     } catch (err) {
@@ -269,14 +277,14 @@ export default function SettingsPage() {
       <div className="space-y-3">
         <h1 className="text-3xl font-semibold text-slate-900">Secrets &amp; integrations</h1>
         <p className="max-w-3xl text-sm text-slate-600">
-          Manage default API keys, connect repositories, and configure per-project Supabase probes. Credentials are stored in
-          your browser for now and never leave your device.
+          Manage default API keys, connect repositories, and configure per-project Supabase probes. Secrets are encrypted with
+          the service-role key and stored in Supabase so background checks and wizards can retrieve them securely.
         </p>
         <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
-          <p className="font-medium text-slate-700">Heads up</p>
+          <p className="font-medium text-slate-700">Security note</p>
           <p>
-            Values saved here are written to <code>localStorage</code>. Clearing your browser data removes them. Re-enter
-            credentials on each device you use.
+            Only the service role can read or write these records. Values render here for editing and are never persisted to
+            your browser storage.
           </p>
         </div>
       </div>
@@ -602,7 +610,11 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {error ? <p className="text-sm text-rose-600">{error}</p> : lastSaved ? <p className="text-sm text-emerald-600">Saved locally at {new Date(lastSaved).toLocaleTimeString()}.</p> : null}
+      {error ? (
+        <p className="text-sm text-rose-600">{error}</p>
+      ) : lastSaved ? (
+        <p className="text-sm text-emerald-600">Saved at {new Date(lastSaved).toLocaleTimeString()}.</p>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
         <button
