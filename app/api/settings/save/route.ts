@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { persistSecrets } from "@/lib/server-secrets";
+import { normalizeSecretsForSave, type SecretsStore } from "@/lib/secrets";
+
 function isOptionalString(value: unknown) {
   return typeof value === "undefined" || typeof value === "string";
 }
@@ -75,10 +78,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Placeholder: persistence will be implemented with secure storage.
-    // For now, the client stores secrets in localStorage.
-    return NextResponse.json({ ok: true });
+    const incoming: SecretsStore = {
+      defaults: (defaults as SecretsStore["defaults"]) ?? {},
+      repos: (repos as SecretsStore["repos"]) ?? [],
+    };
+
+    const normalized = normalizeSecretsForSave(incoming);
+    const persisted = await persistSecrets(normalized);
+
+    return NextResponse.json({ secrets: persisted });
   } catch (error) {
-    return NextResponse.json({ error: "unable to parse request" }, { status: 400 });
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: "unable to parse request" }, { status: 400 });
+    }
+    const message = error instanceof Error ? error.message : "unexpected error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
