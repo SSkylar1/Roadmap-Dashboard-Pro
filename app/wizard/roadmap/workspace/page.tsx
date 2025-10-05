@@ -4,6 +4,7 @@ import {
   ChangeEvent,
   FormEvent,
   Suspense,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -30,6 +31,14 @@ type UploadState = {
   name: string;
   sizeLabel: string;
 };
+
+type HandoffHint = {
+  path: string;
+  label?: string;
+  content?: string;
+};
+
+const ROADMAP_HANDOFF_KEY = "wizard:handoff:roadmap";
 
 type ImportResponse = {
   ok: boolean;
@@ -59,6 +68,7 @@ function formatBytes(bytes: number) {
 
 function RoadmapProvisionerInner() {
   const params = useSearchParams();
+  const handoffParam = params.get("handoff");
   const [owner, setOwner] = useState(() => params.get("owner") ?? "");
   const [repo, setRepo] = useState(() => params.get("repo") ?? "");
   const [branch, setBranch] = useState(() => params.get("branch") ?? "main");
@@ -69,10 +79,46 @@ function RoadmapProvisionerInner() {
   const [success, setSuccess] = useState<SuccessState>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadKey, setUploadKey] = useState(0);
+  const [handoffHint, setHandoffHint] = useState<HandoffHint | null>(null);
+  const [handoffNotice, setHandoffNotice] = useState<string | null>(null);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const [isImportingHandoff, setIsImportingHandoff] = useState(false);
   const secretsStore = useLocalSecrets();
   const secrets = useResolvedSecrets(owner, repo, project || undefined);
   const githubConfigured = Boolean(secrets.githubPat);
   const [openAsPr, setOpenAsPr] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      if (handoffParam) {
+        setHandoffHint({ path: handoffParam });
+      }
+      return;
+    }
+
+    try {
+      const storedRaw = window.localStorage.getItem(ROADMAP_HANDOFF_KEY);
+      const stored = storedRaw ? (JSON.parse(storedRaw) as HandoffHint & { createdAt?: number }) : null;
+
+      if (handoffParam) {
+        if (stored && stored.path === handoffParam) {
+          setHandoffHint({ path: stored.path, label: stored.label, content: stored.content });
+        } else {
+          setHandoffHint({ path: handoffParam });
+        }
+      } else if (stored?.path) {
+        setHandoffHint({ path: stored.path, label: stored.label, content: stored.content });
+      } else {
+        setHandoffHint(null);
+      }
+    } catch (err) {
+      console.error("Failed to read roadmap handoff", err);
+      if (handoffParam) {
+        setHandoffHint({ path: handoffParam });
+      }
+    }
+  }, [handoffParam]);
+
   const repoEntries = secretsStore.repos;
   const repoSlug = useMemo(() => {
     const ownerSlug = owner.trim().toLowerCase();
@@ -105,6 +151,8 @@ function RoadmapProvisionerInner() {
   const canSubmit = Boolean(!isSubmitting && owner && repo && branch && hasRoadmap);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    setHandoffNotice(null);
+    setHandoffError(null);
     const file = event.target.files?.[0];
     if (!file) {
       setUpload(null);
@@ -138,6 +186,74 @@ function RoadmapProvisionerInner() {
       setUpload(null);
       setRoadmap("");
       setUploadKey((value) => value + 1);
+    }
+  }
+
+  async function importHandoff() {
+    if (!handoffHint) {
+      return;
+    }
+
+    setIsImportingHandoff(true);
+    setHandoffNotice(null);
+    setHandoffError(null);
+
+    try {
+      let content = handoffHint.content ?? "";
+      let name = handoffHint.label ?? handoffHint.path;
+      let sizeLabel = "";
+
+      if (!content) {
+        const response = await fetch(`/api/wizard/handoff?path=${encodeURIComponent(handoffHint.path)}`);
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok || !payload?.ok) {
+          const title = typeof payload?.error === "string" ? payload.error : "Failed to import shared roadmap";
+          setHandoffError(title);
+          return;
+        }
+
+        content = typeof payload.content === "string" ? payload.content : "";
+        name = typeof payload.name === "string" ? payload.name : name;
+        sizeLabel = typeof payload.sizeLabel === "string" ? payload.sizeLabel : sizeLabel;
+        const normalizedPath = typeof payload.path === "string" ? payload.path : handoffHint.path;
+        const updatedHint: HandoffHint = {
+          path: normalizedPath,
+          label: name,
+          content,
+        };
+        setHandoffHint(updatedHint);
+        if (typeof window !== "undefined") {
+          const storedPayload = { ...updatedHint, createdAt: Date.now() };
+          window.localStorage.setItem(ROADMAP_HANDOFF_KEY, JSON.stringify(storedPayload));
+        }
+      } else {
+        sizeLabel = formatBytes(new TextEncoder().encode(content).length);
+      }
+
+      const trimmed = content.trim();
+      if (!trimmed) {
+        setHandoffError("Shared roadmap is empty");
+        return;
+      }
+
+      try {
+        load(trimmed);
+      } catch (err) {
+        setHandoffError(err instanceof Error ? err.message : String(err));
+        return;
+      }
+
+      const effectiveSizeLabel = sizeLabel || formatBytes(new TextEncoder().encode(trimmed).length);
+      setRoadmap(trimmed);
+      setUpload({ name, sizeLabel: effectiveSizeLabel });
+      setUploadKey((value) => value + 1);
+      setSuccess(null);
+      setHandoffNotice(`Imported ${name} from concept workspace.`);
+    } catch (err) {
+      setHandoffError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsImportingHandoff(false);
     }
   }
 
@@ -319,6 +435,31 @@ function RoadmapProvisionerInner() {
             </div>
           )}
 
+          {handoffHint && (
+            <div className="tw-space-y-2 tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4">
+              <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+                <div className="tw-space-y-1">
+                  <p className="tw-text-sm tw-font-semibold tw-text-emerald-100">
+                    Pull {handoffHint.label ?? handoffHint.path} from Concept
+                  </p>
+                  <p className="tw-text-xs tw-text-emerald-100/80">
+                    Start provisioning with the roadmap you just generated without downloading it again.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={importHandoff}
+                  disabled={isImportingHandoff}
+                  className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400 tw-bg-emerald-500/20 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-emerald-100 hover:tw-border-emerald-300 hover:tw-text-white disabled:tw-opacity-60"
+                >
+                  {isImportingHandoff ? "Importing…" : "Import roadmap"}
+                </button>
+              </div>
+              {handoffNotice && <p className="tw-text-xs tw-text-emerald-100/80">{handoffNotice}</p>}
+              {handoffError && <p className="tw-text-xs tw-text-red-200">{handoffError}</p>}
+            </div>
+          )}
+
           <div className="tw-space-y-3">
             <label htmlFor="roadmap-upload" className="tw-block tw-text-sm tw-font-medium tw-text-slate-200">
               Upload {roadmapPath}
@@ -344,6 +485,8 @@ function RoadmapProvisionerInner() {
                     setRoadmap("");
                     setSuccess(null);
                     setUploadKey((value) => value + 1);
+                    setHandoffNotice(null);
+                    setHandoffError(null);
                   }}
                   className="tw-text-xs tw-font-semibold tw-text-slate-300 hover:tw-text-slate-100"
                 >
