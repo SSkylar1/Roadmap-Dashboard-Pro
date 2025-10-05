@@ -24,8 +24,8 @@ Whichever project you use must allow server-side access with the service-role ke
 Add the following to `.env.local` for local development and to your deployment platform (e.g., Vercel → Settings → Environment Variables):
 
 ```bash
-SUPABASE_URL="https://<your-project-ref>.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
+SB_URL="https://<your-project-ref>.supabase.co"
+SB_SERVICE_ROLE_KEY="<service-role-key>"
 ```
 
 > These values are required wherever the Next.js server runs. The browser never sees the service-role key because only the API routes reference it.
@@ -48,7 +48,7 @@ No other roles (e.g., `anon`, `authenticated`) will be able to read secrets, so 
 
 ## 5. Deploy with the new env vars
 
-Redeploy your Next.js app (e.g., `npm run build` locally, or trigger a Vercel redeploy). During boot, the API routes will read `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` and start persisting secrets to the database.
+Redeploy your Next.js app (e.g., `npm run build` locally, or trigger a Vercel redeploy). During boot, the API routes will read `SB_URL` + `SB_SERVICE_ROLE_KEY` and start persisting secrets to the database.
 
 ## 6. Migrate existing secrets from local storage (if any)
 
