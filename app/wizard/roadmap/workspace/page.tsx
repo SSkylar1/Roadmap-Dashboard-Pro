@@ -152,6 +152,22 @@ function RoadmapProvisionerInner() {
   }, [matchedRepoEntry?.id]);
 
   useEffect(() => {
+    if (owner || repo) {
+      return;
+    }
+    const [firstRepo] = repoEntries;
+    if (!firstRepo) {
+      return;
+    }
+    setOwner(firstRepo.owner);
+    setRepo(firstRepo.repo);
+    setSelectedRepoId(firstRepo.id);
+    if (!project && firstRepo.projects.length === 1) {
+      setProject(firstRepo.projects[0].id);
+    }
+  }, [owner, repo, project, repoEntries]);
+
+  useEffect(() => {
     if (!project) {
       setSelectedProjectOption((current) => (current === "" ? current : ""));
       return;
