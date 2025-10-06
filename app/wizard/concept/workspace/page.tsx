@@ -44,6 +44,8 @@ type HandoffHint = {
 
 const CONCEPT_HANDOFF_KEY = "wizard:handoff:concept";
 const ROADMAP_HANDOFF_KEY = "wizard:handoff:roadmap";
+const ADD_NEW_REPO_OPTION = "__add_new_repo__";
+const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
 
 function escapeHtml(value: string) {
   return value
@@ -151,6 +153,8 @@ function ConceptWizardPageInner() {
   const openAiConfigured = Boolean(secrets.openaiKey);
   const githubConfigured = Boolean(secrets.githubPat);
   const repoEntries = secretsStore.repos;
+  const [selectedRepoId, setSelectedRepoId] = useState<string>(ADD_NEW_REPO_OPTION);
+  const [selectedProjectOption, setSelectedProjectOption] = useState<string>("");
   const repoSlug = useMemo(() => {
     const ownerSlug = owner.trim().toLowerCase();
     const repoSlugValue = repo.trim().toLowerCase();
@@ -163,14 +167,6 @@ function ConceptWizardPageInner() {
     );
   }, [repoEntries, repoSlug]);
   const projectOptions = useMemo(() => matchedRepoEntry?.projects ?? [], [matchedRepoEntry]);
-  const activeProjectId = useMemo(() => {
-    if (!project) return "";
-    const matchById = projectOptions.find((option) => option.id === project);
-    if (matchById) return matchById.id;
-    const normalized = normalizeProjectKey(project);
-    const matchByKey = projectOptions.find((option) => normalizeProjectKey(option.id) === normalized);
-    return matchByKey?.id ?? project;
-  }, [project, projectOptions]);
 
   const combinedPrompt = useMemo(() => {
     if (conceptText && uploadText) {
@@ -184,6 +180,72 @@ function ConceptWizardPageInner() {
   const highlighted = useMemo(() => highlightYaml(roadmap || ""), [roadmap]);
 
   const projectKey = normalizeProjectKey(project);
+
+  useEffect(() => {
+    const nextRepoId = matchedRepoEntry?.id ?? ADD_NEW_REPO_OPTION;
+    setSelectedRepoId((current) => (current === nextRepoId ? current : nextRepoId));
+  }, [matchedRepoEntry?.id]);
+
+  useEffect(() => {
+    if (owner || repo) {
+      return;
+    }
+    const [firstRepo] = repoEntries;
+    if (!firstRepo) {
+      return;
+    }
+    setOwner(firstRepo.owner);
+    setRepo(firstRepo.repo);
+    setSelectedRepoId(firstRepo.id);
+    if (!project && firstRepo.projects.length === 1) {
+      setProject(firstRepo.projects[0].id);
+    }
+  }, [owner, repo, project, repoEntries]);
+
+  useEffect(() => {
+    if (!project) {
+      setSelectedProjectOption((current) => (current === "" ? current : ""));
+      return;
+    }
+    const matchingProject = projectOptions.find((option) => option.id === project);
+    const nextProjectOption = matchingProject ? matchingProject.id : ADD_NEW_PROJECT_OPTION;
+    setSelectedProjectOption((current) => (current === nextProjectOption ? current : nextProjectOption));
+  }, [project, projectOptions]);
+
+  const handleRepoSelect = (event: ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value;
+    setSelectedRepoId(value);
+    if (value === ADD_NEW_REPO_OPTION) {
+      return;
+    }
+    const entry = repoEntries.find((repoEntry) => repoEntry.id === value);
+    if (entry) {
+      setOwner(entry.owner);
+      setRepo(entry.repo);
+      if (entry.projects.length === 1) {
+        setProject(entry.projects[0].id);
+      }
+    }
+  };
+
+  const handleProjectSelect = (event: ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value;
+    setSelectedProjectOption(value);
+    if (!value) {
+      setProject("");
+      return;
+    }
+    if (value === ADD_NEW_PROJECT_OPTION) {
+      if (projectOptions.some((option) => option.id === project)) {
+        setProject("");
+      }
+      return;
+    }
+    const match = projectOptions.find((option) => option.id === value);
+    if (match) {
+      setProject(match.id);
+    }
+  };
 
   useEffect(() => {
     if (previewRef.current && editorRef.current) {
@@ -616,103 +678,107 @@ function ConceptWizardPageInner() {
       )}
 
       <div className="tw-grid tw-gap-6">
-        <header className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
-          <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">{targetPath}</h2>
-          <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
-            <input
-              value={owner}
-              onChange={(event) => setOwner(event.target.value)}
-              placeholder="owner"
-              className="tw-w-32 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
-            />
-            <span className="tw-text-slate-400">/</span>
-            <input
-              value={repo}
-              onChange={(event) => setRepo(event.target.value)}
-              placeholder="repo"
-              className="tw-w-40 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
-            />
-            <input
-              value={branch}
-              onChange={(event) => setBranch(event.target.value)}
-              placeholder="branch"
-              className="tw-w-32 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
-            />
-            <input
-              value={project}
-              onChange={(event) => setProject(event.target.value)}
-              placeholder="project (optional)"
-              className="tw-w-44 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-1.5 tw-text-xs tw-text-slate-100 focus:tw-border-slate-600"
-            />
+        <header className="tw-space-y-4">
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+            <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">{targetPath}</h2>
+            <span className="tw-text-xs tw-text-slate-400">Target file in repo</span>
+          </div>
+          <div className="tw-grid tw-gap-3 md:tw-grid-cols-2 xl:tw-grid-cols-3">
+            <label className="tw-flex tw-flex-col tw-gap-1">
+              <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">
+                Linked repository
+              </span>
+              <select
+                value={selectedRepoId}
+                onChange={handleRepoSelect}
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+              >
+                <option value={ADD_NEW_REPO_OPTION}>Add new repo…</option>
+                {repoEntries.map((entry) => {
+                  const label = entry.displayName?.trim() || `${entry.owner}/${entry.repo}`;
+                  return (
+                    <option key={entry.id} value={entry.id}>
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <label className="tw-flex tw-flex-col tw-gap-1">
+              <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Branch</span>
+              <input
+                value={branch}
+                onChange={(event) => setBranch(event.target.value)}
+                placeholder="main"
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+              />
+            </label>
+            <label className="tw-flex tw-flex-col tw-gap-1">
+              <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">
+                Project (optional)
+              </span>
+              <select
+                value={selectedProjectOption}
+                onChange={handleProjectSelect}
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+              >
+                <option value="">Use repo defaults</option>
+                {projectOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+                <option value={ADD_NEW_PROJECT_OPTION}>Add new project…</option>
+              </select>
+            </label>
+            {selectedRepoId === ADD_NEW_REPO_OPTION && (
+              <div className="tw-grid tw-gap-3 md:tw-col-span-2 xl:tw-col-span-3 md:tw-grid-cols-2">
+                <label className="tw-flex tw-flex-col tw-gap-1">
+                  <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Owner</span>
+                  <input
+                    value={owner}
+                    onChange={(event) => {
+                      setOwner(event.target.value);
+                      setSelectedRepoId(ADD_NEW_REPO_OPTION);
+                    }}
+                    placeholder="acme-co"
+                    className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+                  />
+                </label>
+                <label className="tw-flex tw-flex-col tw-gap-1">
+                  <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">
+                    Repository
+                  </span>
+                  <input
+                    value={repo}
+                    onChange={(event) => {
+                      setRepo(event.target.value);
+                      setSelectedRepoId(ADD_NEW_REPO_OPTION);
+                    }}
+                    placeholder="product-app"
+                    className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+                  />
+                </label>
+              </div>
+            )}
+            {selectedProjectOption === ADD_NEW_PROJECT_OPTION && (
+              <label className="tw-flex tw-flex-col tw-gap-1 md:tw-col-span-2 xl:tw-col-span-3">
+                <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">
+                  Project slug
+                </span>
+                <input
+                  value={project}
+                  onChange={(event) => {
+                    setProject(event.target.value);
+                    setSelectedProjectOption(ADD_NEW_PROJECT_OPTION);
+                  }}
+                  placeholder="growth-experiments"
+                  className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+                />
+              </label>
+            )}
           </div>
         </header>
-
-        {repoEntries.length > 0 && (
-          <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-p-4 tw-space-y-3">
-            <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
-              <h3 className="tw-text-sm tw-font-semibold tw-text-slate-200">Linked repositories</h3>
-              <p className="tw-text-xs tw-text-slate-400">Pick a repo to auto-fill owner and project settings.</p>
-            </div>
-            <div className="tw-flex tw-flex-wrap tw-gap-2">
-              {repoEntries.map((entry) => {
-                const label = entry.displayName?.trim() || `${entry.owner}/${entry.repo}`;
-                const entrySlug = `${entry.owner.toLowerCase()}/${entry.repo.toLowerCase()}`;
-                const isActive = repoSlug === entrySlug;
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    onClick={() => {
-                      setOwner(entry.owner);
-                      setRepo(entry.repo);
-                      if (entry.projects.length === 1) {
-                        setProject(entry.projects[0].id);
-                      }
-                    }}
-                    className={`tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-transition tw-duration-200 tw-ease-out ${
-                      isActive
-                        ? "tw-border-emerald-500 tw-bg-emerald-600/10 tw-text-emerald-200"
-                        : "tw-border-slate-700 tw-bg-slate-900 tw-text-slate-200 hover:tw-border-slate-600"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {projectOptions.length > 0 && (
-          <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-p-4">
-            <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
-              <h3 className="tw-text-sm tw-font-semibold tw-text-slate-200">Projects in {matchedRepoEntry?.displayName ?? `${owner || "repo"}`}</h3>
-              <p className="tw-text-xs tw-text-slate-400">Select a saved project or keep typing a new one above.</p>
-            </div>
-            <div className="tw-flex tw-flex-wrap tw-gap-2">
-              {projectOptions.map((option) => {
-                const isActive = activeProjectId === option.id || project === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setProject(option.id)}
-                    className={`tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-transition tw-duration-200 tw-ease-out ${
-                      isActive
-                        ? "tw-border-emerald-500 tw-bg-emerald-600/10 tw-text-emerald-200"
-                        : "tw-border-slate-700 tw-bg-slate-900 tw-text-slate-200 hover:tw-border-slate-600"
-                    }`}
-                  >
-                    {option.name}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="tw-text-xs tw-text-slate-400">
-              Target file: <code className="tw-font-mono tw-text-[11px]">{targetPath}</code>
-            </p>
-          </div>
-        )}
 
         <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
           <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-px-3 tw-py-1.5 tw-text-xs tw-font-medium tw-text-slate-200">

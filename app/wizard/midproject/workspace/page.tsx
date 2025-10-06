@@ -53,13 +53,17 @@ type ContextPack = {
   files?: Record<string, string>;
 };
 
+const ADD_NEW_REPO_OPTION = "__add_new_repo__";
+const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
+
 export default function MidProjectSyncWorkspace() {
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("main");
   const [probeUrl, setProbeUrl] = useState("");
-  const [selectedRepoId, setSelectedRepoId] = useState("");
+  const [selectedRepoId, setSelectedRepoId] = useState<string>(ADD_NEW_REPO_OPTION);
   const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectSelectValue, setProjectSelectValue] = useState<string>("");
   const [projectOverride, setProjectOverride] = useState("");
   const [probeCustomized, setProbeCustomized] = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
@@ -88,7 +92,7 @@ export default function MidProjectSyncWorkspace() {
 
   const repoOptions = secretsStore.repos;
   const matchedRepoEntry = useMemo(() => {
-    if (selectedRepoId) {
+    if (selectedRepoId && selectedRepoId !== ADD_NEW_REPO_OPTION) {
       return repoOptions.find((entry) => entry.id === selectedRepoId) ?? null;
     }
     if (trimmedOwner && trimmedRepo) {
@@ -146,34 +150,39 @@ export default function MidProjectSyncWorkspace() {
       setSelectedRepoId(first.id);
       setOwner(first.owner);
       setRepo(first.repo);
-      setSelectedProjectId(first.projects[0]?.id ?? "");
+      const firstProjectId = first.projects[0]?.id ?? "";
+      setSelectedProjectId(firstProjectId);
+      setProjectSelectValue(firstProjectId || "");
+      setProjectOverride("");
       setBootstrapped(true);
     } else if (owner || repo) {
+      setSelectedRepoId(ADD_NEW_REPO_OPTION);
+      setProjectSelectValue(projectOverride ? ADD_NEW_PROJECT_OPTION : "");
       setBootstrapped(true);
     }
-  }, [bootstrapped, owner, repo, repoOptions]);
+  }, [bootstrapped, owner, projectOverride, repo, repoOptions]);
 
   useEffect(() => {
+    if (projectSelectValue === ADD_NEW_PROJECT_OPTION) {
+      return;
+    }
     if (!projectOptions.length) {
       if (selectedProjectId) {
         setSelectedProjectId("");
       }
-      if (projectOverride) {
-        setProjectOverride("");
-      }
+      setProjectSelectValue("");
+      setProjectOverride("");
       return;
     }
-    if (selectedProjectId && !projectOptions.some((project) => project.id === selectedProjectId)) {
-      setSelectedProjectId(projectOptions[0].id);
-    }
-  }, [projectOptions, projectOverride, selectedProjectId]);
-
-  useEffect(() => {
-    if (!selectedProjectId) {
+    if (selectedProjectId && projectOptions.some((project) => project.id === selectedProjectId)) {
+      setProjectSelectValue(selectedProjectId);
       return;
     }
-    setProjectOverride((current) => (current ? current : selectedProjectId));
-  }, [selectedProjectId]);
+    const first = projectOptions[0]?.id ?? "";
+    setSelectedProjectId(first);
+    setProjectSelectValue(first || "");
+    setProjectOverride("");
+  }, [projectOptions, projectSelectValue, selectedProjectId]);
 
   useEffect(() => {
     setProbeCustomized(false);
@@ -188,9 +197,10 @@ export default function MidProjectSyncWorkspace() {
   const handleRepoSelect = useCallback(
     (event: ChangeEvent<HTMLSelectElement>) => {
       const value = event.target.value;
-      if (!value) {
-        setSelectedRepoId("");
+      if (value === ADD_NEW_REPO_OPTION) {
+        setSelectedRepoId(ADD_NEW_REPO_OPTION);
         setSelectedProjectId("");
+        setProjectSelectValue("");
         setProjectOverride("");
         return;
       }
@@ -199,16 +209,29 @@ export default function MidProjectSyncWorkspace() {
       setSelectedRepoId(entry.id);
       setOwner(entry.owner);
       setRepo(entry.repo);
-      setSelectedProjectId(entry.projects[0]?.id ?? "");
-      setProjectOverride(entry.projects[0]?.id ?? "");
+      const firstProjectId = entry.projects[0]?.id ?? "";
+      setSelectedProjectId(firstProjectId);
+      setProjectSelectValue(firstProjectId || "");
+      setProjectOverride("");
     },
     [repoOptions],
   );
 
   const handleProjectSelect = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
     const value = event.target.value;
+    setProjectSelectValue(value);
+    if (!value) {
+      setSelectedProjectId("");
+      setProjectOverride("");
+      return;
+    }
+    if (value === ADD_NEW_PROJECT_OPTION) {
+      setSelectedProjectId("");
+      setProjectOverride("");
+      return;
+    }
     setSelectedProjectId(value);
-    setProjectOverride(value);
+    setProjectOverride("");
   }, []);
 
   const handleProbeChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
@@ -489,7 +512,7 @@ export default function MidProjectSyncWorkspace() {
                 onChange={handleRepoSelect}
                 className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-500 focus:tw-outline-none"
               >
-                <option value="">Manual entry</option>
+                <option value={ADD_NEW_REPO_OPTION}>Add new repo…</option>
                 {repoOptions.map((option) => {
                   const label = option.displayName?.trim() || `${option.owner}/${option.repo}`;
                   return (
@@ -500,51 +523,34 @@ export default function MidProjectSyncWorkspace() {
                 })}
               </select>
             </label>
-            <label className="tw-flex tw-flex-col tw-gap-2">
-              <span className="tw-text-sm tw-font-medium tw-text-slate-200">Owner</span>
-              <input
-                value={owner}
-                onChange={(event) => setOwner(event.target.value)}
-                placeholder="acme-co"
-                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
-              />
-            </label>
-            <label className="tw-flex tw-flex-col tw-gap-2">
-              <span className="tw-text-sm tw-font-medium tw-text-slate-200">Repository</span>
-              <input
-                value={repo}
-                onChange={(event) => setRepo(event.target.value)}
-                placeholder="product-app"
-                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
-              />
-            </label>
-            {projectOptions.length ? (
-              <label className="tw-flex tw-flex-col tw-gap-2">
-                <span className="tw-text-sm tw-font-medium tw-text-slate-200">Project</span>
-                <select
-                  value={selectedProjectId}
-                  onChange={handleProjectSelect}
-                  className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-500 focus:tw-outline-none"
-                >
-                  <option value="">Use repo defaults</option>
-                  {projectOptions.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <label className="tw-flex tw-flex-col tw-gap-2">
-              <span className="tw-text-sm tw-font-medium tw-text-slate-200">Project slug (optional)</span>
-              <input
-                value={projectOverride}
-                onChange={(event) => setProjectOverride(event.target.value)}
-                placeholder={selectedProjectId || "growth-experiments"}
-                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
-              />
-              <p className="tw-text-[11px] tw-text-slate-500">Roadmap file: {roadmapPath}</p>
-            </label>
+            {selectedRepoId === ADD_NEW_REPO_OPTION && (
+              <>
+                <label className="tw-flex tw-flex-col tw-gap-2">
+                  <span className="tw-text-sm tw-font-medium tw-text-slate-200">Owner</span>
+                  <input
+                    value={owner}
+                    onChange={(event) => {
+                      setOwner(event.target.value);
+                      setSelectedRepoId(ADD_NEW_REPO_OPTION);
+                    }}
+                    placeholder="acme-co"
+                    className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
+                  />
+                </label>
+                <label className="tw-flex tw-flex-col tw-gap-2">
+                  <span className="tw-text-sm tw-font-medium tw-text-slate-200">Repository</span>
+                  <input
+                    value={repo}
+                    onChange={(event) => {
+                      setRepo(event.target.value);
+                      setSelectedRepoId(ADD_NEW_REPO_OPTION);
+                    }}
+                    placeholder="product-app"
+                    className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
+                  />
+                </label>
+              </>
+            )}
             <label className="tw-flex tw-flex-col tw-gap-2">
               <span className="tw-text-sm tw-font-medium tw-text-slate-200">Branch</span>
               <input
@@ -554,6 +560,37 @@ export default function MidProjectSyncWorkspace() {
                 className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
               />
             </label>
+            <label className="tw-flex tw-flex-col tw-gap-2">
+              <span className="tw-text-sm tw-font-medium tw-text-slate-200">Project</span>
+              <select
+                value={projectSelectValue}
+                onChange={handleProjectSelect}
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-500 focus:tw-outline-none"
+              >
+                <option value="">Use repo defaults</option>
+                {projectOptions.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+                <option value={ADD_NEW_PROJECT_OPTION}>Add new project…</option>
+              </select>
+            </label>
+            {projectSelectValue === ADD_NEW_PROJECT_OPTION && (
+              <label className="tw-flex tw-flex-col tw-gap-2 md:tw-col-span-2">
+                <span className="tw-text-sm tw-font-medium tw-text-slate-200">Project slug</span>
+                <input
+                  value={projectOverride}
+                  onChange={(event) => {
+                    setProjectOverride(event.target.value);
+                    setProjectSelectValue(ADD_NEW_PROJECT_OPTION);
+                  }}
+                  placeholder="growth-experiments"
+                  className="tw-w-full tw-rounded-xl tw-border tw-border-slate-700 tw-bg-slate-950 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 tw-placeholder-slate-500 focus:tw-border-slate-500 focus:tw-outline-none"
+                />
+                <p className="tw-text-[11px] tw-text-slate-500">Roadmap file: {roadmapPath}</p>
+              </label>
+            )}
             <label className="tw-flex tw-flex-col tw-gap-2">
               <span className="tw-text-sm tw-font-medium tw-text-slate-200">Supabase probe URL (optional)</span>
               <input
@@ -582,6 +619,9 @@ export default function MidProjectSyncWorkspace() {
               )}
             </label>
           </div>
+          <p className="tw-text-xs tw-text-slate-400">
+            Roadmap file: <code className="tw-font-mono tw-text-[11px]">{roadmapPath}</code>
+          </p>
 
           <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-4">
             <div className="tw-text-sm tw-text-slate-400">
