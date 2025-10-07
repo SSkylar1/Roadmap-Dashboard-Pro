@@ -12,6 +12,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import yaml from "js-yaml";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
@@ -123,6 +124,35 @@ function highlightYaml(value: string) {
     .join("\n");
 }
 
+function normalizeRoadmapContent(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const fenceMatch =
+    trimmed.match(/```(?:yaml|yml)?\s*\n([\s\S]*?)```/i) ??
+    trimmed.match(/~~~(?:yaml|yml)?\s*\n([\s\S]*?)~~~/i);
+
+  const initialCandidate = fenceMatch ? fenceMatch[1].trim() : trimmed;
+  const lines = initialCandidate.split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const subset = lines.slice(index).join("\n").trim();
+    if (!subset) {
+      continue;
+    }
+    try {
+      yaml.load(subset);
+      return subset;
+    } catch (err) {
+      // Ignore and try the next subset.
+    }
+  }
+
+  return initialCandidate;
+}
+
 function formatBytes(bytes: number) {
   if (Number.isNaN(bytes) || bytes <= 0) {
     return "0 B";
@@ -191,6 +221,7 @@ function ConceptWizardPageInner() {
     return "";
   }, [conceptText, uploadText]);
 
+  const normalizedRoadmap = useMemo(() => normalizeRoadmapContent(roadmap), [roadmap]);
   const highlighted = useMemo(() => highlightYaml(roadmap || ""), [roadmap]);
 
   const projectKey = normalizeProjectKey(project);
@@ -360,8 +391,12 @@ function ConceptWizardPageInner() {
       return;
     }
 
-    const trimmed = roadmap.trim();
-    if (!trimmed) {
+    if (normalizedRoadmap !== roadmap) {
+      setRoadmap(normalizedRoadmap);
+      return;
+    }
+
+    if (!normalizedRoadmap) {
       window.localStorage.removeItem(ROADMAP_HANDOFF_KEY);
       return;
     }
@@ -375,7 +410,7 @@ function ConceptWizardPageInner() {
     const payload = {
       path: label,
       label,
-      content: trimmed,
+      content: normalizedRoadmap,
       ...(trimmedOwner ? { owner: trimmedOwner } : {}),
       ...(trimmedRepo ? { repo: trimmedRepo } : {}),
       ...(trimmedBranch ? { branch: trimmedBranch } : {}),
@@ -389,11 +424,11 @@ function ConceptWizardPageInner() {
     } catch (err) {
       console.error("Failed to persist roadmap handoff", err);
     }
-  }, [roadmap, projectKey, owner, repo, branch, promotedBranch]);
+  }, [roadmap, normalizedRoadmap, projectKey, owner, repo, branch, promotedBranch]);
 
   const canGenerate = Boolean(!isGenerating && combinedPrompt);
   const targetPath = describeProjectFile("docs/roadmap.yml", projectKey);
-  const canCommit = Boolean(!isCommitting && roadmap.trim() && owner && repo && branch);
+  const canCommit = Boolean(!isCommitting && normalizedRoadmap && owner && repo && branch);
   const roadmapLinkHref = useMemo(() => {
     if (!success?.handoffPath) {
       return null;
@@ -457,7 +492,8 @@ function ConceptWizardPageInner() {
       }
 
       const data = (await response.json()) as GenerateResponse;
-      setRoadmap(data.roadmap.trim());
+      const normalized = normalizeRoadmapContent(data.roadmap);
+      setRoadmap(normalized);
       setSuccess({ message: "Draft roadmap ready. Review and edit before committing to your repo." });
     } catch (err) {
       setError({ title: "Generation failed", detail: err instanceof Error ? err.message : String(err) });
@@ -611,13 +647,18 @@ function ConceptWizardPageInner() {
   }
 
   async function onCommit() {
-    if (!roadmap.trim()) {
+    const normalized = normalizeRoadmapContent(roadmap);
+    if (!normalized) {
       setError({ title: "Roadmap is empty", detail: "Generate or paste roadmap content before committing." });
       return;
     }
     if (!owner || !repo) {
       setError({ title: "Connect a repo", detail: "Provide owner and repo so the wizard can push docs/roadmap.yml." });
       return;
+    }
+
+    if (normalized !== roadmap) {
+      setRoadmap(normalized);
     }
 
     setIsCommitting(true);
@@ -634,7 +675,13 @@ function ConceptWizardPageInner() {
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify({ owner, repo, branch: branch || "main", content: roadmap, project: project || undefined }),
+        body: JSON.stringify({
+          owner,
+          repo,
+          branch: branch || "main",
+          content: normalized,
+          project: project || undefined,
+        }),
       });
 
       const detail = (await response.json().catch(() => ({}))) as CommitResponse;
