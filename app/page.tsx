@@ -2410,6 +2410,16 @@ function DashboardPage() {
     }
     return `/new?${params.toString()}`;
   }, [activeRepo]);
+  const midProjectHref = useMemo(() => {
+    if (!activeRepo) return "/wizard/midproject/workspace";
+    const params = new URLSearchParams();
+    params.set("owner", activeRepo.owner);
+    params.set("repo", activeRepo.repo);
+    if (activeRepo.project) {
+      params.set("project", activeRepo.project);
+    }
+    return `/wizard/midproject/workspace?${params.toString()}`;
+  }, [activeRepo]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -2589,6 +2599,9 @@ function DashboardPage() {
                   </code>
                   <a className="project-wizard" href={wizardHref} target="_blank" rel="noreferrer">
                     Create setup PR ↗
+                  </a>
+                  <a className="project-wizard" href={midProjectHref} target="_blank" rel="noreferrer">
+                    Open mid-project workspace ↗
                   </a>
                   <a
                     href={`/api/status/${activeRepo.owner}/${activeRepo.repo}${activeRepo.project ? `?project=${activeRepo.project}` : ""}`}
