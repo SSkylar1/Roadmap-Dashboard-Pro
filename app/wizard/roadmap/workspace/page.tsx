@@ -123,7 +123,11 @@ function RoadmapProvisionerInner() {
           setRepo(hint.repo);
           updated = true;
         }
-        if (hint.branch && (!branch || branch === "main")) {
+        const promoted = hint.promotedBranch?.trim();
+        if (promoted && (!branch || branch === "main")) {
+          setBranch(promoted);
+          updated = true;
+        } else if (hint.branch && (!branch || branch === "main")) {
           setBranch(hint.branch);
           updated = true;
         }
@@ -332,7 +336,8 @@ function RoadmapProvisionerInner() {
         const params = new URLSearchParams({ path: handoffHint.path });
         params.set("owner", fetchOwner);
         params.set("repo", fetchRepo);
-        const fetchBranch = handoffHint.promotedBranch || handoffHint.branch || branch || "main";
+        const fetchBranchSource = handoffHint.promotedBranch || handoffHint.branch || branch || "main";
+        const fetchBranch = fetchBranchSource.trim();
         if (fetchBranch) {
           params.set("branch", fetchBranch);
         }
