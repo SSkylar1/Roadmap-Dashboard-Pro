@@ -36,6 +36,13 @@ type HandoffHint = {
   path: string;
   label?: string;
   content?: string;
+  owner?: string;
+  repo?: string;
+  branch?: string;
+  promotedBranch?: string;
+  project?: string | null;
+  prUrl?: string;
+  pullRequestNumber?: number;
 };
 
 const ROADMAP_HANDOFF_KEY = "wizard:handoff:roadmap";
@@ -102,14 +109,62 @@ function RoadmapProvisionerInner() {
       const storedRaw = window.localStorage.getItem(ROADMAP_HANDOFF_KEY);
       const stored = storedRaw ? (JSON.parse(storedRaw) as HandoffHint & { createdAt?: number }) : null;
 
+      const applyContext = (hint: HandoffHint | null) => {
+        if (!hint || initialContextApplied) {
+          return;
+        }
+        let updated = false;
+        if (hint.owner && !owner) {
+          setOwner(hint.owner);
+          updated = true;
+        }
+        if (hint.repo && !repo) {
+          setRepo(hint.repo);
+          updated = true;
+        }
+        if (hint.branch && (!branch || branch === "main")) {
+          setBranch(hint.branch);
+          updated = true;
+        }
+        if (hint.project && !project) {
+          setProject(hint.project);
+          updated = true;
+        }
+        if (updated || hint.owner || hint.repo || hint.branch || hint.project) {
+          setInitialContextApplied(true);
+        }
+      };
+
+      const hydrateHint = (hint: HandoffHint | null) => {
+        if (!hint) {
+          return null;
+        }
+        return {
+          path: hint.path,
+          label: hint.label,
+          content: hint.content,
+          owner: hint.owner,
+          repo: hint.repo,
+          branch: hint.branch,
+          promotedBranch: hint.promotedBranch,
+          project: hint.project ?? null,
+          prUrl: hint.prUrl,
+          pullRequestNumber: hint.pullRequestNumber,
+        } satisfies HandoffHint;
+      };
+
       if (handoffParam) {
         if (stored && stored.path === handoffParam) {
-          setHandoffHint({ path: stored.path, label: stored.label, content: stored.content });
+          const hydrated = hydrateHint(stored);
+          setHandoffHint(hydrated);
+          applyContext(hydrated);
         } else {
           setHandoffHint({ path: handoffParam });
         }
       } else if (stored?.path) {
-        setHandoffHint({ path: stored.path, label: stored.label, content: stored.content });
+        const hydrated = hydrateHint(stored);
+        setHandoffHint(hydrated);
+        applyContext(hydrated);
       } else {
         setHandoffHint(null);
       }
@@ -119,11 +174,12 @@ function RoadmapProvisionerInner() {
         setHandoffHint({ path: handoffParam });
       }
     }
-  }, [handoffParam]);
+  }, [handoffParam, branch, owner, project, repo, initialContextApplied]);
 
   const repoEntries = secretsStore.repos;
   const [selectedRepoId, setSelectedRepoId] = useState<string>(ADD_NEW_REPO_OPTION);
   const [selectedProjectOption, setSelectedProjectOption] = useState<string>("");
+  const [initialContextApplied, setInitialContextApplied] = useState(false);
   const repoSlug = useMemo(() => {
     const ownerSlug = owner.trim().toLowerCase();
     const repoSlugValue = repo.trim().toLowerCase();
@@ -266,7 +322,31 @@ function RoadmapProvisionerInner() {
       let sizeLabel = "";
 
       if (!content) {
-        const response = await fetch(`/api/wizard/handoff?path=${encodeURIComponent(handoffHint.path)}`);
+        const fetchOwner = handoffHint.owner || owner;
+        const fetchRepo = handoffHint.repo || repo;
+        if (!fetchOwner || !fetchRepo) {
+          setHandoffError("Provide owner and repo before importing the shared roadmap.");
+          return;
+        }
+
+        const params = new URLSearchParams({ path: handoffHint.path });
+        params.set("owner", fetchOwner);
+        params.set("repo", fetchRepo);
+        const fetchBranch = handoffHint.promotedBranch || handoffHint.branch || branch || "main";
+        if (fetchBranch) {
+          params.set("branch", fetchBranch);
+        }
+        const fetchProject = handoffHint.project ?? (project || "");
+        if (fetchProject) {
+          params.set("project", fetchProject);
+        }
+
+        const headers: HeadersInit = {};
+        if (secrets.githubPat) {
+          headers["x-github-pat"] = secrets.githubPat;
+        }
+
+        const response = await fetch(`/api/wizard/handoff?${params.toString()}`, { headers });
         const payload = await response.json().catch(() => ({}));
 
         if (!response.ok || !payload?.ok) {
@@ -276,13 +356,22 @@ function RoadmapProvisionerInner() {
         }
 
         content = typeof payload.content === "string" ? payload.content : "";
-        name = typeof payload.name === "string" ? payload.name : name;
+        const payloadLabel = typeof payload.label === "string" ? payload.label : undefined;
+        name = payloadLabel ?? (typeof payload.name === "string" ? payload.name : name);
         sizeLabel = typeof payload.sizeLabel === "string" ? payload.sizeLabel : sizeLabel;
         const normalizedPath = typeof payload.path === "string" ? payload.path : handoffHint.path;
+        const baseBranch = handoffHint.branch || branch || "main";
+        const projectForHint = (handoffHint.project ?? fetchProject) || null;
         const updatedHint: HandoffHint = {
+          ...handoffHint,
           path: normalizedPath,
-          label: name,
+          label: payloadLabel ?? name,
           content,
+          owner: fetchOwner,
+          repo: fetchRepo,
+          branch: baseBranch,
+          promotedBranch: fetchBranch,
+          project: projectForHint,
         };
         setHandoffHint(updatedHint);
         if (typeof window !== "undefined") {
