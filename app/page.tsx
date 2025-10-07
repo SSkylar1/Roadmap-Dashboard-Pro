@@ -2418,7 +2418,9 @@ function DashboardPage() {
       searchOwner &&
       searchRepo &&
       searchOwner.toLowerCase() === activeRepo.owner.toLowerCase() &&
-      searchRepo.toLowerCase() === activeRepo.repo.toLowerCase()
+      searchRepo.toLowerCase() === activeRepo.repo.toLowerCase() &&
+      (searchProject ?? normalizeProjectKey(searchProjectParam ?? undefined)) ===
+        (activeRepo.project ?? undefined)
     ) {
       return;
     }
@@ -2431,7 +2433,16 @@ function DashboardPage() {
       params.delete("project");
     }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [activeRepo, initialized, pathname, router, searchOwner, searchRepo, searchString]);
+  }, [
+    activeRepo,
+    initialized,
+    pathname,
+    router,
+    searchOwner,
+    searchRepo,
+    searchProject,
+    searchString,
+  ]);
 
   const { data, err, loading } = useStatus(activeRepo?.owner ?? "", activeRepo?.repo ?? "", activeRepo?.project);
   const {
