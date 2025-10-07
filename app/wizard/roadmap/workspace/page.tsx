@@ -102,6 +102,7 @@ function RoadmapProvisionerInner() {
   const [handoffError, setHandoffError] = useState<string | null>(null);
   const [isImportingHandoff, setIsImportingHandoff] = useState(false);
   const [initialContextApplied, setInitialContextApplied] = useState(false);
+  const [hasImportedHandoff, setHasImportedHandoff] = useState(false);
   const secretsStore = useLocalSecrets();
   const secrets = useResolvedSecrets(owner, repo, project || undefined);
   const githubConfigured = Boolean(secrets.githubPat);
@@ -175,21 +176,26 @@ function RoadmapProvisionerInner() {
         if (stored && stored.path === handoffParam) {
           const hydrated = hydrateHint(stored);
           setHandoffHint(hydrated);
+          setHasImportedHandoff(Boolean(hydrated?.content));
           applyContext(hydrated);
         } else {
           setHandoffHint({ path: handoffParam });
+          setHasImportedHandoff(false);
         }
       } else if (stored?.path) {
         const hydrated = hydrateHint(stored);
         setHandoffHint(hydrated);
+        setHasImportedHandoff(Boolean(hydrated?.content));
         applyContext(hydrated);
       } else {
         setHandoffHint(null);
+        setHasImportedHandoff(false);
       }
     } catch (err) {
       console.error("Failed to read roadmap handoff", err);
       if (handoffParam) {
         setHandoffHint({ path: handoffParam });
+        setHasImportedHandoff(false);
       }
     }
   }, [handoffParam, branch, owner, project, repo, initialContextApplied]);
@@ -239,6 +245,44 @@ function RoadmapProvisionerInner() {
   }, [normalizedRunArtifacts]);
   const hasStatusArtifact = useMemo(() => distinctRunArtifacts.includes(statusPath), [distinctRunArtifacts, statusPath]);
   const hasPlanArtifact = useMemo(() => distinctRunArtifacts.includes(planPath), [distinctRunArtifacts, planPath]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!handoffHint || !hasImportedHandoff) {
+      return;
+    }
+
+    const nextOwner = owner.trim();
+    const nextRepo = repo.trim();
+    const nextBranch = branch.trim();
+    const nextProject = project.trim();
+    const normalizedProject = nextProject ? nextProject : null;
+    const currentProject = handoffHint.project ?? null;
+
+    const hasChanges =
+      (handoffHint.owner ?? "").trim() !== nextOwner ||
+      (handoffHint.repo ?? "").trim() !== nextRepo ||
+      (handoffHint.branch ?? "").trim() !== nextBranch ||
+      currentProject !== normalizedProject;
+
+    if (!hasChanges) {
+      return;
+    }
+
+    const mergedHint: HandoffHint = {
+      ...handoffHint,
+      owner: nextOwner || undefined,
+      repo: nextRepo || undefined,
+      branch: nextBranch || undefined,
+      project: normalizedProject,
+    };
+
+    setHandoffHint(mergedHint);
+    const storedPayload = { ...mergedHint, createdAt: Date.now() };
+    window.localStorage.setItem(ROADMAP_HANDOFF_KEY, JSON.stringify(storedPayload));
+  }, [branch, hasImportedHandoff, handoffHint, owner, project, repo]);
 
   useEffect(() => {
     const nextRepoId = matchedRepoEntry?.id ?? ADD_NEW_REPO_OPTION;
@@ -414,6 +458,7 @@ function RoadmapProvisionerInner() {
           project: projectForHint,
         };
         setHandoffHint(updatedHint);
+        setHasImportedHandoff(Boolean(updatedHint.content));
         if (typeof window !== "undefined") {
           const storedPayload = { ...updatedHint, createdAt: Date.now() };
           window.localStorage.setItem(ROADMAP_HANDOFF_KEY, JSON.stringify(storedPayload));
@@ -441,6 +486,7 @@ function RoadmapProvisionerInner() {
       setUploadKey((value) => value + 1);
       setSuccess(null);
       setHandoffNotice(`Imported ${name} from concept workspace.`);
+      setHasImportedHandoff(true);
     } catch (err) {
       setHandoffError(err instanceof Error ? err.message : String(err));
     } finally {
