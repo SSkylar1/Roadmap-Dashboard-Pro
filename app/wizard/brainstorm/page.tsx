@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
-import { useResolvedSecrets } from "@/lib/use-local-secrets";
+import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -20,11 +21,45 @@ type ErrorState = {
   detail?: string;
 };
 
+type PromoteResponse = {
+  ok: boolean;
+  path?: string;
+  label?: string;
+  owner?: string;
+  repo?: string;
+  branch?: string;
+  promotedBranch?: string;
+  project?: string | null;
+  prUrl?: string;
+  pullRequestNumber?: number;
+  error?: string;
+  detail?: string;
+};
+
 type WizardHandoffPayload = {
   path: string;
   label?: string;
   content?: string;
+  owner?: string;
+  repo?: string;
+  branch?: string;
+  promotedBranch?: string;
+  project?: string | null;
+  prUrl?: string;
+  pullRequestNumber?: number;
   createdAt: number;
+};
+
+type PromoteSuccess = {
+  path: string;
+  label: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  promotedBranch: string;
+  project?: string | null;
+  prUrl?: string;
+  pullRequestNumber?: number;
 };
 
 function formatTranscript(messages: ChatMessage[]): string {
@@ -38,6 +73,8 @@ function formatTranscript(messages: ChatMessage[]): string {
 }
 
 const CONCEPT_HANDOFF_KEY = "wizard:handoff:concept";
+const ADD_NEW_REPO_OPTION = "__add_new_repo__";
+const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
 
 export default function BrainstormPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -46,17 +83,142 @@ export default function BrainstormPage() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<ErrorState | null>(null);
   const [promoteMessage, setPromoteMessage] = useState<string | null>(null);
+  const [promoteResult, setPromoteResult] = useState<PromoteSuccess | null>(null);
   const [handoffPath, setHandoffPath] = useState<string | null>(null);
   const [isPromoting, setIsPromoting] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const secrets = useResolvedSecrets();
+  const secretsStore = useLocalSecrets();
+  const repoEntries = secretsStore.repos;
+  const [owner, setOwner] = useState("");
+  const [repo, setRepo] = useState("");
+  const [branch, setBranch] = useState("main");
+  const [project, setProject] = useState("");
+  const [selectedRepoId, setSelectedRepoId] = useState<string>(ADD_NEW_REPO_OPTION);
+  const [selectedProjectOption, setSelectedProjectOption] = useState<string>("");
+  const [openAsPr, setOpenAsPr] = useState(false);
+  const [initialContextLoaded, setInitialContextLoaded] = useState(false);
+
+  const repoSlug = useMemo(() => {
+    const ownerSlug = owner.trim().toLowerCase();
+    const repoSlugValue = repo.trim().toLowerCase();
+    return ownerSlug && repoSlugValue ? `${ownerSlug}/${repoSlugValue}` : "";
+  }, [owner, repo]);
+
+  const matchedRepoEntry = useMemo(() => {
+    if (!repoSlug) return undefined;
+    return repoEntries.find(
+      (entry) => `${entry.owner.toLowerCase()}/${entry.repo.toLowerCase()}` === repoSlug,
+    );
+  }, [repoEntries, repoSlug]);
+
+  const projectOptions = useMemo(() => matchedRepoEntry?.projects ?? [], [matchedRepoEntry]);
+
+  const projectKey = useMemo(() => normalizeProjectKey(project), [project]);
+  const secrets = useResolvedSecrets(owner, repo, project || undefined);
   const openAiConfigured = Boolean(secrets.openaiKey);
+  const githubConfigured = Boolean(secrets.githubPat);
 
   useEffect(() => {
     if (bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
+
+  useEffect(() => {
+    if (initialContextLoaded || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const storedRaw = window.localStorage.getItem(CONCEPT_HANDOFF_KEY);
+      if (storedRaw) {
+        const stored = JSON.parse(storedRaw) as WizardHandoffPayload;
+        if (stored.owner) {
+          setOwner((current) => current || stored.owner!);
+        }
+        if (stored.repo) {
+          setRepo((current) => current || stored.repo!);
+        }
+        if (stored.branch) {
+          setBranch((current) => (current && current !== "main" ? current : stored.branch!));
+        }
+        if (stored.project) {
+          setProject((current) => current || stored.project!);
+        }
+      }
+    } catch (storeError) {
+      console.error("Failed to restore brainstorm context", storeError);
+    } finally {
+      setInitialContextLoaded(true);
+    }
+  }, [initialContextLoaded]);
+
+  useEffect(() => {
+    if (!initialContextLoaded) {
+      return;
+    }
+    if (owner || repo) {
+      return;
+    }
+    const [firstRepo] = repoEntries;
+    if (!firstRepo) {
+      return;
+    }
+    setOwner(firstRepo.owner);
+    setRepo(firstRepo.repo);
+    setSelectedRepoId(firstRepo.id);
+    if (!project && firstRepo.projects.length === 1) {
+      setProject(firstRepo.projects[0].id);
+    }
+  }, [initialContextLoaded, owner, repo, project, repoEntries]);
+
+  useEffect(() => {
+    const nextRepoId = matchedRepoEntry?.id ?? ADD_NEW_REPO_OPTION;
+    setSelectedRepoId((current) => (current === nextRepoId ? current : nextRepoId));
+  }, [matchedRepoEntry?.id]);
+
+  useEffect(() => {
+    if (!project) {
+      setSelectedProjectOption((current) => (current === "" ? current : ""));
+      return;
+    }
+    const match = projectOptions.find((option) => option.id === project);
+    const optionValue = match ? match.id : ADD_NEW_PROJECT_OPTION;
+    setSelectedProjectOption((current) => (current === optionValue ? current : optionValue));
+  }, [project, projectOptions]);
+
+  const handleRepoSelect = (event: ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value;
+    setSelectedRepoId(value);
+    if (value === ADD_NEW_REPO_OPTION) {
+      return;
+    }
+    const entry = repoEntries.find((repoEntry) => repoEntry.id === value);
+    if (entry) {
+      setOwner(entry.owner);
+      setRepo(entry.repo);
+      if (entry.projects.length === 1) {
+        setProject(entry.projects[0].id);
+      }
+    }
+  };
+
+  const handleProjectSelect = (event: ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value;
+    setSelectedProjectOption(value);
+    if (!value) {
+      setProject("");
+      return;
+    }
+    if (value === ADD_NEW_PROJECT_OPTION) {
+      setProject((current) => current || "");
+      return;
+    }
+    const match = projectOptions.find((option) => option.id === value);
+    if (match) {
+      setProject(match.id);
+    }
+  };
 
   const hasMessages = messages.length > 0;
 
@@ -69,6 +231,7 @@ export default function BrainstormPage() {
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPromoteMessage(null);
+    setPromoteResult(null);
 
     const trimmed = input.trim();
     if (!trimmed) {
@@ -121,13 +284,22 @@ export default function BrainstormPage() {
     }
   }
 
+  const targetLabel = describeProjectFile("docs/idea-log.md", projectKey);
+  const canPromote = Boolean(!isPromoting && hasMessages && owner.trim() && repo.trim() && branch.trim());
+
   async function handlePromote() {
     if (!hasMessages) {
       return;
     }
 
+    if (!owner.trim() || !repo.trim()) {
+      setError({ title: "Connect a repository", detail: "Select an owner and repo before promoting your idea log." });
+      return;
+    }
+
     setIsPromoting(true);
     setPromoteMessage(null);
+    setPromoteResult(null);
     setError(null);
 
     try {
@@ -141,25 +313,65 @@ export default function BrainstormPage() {
       const response = await fetch("/api/brainstorm/promote", {
         method: "POST",
         headers,
-        body: JSON.stringify({ conversationId, messages }),
+        body: JSON.stringify({
+          conversationId,
+          messages,
+          owner,
+          repo,
+          branch: branch || "main",
+          project: project || undefined,
+          openAsPr,
+        }),
       });
 
-      if (!response.ok) {
-        const detail = await response.json().catch(() => ({}));
-        const title = typeof detail.error === "string" ? detail.error : "Failed to promote idea to project.";
-        const info = typeof detail.detail === "string" ? detail.detail : undefined;
+      const detail = (await response.json().catch(() => ({}))) as PromoteResponse;
+
+      if (!response.ok || !detail?.ok) {
+        const title = typeof detail?.error === "string" ? detail.error : "Failed to promote idea to project.";
+        const info = typeof detail?.detail === "string" ? detail.detail : undefined;
         setError({ title, detail: info });
         return;
       }
 
-      setPromoteMessage("Idea log exported to docs/idea-log.md. You can now turn this into a roadmap.");
-      setHandoffPath("docs/idea-log.md");
+      const label = detail.label ?? targetLabel;
+      const basePath = detail.path ?? "docs/idea-log.md";
+      const baseBranch = detail.branch ?? (branch || "main");
+      const resolvedBranch = detail.promotedBranch || baseBranch;
+      const projectValue = detail.project ?? (projectKey ?? null);
+      const success: PromoteSuccess = {
+        path: basePath,
+        label,
+        owner: detail.owner ?? owner,
+        repo: detail.repo ?? repo,
+        branch: baseBranch,
+        promotedBranch: resolvedBranch,
+        project: projectValue,
+        prUrl: detail.prUrl,
+        pullRequestNumber: detail.pullRequestNumber,
+      };
+
+      setPromoteResult(success);
+      setHandoffPath(basePath);
+
+      if (detail.prUrl) {
+        const prLabel = detail.pullRequestNumber ? `PR #${detail.pullRequestNumber}` : "Pull request";
+        setPromoteMessage(`${prLabel} opened for ${label}.`);
+      } else {
+        setPromoteMessage(`${label} updated on ${resolvedBranch}.`);
+      }
 
       try {
         const payload: WizardHandoffPayload = {
-          path: "docs/idea-log.md",
-          label: "docs/idea-log.md",
+          path: basePath,
+          label,
           content: formatTranscript(messages),
+          owner: success.owner,
+          repo: success.repo,
+          branch: baseBranch,
+          promotedBranch: resolvedBranch,
+          project: projectValue,
+          prUrl: detail.prUrl,
+          pullRequestNumber: detail.pullRequestNumber,
           createdAt: Date.now(),
         };
         if (typeof window !== "undefined") {
@@ -174,6 +386,30 @@ export default function BrainstormPage() {
       setIsPromoting(false);
     }
   }
+
+  const conceptLink = useMemo(() => {
+    if (!handoffPath) {
+      return null;
+    }
+    const params = new URLSearchParams({ handoff: handoffPath });
+    if (promoteResult?.owner) {
+      params.set("owner", promoteResult.owner);
+    } else if (owner.trim()) {
+      params.set("owner", owner.trim());
+    }
+    if (promoteResult?.repo) {
+      params.set("repo", promoteResult.repo);
+    } else if (repo.trim()) {
+      params.set("repo", repo.trim());
+    }
+    if (branch.trim()) {
+      params.set("branch", branch.trim());
+    }
+    if (project.trim()) {
+      params.set("project", project.trim());
+    }
+    return `/wizard/concept/workspace?${params.toString()}`;
+  }, [handoffPath, promoteResult, owner, repo, branch, project]);
 
   return (
     <section className="tw-space-y-8">
@@ -190,18 +426,134 @@ export default function BrainstormPage() {
           Capture every spark in a persistent chat, let AI riff with you, and convert the best ideas into roadmap-ready context.
         </p>
         <div className="tw-flex tw-flex-wrap tw-gap-3">
+          <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+            {openAiConfigured ? "OpenAI ready" : "Add an OpenAI key in Settings"}
+          </span>
+          <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+            {githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings"}
+          </span>
+        </div>
+      </div>
+
+      <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6">
+        <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
+          <div className="tw-space-y-1">
+            <h2 className="tw-text-base tw-font-semibold tw-text-slate-100">Promote this brainstorm into your repo</h2>
+            <p className="tw-text-xs tw-text-slate-400">
+              Exports append to <code className="tw-text-[11px]">{targetLabel}</code> so the next playbook can import it.
+            </p>
+          </div>
           <button
             type="button"
             className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-sm tw-font-medium tw-text-slate-100 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-700 disabled:tw-opacity-60"
             onClick={handlePromote}
-            disabled={!hasMessages || isPromoting}
+            disabled={!canPromote || isPromoting}
           >
-            {isPromoting ? "Exporting…" : "Promote to Project"}
+            {isPromoting ? "Promoting…" : openAsPr ? "Promote via PR" : "Promote to Project"}
           </button>
-          <span className="tw-text-sm tw-text-slate-400">
-            Each turn is saved to <code className="tw-text-xs">/tmp/ideas</code> so you can reuse the transcript later.
-          </span>
-      </div>
+        </div>
+
+        <div className="tw-grid tw-gap-3 md:tw-grid-cols-2 xl:tw-grid-cols-4">
+          <label className="tw-flex tw-flex-col tw-gap-1">
+            <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Linked repository</span>
+            <select
+              value={selectedRepoId}
+              onChange={handleRepoSelect}
+              className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+            >
+              <option value={ADD_NEW_REPO_OPTION}>Add new repo…</option>
+              {repoEntries.map((entry) => {
+                const label = entry.displayName?.trim() || `${entry.owner}/${entry.repo}`;
+                return (
+                  <option key={entry.id} value={entry.id}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+          <label className="tw-flex tw-flex-col tw-gap-1">
+            <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Branch</span>
+            <input
+              value={branch}
+              onChange={(event) => setBranch(event.target.value)}
+              placeholder="main"
+              className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+            />
+          </label>
+          <label className="tw-flex tw-flex-col tw-gap-1">
+            <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Project (optional)</span>
+            <select
+              value={selectedProjectOption}
+              onChange={handleProjectSelect}
+              className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+            >
+              <option value="">Use repo defaults</option>
+              {projectOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+              <option value={ADD_NEW_PROJECT_OPTION}>Add new project…</option>
+            </select>
+          </label>
+          <div className="tw-flex tw-flex-col tw-gap-1">
+            <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Pull request</span>
+            <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-xs tw-font-medium tw-text-slate-200">
+              <input
+                type="checkbox"
+                checked={openAsPr}
+                onChange={(event) => setOpenAsPr(event.target.checked)}
+                className="tw-h-3.5 tw-w-3.5 tw-rounded tw-border tw-border-slate-700 tw-bg-slate-900 tw-text-emerald-400 focus:tw-ring-emerald-400"
+              />
+              <span>Open as PR</span>
+            </label>
+          </div>
+        </div>
+
+        {selectedRepoId === ADD_NEW_REPO_OPTION && (
+          <div className="tw-grid tw-gap-3 md:tw-grid-cols-2">
+            <label className="tw-flex tw-flex-col tw-gap-1">
+              <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Owner</span>
+              <input
+                value={owner}
+                onChange={(event) => {
+                  setOwner(event.target.value);
+                  setSelectedRepoId(ADD_NEW_REPO_OPTION);
+                }}
+                placeholder="acme-co"
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+              />
+            </label>
+            <label className="tw-flex tw-flex-col tw-gap-1">
+              <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Repository</span>
+              <input
+                value={repo}
+                onChange={(event) => {
+                  setRepo(event.target.value);
+                  setSelectedRepoId(ADD_NEW_REPO_OPTION);
+                }}
+                placeholder="product-app"
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+              />
+            </label>
+          </div>
+        )}
+
+        {selectedProjectOption === ADD_NEW_PROJECT_OPTION && (
+          <label className="tw-flex tw-flex-col tw-gap-1">
+            <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Project slug</span>
+            <input
+              value={project}
+              onChange={(event) => {
+                setProject(event.target.value);
+                setSelectedProjectOption(ADD_NEW_PROJECT_OPTION);
+              }}
+              placeholder="growth-experiments"
+              className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+            />
+          </label>
+        )}
       </div>
 
       {error && (
@@ -211,23 +563,41 @@ export default function BrainstormPage() {
         </div>
       )}
 
-      {promoteMessage && (
-        <div className="tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4 tw-text-sm tw-text-emerald-200 tw-space-y-2">
+      {promoteMessage && promoteResult && (
+        <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-p-4 tw-text-sm tw-text-emerald-200">
           <p>{promoteMessage}</p>
-          {handoffPath && (
-            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
+          <div className="tw-flex tw-flex-wrap tw-gap-3 tw-text-xs tw-text-emerald-100/80">
+            <span>
+              Repo <code className="tw-text-[11px]">{promoteResult.owner}/{promoteResult.repo}</code>
+            </span>
+            <span>
+              File <code className="tw-text-[11px]">{promoteResult.label}</code>
+            </span>
+            <span>
+              Branch <code className="tw-text-[11px]">{promoteResult.promotedBranch}</code>
+            </span>
+          </div>
+          <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
+            {conceptLink && (
               <Link
-                href={`/wizard/concept/workspace?handoff=${encodeURIComponent(handoffPath)}`}
+                href={conceptLink}
                 className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400 tw-bg-emerald-500/20 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-emerald-100 hover:tw-border-emerald-300 hover:tw-text-white"
               >
                 Continue in roadmap drafting workspace
                 <span aria-hidden="true">→</span>
               </Link>
-              <span className="tw-text-xs tw-text-emerald-100/80">
-                The concept step will pre-load <code className="tw-text-[11px]">{handoffPath}</code> for you.
-              </span>
-            </div>
-          )}
+            )}
+            {promoteResult.prUrl && (
+              <a
+                href={promoteResult.prUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-300/60 tw-bg-emerald-500/20 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-emerald-100 hover:tw-border-emerald-200 hover:tw-text-white"
+              >
+                Review pull request
+              </a>
+            )}
+          </div>
         </div>
       )}
 
