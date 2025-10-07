@@ -134,19 +134,39 @@ function normalizeRoadmapContent(raw: string) {
     trimmed.match(/```(?:yaml|yml)?\s*\n([\s\S]*?)```/i) ??
     trimmed.match(/~~~(?:yaml|yml)?\s*\n([\s\S]*?)~~~/i);
 
-  const initialCandidate = fenceMatch ? fenceMatch[1].trim() : trimmed;
-  const lines = initialCandidate.split(/\r?\n/);
+  const initialCandidate = (fenceMatch ? fenceMatch[1] : trimmed).trim();
+  if (!initialCandidate) {
+    return "";
+  }
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const subset = lines.slice(index).join("\n").trim();
-    if (!subset) {
-      continue;
+  const lines = initialCandidate.split(/\r?\n/);
+  const attempted = new Set<string>();
+
+  const tryCandidate = (value: string) => {
+    const next = value.trim();
+    if (!next || attempted.has(next)) {
+      return null;
     }
+    attempted.add(next);
     try {
-      yaml.load(subset);
-      return subset;
+      yaml.load(next);
+      return next;
     } catch (err) {
-      // Ignore and try the next subset.
+      return null;
+    }
+  };
+
+  const direct = tryCandidate(initialCandidate);
+  if (direct) {
+    return direct;
+  }
+
+  for (let start = 0; start < lines.length; start += 1) {
+    for (let end = lines.length; end > start; end -= 1) {
+      const subset = tryCandidate(lines.slice(start, end).join("\n"));
+      if (subset) {
+        return subset;
+      }
     }
   }
 
