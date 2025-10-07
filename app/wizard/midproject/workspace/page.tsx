@@ -1,10 +1,12 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import StatusGrid from "@/components/StatusGrid";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { ROADMAP_HANDOFF_KEY, type RoadmapWizardHandOffPayload } from "@/lib/wizard-handoff";
 import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
@@ -56,7 +58,7 @@ type ContextPack = {
 const ADD_NEW_REPO_OPTION = "__add_new_repo__";
 const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
 
-export default function MidProjectSyncWorkspace() {
+function MidProjectSyncWorkspaceInner() {
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("main");
@@ -67,6 +69,7 @@ export default function MidProjectSyncWorkspace() {
   const [projectOverride, setProjectOverride] = useState("");
   const [probeCustomized, setProbeCustomized] = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
+  const [handoffPrefillApplied, setHandoffPrefillApplied] = useState(false);
 
   const [status, setStatus] = useState<RoadmapStatus | null>(null);
   const [backlog, setBacklog] = useState<BacklogItem[]>([]);
@@ -86,6 +89,7 @@ export default function MidProjectSyncWorkspace() {
 
   const [contextPack, setContextPack] = useState<ContextPack | null>(null);
   const secretsStore = useLocalSecrets();
+  const params = useSearchParams();
 
   const trimmedOwner = owner.trim();
   const trimmedRepo = repo.trim();
@@ -144,6 +148,67 @@ export default function MidProjectSyncWorkspace() {
   const branchParam = branch.trim() || "main";
 
   useEffect(() => {
+    if (handoffPrefillApplied) {
+      return;
+    }
+
+    const paramOwner = params.get("owner")?.trim() ?? "";
+    const paramRepo = params.get("repo")?.trim() ?? "";
+    const paramProject = params.get("project")?.trim() ?? "";
+
+    let stored: RoadmapWizardHandOffPayload | null = null;
+    if (typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem(ROADMAP_HANDOFF_KEY);
+        stored = raw ? (JSON.parse(raw) as RoadmapWizardHandOffPayload) : null;
+      } catch (err) {
+        console.error("Failed to read roadmap handoff for mid-project workspace", err);
+      }
+    }
+
+    const storedOwner = stored?.owner?.trim() ?? "";
+    const storedRepo = stored?.repo?.trim() ?? "";
+    const storedProject =
+      typeof stored?.project === "string" ? stored.project.trim() : "";
+
+    const nextOwner = paramOwner || storedOwner;
+    const nextRepo = paramRepo || storedRepo;
+    const nextProject = paramProject || storedProject;
+
+    if (nextOwner && !owner) {
+      setOwner(nextOwner);
+    }
+    if (nextRepo && !repo) {
+      setRepo(nextRepo);
+    }
+    if (nextProject) {
+      const normalizedProject = normalizeProjectKey(nextProject);
+      if (!projectOverride || projectOverride !== normalizedProject) {
+        setProjectOverride(normalizedProject);
+      }
+      if (projectSelectValue !== ADD_NEW_PROJECT_OPTION) {
+        setProjectSelectValue(ADD_NEW_PROJECT_OPTION);
+      }
+      if (selectedProjectId) {
+        setSelectedProjectId("");
+      }
+    }
+
+    setHandoffPrefillApplied(true);
+  }, [
+    handoffPrefillApplied,
+    owner,
+    params,
+    projectOverride,
+    projectSelectValue,
+    repo,
+    selectedProjectId,
+  ]);
+
+  useEffect(() => {
+    if (!handoffPrefillApplied) {
+      return;
+    }
     if (bootstrapped) return;
     if (!owner && !repo && repoOptions.length) {
       const first = repoOptions[0];
@@ -160,7 +225,46 @@ export default function MidProjectSyncWorkspace() {
       setProjectSelectValue(projectOverride ? ADD_NEW_PROJECT_OPTION : "");
       setBootstrapped(true);
     }
-  }, [bootstrapped, owner, projectOverride, repo, repoOptions]);
+  }, [bootstrapped, handoffPrefillApplied, owner, projectOverride, repo, repoOptions]);
+
+  useEffect(() => {
+    if (!handoffPrefillApplied) {
+      return;
+    }
+    if (!owner || !repo || !repoOptions.length) {
+      return;
+    }
+
+    const trimmedOwner = owner.trim().toLowerCase();
+    const trimmedRepo = repo.trim().toLowerCase();
+    const matchedRepoEntry =
+      repoOptions.find(
+        (entry) =>
+          entry.owner.trim().toLowerCase() === trimmedOwner &&
+          entry.repo.trim().toLowerCase() === trimmedRepo,
+      ) ?? null;
+
+    if (!matchedRepoEntry) {
+      return;
+    }
+
+    if (selectedRepoId !== matchedRepoEntry.id) {
+      setSelectedRepoId(matchedRepoEntry.id);
+      setOwner(matchedRepoEntry.owner);
+      setRepo(matchedRepoEntry.repo);
+    }
+
+    if (projectOverride) {
+      const normalizedOverride = normalizeProjectKey(projectOverride);
+      const existingProject =
+        matchedRepoEntry.projects.find((project) => project.id === normalizedOverride) ?? null;
+      if (existingProject) {
+        setProjectOverride("");
+        setSelectedProjectId(existingProject.id);
+        setProjectSelectValue(existingProject.id);
+      }
+    }
+  }, [handoffPrefillApplied, owner, projectOverride, repo, repoOptions, selectedRepoId]);
 
   useEffect(() => {
     if (projectSelectValue === ADD_NEW_PROJECT_OPTION) {
@@ -965,5 +1069,13 @@ export default function MidProjectSyncWorkspace() {
         </div>
       </section>
     </div>
+  );
+}
+
+export default function MidProjectSyncWorkspace() {
+  return (
+    <Suspense fallback={<div className="tw-px-6 tw-py-10 tw-text-sm tw-text-slate-400">Loading mid-project workspace…</div>}>
+      <MidProjectSyncWorkspaceInner />
+    </Suspense>
   );
 }
