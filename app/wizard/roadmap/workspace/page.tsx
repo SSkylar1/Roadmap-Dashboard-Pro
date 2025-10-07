@@ -14,6 +14,7 @@ import { useSearchParams } from "next/navigation";
 import { load } from "js-yaml";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { ROADMAP_HANDOFF_KEY } from "@/lib/wizard-handoff";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
@@ -47,7 +48,6 @@ type HandoffHint = {
   pullRequestNumber?: number;
 };
 
-const ROADMAP_HANDOFF_KEY = "wizard:handoff:roadmap";
 const ADD_NEW_REPO_OPTION = "__add_new_repo__";
 const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
 
