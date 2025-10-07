@@ -16,6 +16,7 @@ import yaml from "js-yaml";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
+import { CONCEPT_HANDOFF_KEY, ROADMAP_HANDOFF_KEY } from "@/lib/wizard-handoff";
 
 type ErrorState = { title: string; detail?: string } | null;
 type SuccessState = {
@@ -55,8 +56,6 @@ type HandoffHint = {
   pullRequestNumber?: number;
 };
 
-const CONCEPT_HANDOFF_KEY = "wizard:handoff:concept";
-const ROADMAP_HANDOFF_KEY = "wizard:handoff:roadmap";
 const ADD_NEW_REPO_OPTION = "__add_new_repo__";
 const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
 
