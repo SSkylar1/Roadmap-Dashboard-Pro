@@ -4,6 +4,7 @@ import {
   ChangeEvent,
   FormEvent,
   Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -25,6 +26,7 @@ type SuccessState = {
   prUrl?: string;
   pullRequestNumber?: number;
   path?: string;
+  project?: string;
 } | null;
 
 type UploadState = {
@@ -56,6 +58,13 @@ type ImportResponse = {
   branch?: string;
   prUrl?: string;
   pullRequestNumber?: number;
+  error?: string;
+  detail?: string;
+};
+
+type RunResponse = {
+  ok?: boolean;
+  wrote?: string[];
   error?: string;
   detail?: string;
 };
@@ -97,6 +106,10 @@ function RoadmapProvisionerInner() {
   const secrets = useResolvedSecrets(owner, repo, project || undefined);
   const githubConfigured = Boolean(secrets.githubPat);
   const [openAsPr, setOpenAsPr] = useState(false);
+  const [isRunningRun, setIsRunningRun] = useState(false);
+  const [runArtifacts, setRunArtifacts] = useState<string[]>([]);
+  const [runNotice, setRunNotice] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -199,12 +212,33 @@ function RoadmapProvisionerInner() {
   const roadmapPreview = useMemo(() => roadmap.trim(), [roadmap]);
   const hasRoadmap = Boolean(roadmapPreview);
   const projectKey = useMemo(() => normalizeProjectKey(project), [project]);
-  const roadmapPath = describeProjectFile("docs/roadmap.yml", projectKey);
-  const infraPath = describeProjectFile("docs/infra-facts.md", projectKey);
-  const stackPath = describeProjectFile("docs/tech-stack.yml", projectKey);
-  const workflowPath = describeProjectFile(".github/workflows/roadmap.yml", projectKey);
+  const successProjectKey = useMemo(() => normalizeProjectKey(success?.project), [success?.project]);
+  const effectiveProjectKey = successProjectKey ?? projectKey;
+  const roadmapPath = describeProjectFile("docs/roadmap.yml", effectiveProjectKey);
+  const infraPath = describeProjectFile("docs/infra-facts.md", effectiveProjectKey);
+  const stackPath = describeProjectFile("docs/tech-stack.yml", effectiveProjectKey);
+  const workflowPath = describeProjectFile(".github/workflows/roadmap.yml", effectiveProjectKey);
+  const statusPath = describeProjectFile("docs/roadmap-status.json", effectiveProjectKey);
+  const planPath = describeProjectFile("docs/project-plan.md", effectiveProjectKey);
   const projectOptions = useMemo(() => matchedRepoEntry?.projects ?? [], [matchedRepoEntry]);
   const canSubmit = Boolean(!isSubmitting && owner && repo && branch && hasRoadmap);
+  const normalizedRunArtifacts = useMemo(
+    () => runArtifacts.map((artifact) => artifact.replace(/\s*\(FAILED:.*\)$/i, "")),
+    [runArtifacts],
+  );
+  const distinctRunArtifacts = useMemo(() => {
+    const seen = new Set<string>();
+    const distinct: string[] = [];
+    for (const artifact of normalizedRunArtifacts) {
+      const key = artifact.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      distinct.push(artifact);
+    }
+    return distinct;
+  }, [normalizedRunArtifacts]);
+  const hasStatusArtifact = useMemo(() => distinctRunArtifacts.includes(statusPath), [distinctRunArtifacts, statusPath]);
+  const hasPlanArtifact = useMemo(() => distinctRunArtifacts.includes(planPath), [distinctRunArtifacts, planPath]);
 
   useEffect(() => {
     const nextRepoId = matchedRepoEntry?.id ?? ADD_NEW_REPO_OPTION;
@@ -414,6 +448,67 @@ function RoadmapProvisionerInner() {
     }
   }
 
+  const runRoadmapStatus = useCallback(
+    async ({ owner: runOwner, repo: runRepo, branch: runBranch, project: runProject }: {
+      owner: string;
+      repo: string;
+      branch: string;
+      project?: string;
+    }) => {
+      setIsRunningRun(true);
+      setRunError(null);
+      setRunNotice(null);
+      setRunArtifacts([]);
+      try {
+        const headers: HeadersInit = { "Content-Type": "application/json" };
+        if (secrets.githubPat) {
+          headers["x-github-pat"] = secrets.githubPat;
+        }
+        const body: Record<string, string> = {
+          owner: runOwner,
+          repo: runRepo,
+          branch: runBranch,
+        };
+        if (runProject) {
+          body.project = runProject;
+        }
+        const response = await fetch("/api/run", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        });
+        const payload = (await response.json().catch(() => ({}))) as RunResponse;
+        if (!response.ok || payload?.ok === false || payload?.error) {
+          const detail = typeof payload?.detail === "string" && payload.detail.trim() ? payload.detail : null;
+          setRunError(detail ? `${payload?.error ?? "Failed to refresh status"}: ${detail}` : payload?.error ?? "Failed to refresh status");
+          setRunArtifacts(payload?.wrote ?? []);
+          return;
+        }
+        setRunArtifacts(payload?.wrote ?? []);
+        setRunNotice("Dashboard prerequisites committed.");
+      } catch (err: any) {
+        setRunError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setIsRunningRun(false);
+      }
+    },
+    [secrets.githubPat],
+  );
+
+  const handleRunRetry = useCallback(() => {
+    if (!success) {
+      return;
+    }
+    const retryBranch = success.branch?.trim() || branch.trim() || "main";
+    const retryProject = success.project?.trim() || undefined;
+    void runRoadmapStatus({
+      owner: success.owner.trim(),
+      repo: success.repo.trim(),
+      branch: retryBranch,
+      project: retryProject,
+    });
+  }, [branch, runRoadmapStatus, success]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) {
@@ -424,8 +519,17 @@ function RoadmapProvisionerInner() {
     setIsSubmitting(true);
     setError(null);
     setSuccess(null);
+    setRunArtifacts([]);
+    setRunNotice(null);
+    setRunError(null);
 
     try {
+      const trimmedOwner = owner.trim();
+      const trimmedRepo = repo.trim();
+      const trimmedBranch = branch.trim() || "main";
+      const trimmedProject = project.trim();
+      const projectPayload = trimmedProject ? trimmedProject : undefined;
+
       const headers: HeadersInit = { "Content-Type": "application/json" };
       if (secrets.githubPat) {
         headers["x-github-pat"] = secrets.githubPat;
@@ -435,7 +539,13 @@ function RoadmapProvisionerInner() {
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify({ owner, repo, branch, roadmap, project: project || undefined }),
+        body: JSON.stringify({
+          owner: trimmedOwner,
+          repo: trimmedRepo,
+          branch: trimmedBranch,
+          roadmap,
+          project: projectPayload,
+        }),
       });
 
       const payload = (await response.json().catch(() => ({}))) as ImportResponse;
@@ -445,14 +555,24 @@ function RoadmapProvisionerInner() {
         return;
       }
 
+      const followupBranch = payload.branch?.trim() || trimmedBranch;
+
       setSuccess({
         created: payload.created ?? [],
         skipped: payload.skipped ?? [],
-        owner,
-        repo,
-        branch: payload.branch ?? branch,
+        owner: trimmedOwner,
+        repo: trimmedRepo,
+        branch: followupBranch,
         prUrl: payload.prUrl,
         pullRequestNumber: payload.pullRequestNumber,
+        project: projectPayload,
+      });
+
+      void runRoadmapStatus({
+        owner: trimmedOwner,
+        repo: trimmedRepo,
+        branch: followupBranch,
+        project: projectPayload,
       });
     } catch (err: any) {
       setError({ title: "Request failed", detail: err instanceof Error ? err.message : String(err) });
@@ -461,7 +581,8 @@ function RoadmapProvisionerInner() {
     }
   }
 
-  const projectQuery = projectKey ? `&project=${encodeURIComponent(projectKey)}` : "";
+  const projectQueryKey = effectiveProjectKey ?? undefined;
+  const projectQuery = projectQueryKey ? `&project=${encodeURIComponent(projectQueryKey)}` : "";
   const dashboardHref = success && success.owner && success.repo
     ? `/dashboard?owner=${encodeURIComponent(success.owner.trim())}&repo=${encodeURIComponent(success.repo.trim())}${projectQuery}`
     : null;
@@ -661,19 +782,76 @@ function RoadmapProvisionerInner() {
           ) : null}
 
           {success ? (
-            <div className="tw-rounded-2xl tw-border tw-border-emerald-700 tw-bg-emerald-950/40 tw-p-4 tw-space-y-3">
-              <div>
+            <div className="tw-rounded-2xl tw-border tw-border-emerald-700 tw-bg-emerald-950/40 tw-p-4 tw-space-y-4">
+              <div className="tw-space-y-1">
                 <h3 className="tw-text-sm tw-font-semibold tw-text-emerald-200">Roadmap imported successfully</h3>
                 <p className="tw-text-xs tw-text-emerald-100">
                   Created {success.created.length} files
                   {success.skipped.length ? `, skipped ${success.skipped.length} existing` : ""}.
                 </p>
                 {success.branch ? (
-                  <p className="tw-mt-1 tw-text-xs tw-text-emerald-200/80">
+                  <p className="tw-text-xs tw-text-emerald-200/80">
                     Changes pushed to <code className="tw-font-mono tw-text-[11px]">{success.branch}</code>.
                   </p>
                 ) : null}
+                <p className="tw-text-xs tw-text-emerald-100/80">
+                  The follow-up run commits <code className="tw-font-mono tw-text-[11px]">{statusPath}</code> and <code className="tw-font-mono tw-text-[11px]">{planPath}</code> so the dashboard loads immediately.
+                </p>
               </div>
+
+              <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-900/70 tw-p-4">
+                <div className="tw-space-y-1">
+                  <p className="tw-text-sm tw-font-semibold tw-text-slate-100">Status &amp; plan follow-up</p>
+                  <p className="tw-text-xs tw-text-slate-300">
+                    We automatically run <code className="tw-font-mono tw-text-[11px]">/api/run</code> against this branch to publish the dashboard prerequisites.
+                  </p>
+                </div>
+                {isRunningRun ? (
+                  <div className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400/40 tw-bg-emerald-500/10 tw-px-3 tw-py-1.5">
+                    <span className="tw-h-3 tw-w-3 tw-animate-spin tw-rounded-full tw-border-2 tw-border-emerald-300 tw-border-t-transparent" />
+                    <span className="tw-text-xs tw-font-semibold tw-text-emerald-100">Generating dashboard artifacts…</span>
+                  </div>
+                ) : null}
+                {runNotice ? (
+                  <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-px-3 tw-py-2">
+                    <p className="tw-text-xs tw-font-semibold tw-text-emerald-100">{runNotice}</p>
+                    <ul className="tw-space-y-1">
+                      <li className="tw-flex tw-items-center tw-gap-2">
+                        <span className="tw-text-xs">{hasStatusArtifact ? "✅" : "•"}</span>
+                        <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{statusPath}</code>
+                      </li>
+                      <li className="tw-flex tw-items-center tw-gap-2">
+                        <span className="tw-text-xs">{hasPlanArtifact ? "✅" : "•"}</span>
+                        <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{planPath}</code>
+                      </li>
+                    </ul>
+                    {distinctRunArtifacts.length > 2 ? (
+                      <p className="tw-text-[11px] tw-text-emerald-100/70">
+                        Additional artifacts: {distinctRunArtifacts.filter((artifact) => artifact !== statusPath && artifact !== planPath).join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {runError ? (
+                  <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-rose-700 tw-bg-rose-900/30 tw-px-3 tw-py-2">
+                    <div>
+                      <p className="tw-text-xs tw-font-semibold tw-text-rose-200">Status refresh failed</p>
+                      <p className="tw-text-[11px] tw-text-rose-200/80">{runError}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRunRetry}
+                      className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-rose-500 tw-bg-rose-500/10 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-rose-100 hover:tw-bg-rose-500/20"
+                    >
+                      Retry status run
+                    </button>
+                  </div>
+                ) : null}
+                {!isRunningRun && !runNotice && !runError ? (
+                  <p className="tw-text-xs tw-text-slate-400">Awaiting status refresh…</p>
+                ) : null}
+              </div>
+
               {success.prUrl ? (
                 <a
                   href={success.prUrl}
@@ -717,7 +895,7 @@ function RoadmapProvisionerInner() {
             <p className="tw-text-xs tw-text-slate-400">
               {openAsPr
                 ? "Creates a new branch and opens a PR with the roadmap scaffolding."
-                : `Commits docs/roadmap.yml and scaffolding directly to ${success?.branch ?? branch}.`}
+                : `Commits docs/roadmap.yml, scaffolding, and status artifacts directly to ${success?.branch ?? branch}.`}
             </p>
           </div>
         </section>
