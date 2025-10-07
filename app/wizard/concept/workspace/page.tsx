@@ -17,7 +17,12 @@ import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ErrorState = { title: string; detail?: string } | null;
-type SuccessState = { message: string; prUrl?: string; handoffPath?: string; branch?: string } | null;
+type SuccessState = {
+  message: string;
+  prUrl?: string;
+  handoffPath?: string;
+  promotedBranch?: string;
+} | null;
 
 type GenerateResponse = { roadmap: string };
 
@@ -153,6 +158,7 @@ function ConceptWizardPageInner() {
   const [success, setSuccess] = useState<SuccessState>(null);
   const [openAsPr, setOpenAsPr] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [promotedBranch, setPromotedBranch] = useState<string | null>(null);
   const previewRef = useRef<HTMLPreElement | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const secretsStore = useLocalSecrets();
@@ -353,11 +359,7 @@ function ConceptWizardPageInner() {
     }
 
     const label = describeProjectFile("docs/roadmap.yml", projectKey);
-    const ownerParam = owner.trim();
-    const repoParam = repo.trim();
-    const branchSource = success?.branch ?? branch;
-    const branchParam = typeof branchSource === "string" ? branchSource.trim() : "";
-    const payload: HandoffHint & { createdAt: number } = {
+    const payload = {
       path: label,
       label,
       content: trimmed,
@@ -365,44 +367,50 @@ function ConceptWizardPageInner() {
       repo: repoParam || undefined,
       branch: branchParam || undefined,
       project: projectKey ?? null,
+      ...(promotedBranch ? { promotedBranch } : {}),
       createdAt: Date.now(),
-    };
+    } satisfies HandoffHint & { createdAt: number };
 
     try {
       window.localStorage.setItem(ROADMAP_HANDOFF_KEY, JSON.stringify(payload));
     } catch (err) {
       console.error("Failed to persist roadmap handoff", err);
     }
-  }, [roadmap, projectKey, owner, repo, branch, success?.branch]);
+  }, [roadmap, projectKey, owner, repo, branch, promotedBranch]);
 
   const canGenerate = Boolean(!isGenerating && combinedPrompt);
   const targetPath = describeProjectFile("docs/roadmap.yml", projectKey);
   const canCommit = Boolean(!isCommitting && roadmap.trim() && owner && repo && branch);
-  const roadmapLink = useMemo(() => {
+  const roadmapLinkHref = useMemo(() => {
     if (!success?.handoffPath) {
       return null;
     }
+
     const params = new URLSearchParams();
     params.set("handoff", success.handoffPath);
-    const ownerParam = owner.trim();
-    if (ownerParam) {
-      params.set("owner", ownerParam);
+
+    const trimmedOwner = owner.trim();
+    if (trimmedOwner) {
+      params.set("owner", trimmedOwner);
     }
-    const repoParam = repo.trim();
-    if (repoParam) {
-      params.set("repo", repoParam);
+
+    const trimmedRepo = repo.trim();
+    if (trimmedRepo) {
+      params.set("repo", trimmedRepo);
     }
-    const branchSource = success.branch ?? branch;
-    const branchParam = typeof branchSource === "string" ? branchSource.trim() : "";
-    if (branchParam) {
-      params.set("branch", branchParam);
+
+    const branchSource = success.promotedBranch ?? promotedBranch ?? branch;
+    const trimmedBranch = branchSource ? branchSource.trim() : "";
+    if (trimmedBranch) {
+      params.set("branch", trimmedBranch);
     }
-    const projectParam = projectKey ?? "";
-    if (projectParam) {
-      params.set("project", projectParam);
+
+    if (projectKey) {
+      params.set("project", projectKey);
     }
+
     return `/wizard/roadmap/workspace?${params.toString()}`;
-  }, [branch, owner, projectKey, repo, success?.branch, success?.handoffPath]);
+  }, [success, owner, repo, branch, promotedBranch, projectKey]);
 
   async function onGenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -518,7 +526,8 @@ function ConceptWizardPageInner() {
         const params = new URLSearchParams({ path: handoffHint.path });
         params.set("owner", fetchOwner);
         params.set("repo", fetchRepo);
-        const fetchBranch = handoffHint.promotedBranch || handoffHint.branch || branch || "main";
+        const fetchBranchSource = handoffHint.promotedBranch || handoffHint.branch || branch || "main";
+        const fetchBranch = fetchBranchSource.trim();
         if (fetchBranch) {
           params.set("branch", fetchBranch);
         }
@@ -624,7 +633,10 @@ function ConceptWizardPageInner() {
 
       if (detail.ok) {
         const committedPath = typeof detail.path === "string" ? detail.path : targetPath;
-        const targetBranch = detail.branch ?? branch;
+        const fallbackBranch = branch.trim() || "main";
+        const resolvedBranch =
+          (typeof detail.branch === "string" && detail.branch.trim()) || fallbackBranch;
+        setPromotedBranch(resolvedBranch);
         if (openAsPr) {
           if (detail.prUrl) {
             const label = detail.pullRequestNumber ? `PR #${detail.pullRequestNumber}` : "Pull request";
@@ -632,17 +644,21 @@ function ConceptWizardPageInner() {
               message: `${label} opened for ${committedPath}.`,
               prUrl: detail.prUrl,
               handoffPath: committedPath,
-              branch: targetBranch,
+              promotedBranch: resolvedBranch,
             });
           } else {
             setSuccess({
               message: `Pull request opened for ${committedPath}. Check GitHub to review and merge.`,
               handoffPath: committedPath,
-              branch: targetBranch,
+              promotedBranch: resolvedBranch,
             });
           }
         } else {
-          setSuccess({ message: `${committedPath} committed to ${targetBranch}.`, handoffPath: committedPath, branch: targetBranch });
+          setSuccess({
+            message: `${committedPath} committed to ${resolvedBranch}.`,
+            handoffPath: committedPath,
+            promotedBranch: resolvedBranch,
+          });
         }
       } else {
         setError({ title: detail?.error ?? "Unexpected response", detail: detail?.detail });
@@ -787,9 +803,9 @@ function ConceptWizardPageInner() {
                   <span aria-hidden="true">↗</span>
                 </a>
               )}
-              {roadmapLink && (
+              {roadmapLinkHref && (
                 <Link
-                  href={roadmapLink}
+                  href={roadmapLinkHref}
                   className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400 tw-bg-emerald-500/20 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-emerald-100 hover:tw-border-emerald-300 hover:tw-text-white"
                 >
                   Continue to provisioning workspace
