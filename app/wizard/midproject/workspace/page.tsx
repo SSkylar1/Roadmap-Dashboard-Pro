@@ -155,6 +155,7 @@ function MidProjectSyncWorkspaceInner() {
     const paramOwner = params.get("owner")?.trim() ?? "";
     const paramRepo = params.get("repo")?.trim() ?? "";
     const paramProject = params.get("project")?.trim() ?? "";
+    const paramBranch = params.get("branch")?.trim() ?? "";
 
     let stored: RoadmapWizardHandOffPayload | null = null;
     if (typeof window !== "undefined") {
@@ -170,10 +171,16 @@ function MidProjectSyncWorkspaceInner() {
     const storedRepo = stored?.repo?.trim() ?? "";
     const storedProject =
       typeof stored?.project === "string" ? stored.project.trim() : "";
+    const storedPromotedBranch =
+      typeof stored?.promotedBranch === "string" ? stored.promotedBranch.trim() : "";
+    const storedBranch =
+      typeof stored?.branch === "string" ? stored.branch.trim() : "";
 
     const nextOwner = paramOwner || storedOwner;
     const nextRepo = paramRepo || storedRepo;
     const nextProject = paramProject || storedProject;
+    const resolvedBranchInput = paramBranch || storedPromotedBranch || storedBranch || branch;
+    const resolvedBranch = resolvedBranchInput.trim() || "main";
 
     if (nextOwner && !owner) {
       setOwner(nextOwner);
@@ -198,6 +205,7 @@ function MidProjectSyncWorkspaceInner() {
       }
     }
 
+    setBranch(resolvedBranch);
     setHandoffPrefillApplied(true);
   }, [
     handoffPrefillApplied,
@@ -207,6 +215,7 @@ function MidProjectSyncWorkspaceInner() {
     projectSelectValue,
     repo,
     selectedProjectId,
+    branch,
   ]);
 
   useEffect(() => {
@@ -380,7 +389,7 @@ function MidProjectSyncWorkspaceInner() {
     const payload = {
       owner: owner.trim(),
       repo: repo.trim(),
-      branch: branch.trim() || "main",
+      branch: branchParam,
       ...(probeUrl.trim() ? { probeUrl: probeUrl.trim() } : {}),
       ...(projectKey ? { project: projectKey } : {}),
     };
@@ -493,7 +502,7 @@ function MidProjectSyncWorkspaceInner() {
     const payload = {
       owner: owner.trim(),
       repo: repo.trim(),
-      branch: branch.trim() || "main",
+      branch: branchParam,
       ...(probeUrl.trim() ? { probeUrl: probeUrl.trim() } : {}),
       ...(projectKey ? { project: projectKey } : {}),
     };
@@ -517,7 +526,7 @@ function MidProjectSyncWorkspaceInner() {
     } finally {
       setIsDiscovering(false);
     }
-  }, [branch, owner, probeUrl, projectKey, repo, repoSlug, runDiscovery]);
+  }, [branchParam, owner, probeUrl, projectKey, repo, repoSlug, runDiscovery]);
 
   const handleExportContext = useCallback(async () => {
     if (!repoSlug) {
