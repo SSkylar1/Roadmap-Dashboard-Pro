@@ -322,8 +322,8 @@ function RoadmapProvisionerInner() {
       let sizeLabel = "";
 
       if (!content) {
-        const fetchOwner = handoffHint.owner || owner;
-        const fetchRepo = handoffHint.repo || repo;
+        const fetchOwner = (handoffHint.owner || owner || "").trim();
+        const fetchRepo = (handoffHint.repo || repo || "").trim();
         if (!fetchOwner || !fetchRepo) {
           setHandoffError("Provide owner and repo before importing the shared roadmap.");
           return;
@@ -332,7 +332,7 @@ function RoadmapProvisionerInner() {
         const params = new URLSearchParams({ path: handoffHint.path });
         params.set("owner", fetchOwner);
         params.set("repo", fetchRepo);
-        const fetchBranch = handoffHint.promotedBranch || handoffHint.branch || branch || "main";
+        const fetchBranch = (handoffHint.promotedBranch || handoffHint.branch || branch || "main").trim();
         if (fetchBranch) {
           params.set("branch", fetchBranch);
         }
@@ -360,16 +360,17 @@ function RoadmapProvisionerInner() {
         name = payloadLabel ?? (typeof payload.name === "string" ? payload.name : name);
         sizeLabel = typeof payload.sizeLabel === "string" ? payload.sizeLabel : sizeLabel;
         const normalizedPath = typeof payload.path === "string" ? payload.path : handoffHint.path;
-        const baseBranch = handoffHint.branch || branch || "main";
+        const baseBranchValue = handoffHint.branch || branch || "main";
+        const baseBranch = typeof baseBranchValue === "string" ? baseBranchValue.trim() : "";
         const projectForHint = (handoffHint.project ?? fetchProject) || null;
         const updatedHint: HandoffHint = {
           ...handoffHint,
           path: normalizedPath,
           label: payloadLabel ?? name,
           content,
-          owner: fetchOwner,
-          repo: fetchRepo,
-          branch: baseBranch,
+          owner: fetchOwner || undefined,
+          repo: fetchRepo || undefined,
+          branch: baseBranch?.trim() || undefined,
           promotedBranch: fetchBranch,
           project: projectForHint,
         };
