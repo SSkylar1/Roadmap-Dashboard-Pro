@@ -2,10 +2,12 @@
 
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import StatusGrid from "@/components/StatusGrid";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
+import { ROADMAP_HANDOFF_KEY, type StoredRoadmapHandoff } from "@/lib/wizard-handoff";
 
 type ErrorState = { title: string; detail?: string } | null;
 
@@ -57,6 +59,7 @@ const ADD_NEW_REPO_OPTION = "__add_new_repo__";
 const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
 
 export default function MidProjectSyncWorkspace() {
+  const params = useSearchParams();
   const [owner, setOwner] = useState("");
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("main");
@@ -67,6 +70,7 @@ export default function MidProjectSyncWorkspace() {
   const [projectOverride, setProjectOverride] = useState("");
   const [probeCustomized, setProbeCustomized] = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
+  const [handoffChecked, setHandoffChecked] = useState(false);
 
   const [status, setStatus] = useState<RoadmapStatus | null>(null);
   const [backlog, setBacklog] = useState<BacklogItem[]>([]);
@@ -144,7 +148,60 @@ export default function MidProjectSyncWorkspace() {
   const branchParam = branch.trim() || "main";
 
   useEffect(() => {
-    if (bootstrapped) return;
+    if (handoffChecked) {
+      return;
+    }
+
+    const paramOwner = params.get("owner")?.trim() ?? "";
+    const paramRepo = params.get("repo")?.trim() ?? "";
+    const paramProjectRaw =
+      params.get("projectOverride") ?? params.get("project") ?? "";
+    const paramProject = paramProjectRaw.trim();
+    const handoffParam = params.get("handoff") ?? null;
+
+    let storedOwner = "";
+    let storedRepo = "";
+    let storedProject = "";
+
+    if (typeof window !== "undefined") {
+      try {
+        const storedRaw = window.localStorage.getItem(ROADMAP_HANDOFF_KEY);
+        if (storedRaw) {
+          const parsed = JSON.parse(storedRaw) as StoredRoadmapHandoff | null;
+          const matchesHandoff =
+            !handoffParam || !parsed?.path || parsed.path === handoffParam;
+          if (parsed && matchesHandoff) {
+            storedOwner = parsed.owner?.trim() ?? "";
+            storedRepo = parsed.repo?.trim() ?? "";
+            if (typeof parsed.project === "string") {
+              storedProject = parsed.project.trim();
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to read roadmap handoff", err);
+      }
+    }
+
+    const nextOwner = storedOwner || paramOwner;
+    const nextRepo = storedRepo || paramRepo;
+    const nextProject = storedProject || paramProject;
+
+    if (nextOwner) {
+      setOwner(nextOwner);
+    }
+    if (nextRepo) {
+      setRepo(nextRepo);
+    }
+    if (nextProject) {
+      setProjectOverride(nextProject);
+    }
+
+    setHandoffChecked(true);
+  }, [handoffChecked, params]);
+
+  useEffect(() => {
+    if (!handoffChecked || bootstrapped) return;
     if (!owner && !repo && repoOptions.length) {
       const first = repoOptions[0];
       setSelectedRepoId(first.id);
@@ -160,7 +217,7 @@ export default function MidProjectSyncWorkspace() {
       setProjectSelectValue(projectOverride ? ADD_NEW_PROJECT_OPTION : "");
       setBootstrapped(true);
     }
-  }, [bootstrapped, owner, projectOverride, repo, repoOptions]);
+  }, [bootstrapped, handoffChecked, owner, projectOverride, repo, repoOptions]);
 
   useEffect(() => {
     if (projectSelectValue === ADD_NEW_PROJECT_OPTION) {
