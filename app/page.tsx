@@ -2451,6 +2451,7 @@ function DashboardPage() {
     searchOwner,
     searchRepo,
     searchProject,
+    searchProjectParam,
     searchString,
   ]);
 
