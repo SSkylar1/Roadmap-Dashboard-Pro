@@ -70,6 +70,7 @@ type RoadmapItem = {
   done?: boolean;
   note?: string;
   manualKey?: string;
+  manualOverride?: { done?: boolean; note?: string };
 };
 
 type RoadmapWeek = { id?: string; title?: string; items?: RoadmapItem[] };
@@ -112,7 +113,27 @@ function applyManualAdjustments(weeks: any[], manualState: ManualState): any[] {
     const filtered = baseItems
       .map((item: RoadmapItem, itemIndex: number) => ({ item, key: deriveItemKey(item, itemIndex) }))
       .filter(({ key }: { key: string }) => !removedKeys.has(key))
-      .map(({ item, key }) => ({ ...item, manualKey: item?.manualKey ?? key }));
+      .map(({ item, key }) => {
+        const manualKeyValue = item?.manualKey ?? key;
+        const override = (manualWeek.overrides ?? []).find((entry) => entry.key === manualKeyValue);
+        const note = typeof override?.note === "string" ? override.note.trim() : "";
+        const overridePayload =
+          override && (override.done !== undefined || note)
+            ? {
+                ...(override.done !== undefined ? { done: override.done } : {}),
+                ...(note ? { note } : {}),
+              }
+            : null;
+        const next: RoadmapItem = {
+          ...item,
+          manualKey: manualKeyValue,
+          ...(overridePayload ? { manualOverride: overridePayload } : {}),
+        };
+        if (typeof override?.done === "boolean") {
+          next.done = override.done;
+        }
+        return next;
+      });
 
     const manualItems = (manualWeek.added ?? []).map((manualItem) => ({
       id: manualItem.key,

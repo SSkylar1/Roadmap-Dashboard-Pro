@@ -7,9 +7,16 @@ export type ManualItem = {
   done?: boolean;
 };
 
+export type ManualOverride = {
+  key: string;
+  done?: boolean;
+  note?: string;
+};
+
 export type ManualWeekState = {
   added: ManualItem[];
   removed: string[];
+  overrides: ManualOverride[];
 };
 
 export type ManualState = Record<string, ManualWeekState>;
@@ -23,6 +30,7 @@ export function sanitizeManualState(value: unknown): ManualState {
     const weekValue = rawWeek as Partial<ManualWeekState>;
     const addedRaw = Array.isArray(weekValue?.added) ? weekValue.added : [];
     const removedRaw = Array.isArray(weekValue?.removed) ? weekValue.removed : [];
+    const overridesRaw = Array.isArray(weekValue?.overrides) ? weekValue.overrides : [];
     const added = addedRaw.reduce<ManualItem[]>((list, entry) => {
       if (!entry || typeof entry !== "object") return list;
       const item = entry as ManualItem;
@@ -37,9 +45,27 @@ export function sanitizeManualState(value: unknown): ManualState {
     const removed = removedRaw
       .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
       .filter((entry) => entry.length > 0);
+    const overrides = overridesRaw.reduce<ManualOverride[]>((list, entry) => {
+      if (!entry || typeof entry !== "object") return list;
+      const override = entry as ManualOverride;
+      const key = typeof override.key === "string" ? override.key.trim() : "";
+      if (!key) return list;
+      const done = typeof override.done === "boolean" ? override.done : undefined;
+      const note = typeof override.note === "string" ? override.note.trim() : "";
+      const normalized: ManualOverride = {
+        key,
+        ...(done !== undefined ? { done } : {}),
+        ...(note ? { note } : {}),
+      };
+      if (normalized.done === undefined && normalized.note === undefined) {
+        return list;
+      }
+      list.push(normalized);
+      return list;
+    }, []);
 
-    if (added.length > 0 || removed.length > 0) {
-      safe[weekKey] = { added, removed };
+    if (added.length > 0 || removed.length > 0 || overrides.length > 0) {
+      safe[weekKey] = { added, removed, overrides };
     }
   }
 
@@ -47,7 +73,12 @@ export function sanitizeManualState(value: unknown): ManualState {
 }
 
 export function manualStateIsEmpty(state: ManualState): boolean {
-  return Object.keys(state).length === 0;
+  return Object.values(state).every(
+    (week) =>
+      (week?.added?.length ?? 0) === 0 &&
+      (week?.removed?.length ?? 0) === 0 &&
+      (week?.overrides?.length ?? 0) === 0,
+  );
 }
 
 export function normalizeOwner(value: string | undefined | null): string {

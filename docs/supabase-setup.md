@@ -54,7 +54,7 @@ No other roles (e.g., `anon`, `authenticated`) will be able to read secrets, so 
 
 Run [`docs/supabase-roadmap-progress.sql`](./supabase-roadmap-progress.sql) to create the
 `roadmap_manual_state` table. This table lets the dashboard persist manual adjustments (added tasks,
-hidden checklist items, and completion notes) so that future status runs reflect the same edits.
+hidden checklist items, manual completion overrides, and notes) so that future status runs reflect the same edits.
 
 ```bash
 supabase db remote commit --file docs/supabase-roadmap-progress.sql

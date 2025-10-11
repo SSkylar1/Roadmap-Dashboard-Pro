@@ -1,12 +1,5 @@
 import { supabaseDelete, supabaseSelect, supabaseUpsert } from "./supabase-server";
-import {
-  ManualState,
-  manualStateIsEmpty,
-  normalizeOwner,
-  normalizeProjectId,
-  normalizeRepo,
-  sanitizeManualState,
-} from "./manual-state";
+import { ManualState, manualStateIsEmpty, normalizeOwner, normalizeProjectId, normalizeRepo, sanitizeManualState } from "./manual-state";
 
 const TABLE_NAME = "roadmap_manual_state";
 
