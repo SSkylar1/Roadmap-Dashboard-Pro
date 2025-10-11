@@ -20,6 +20,13 @@ import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
+import {
+  type ManualItem,
+  type ManualState,
+  type ManualWeekState,
+  manualStateIsEmpty,
+  sanitizeManualState,
+} from "@/lib/manual-state";
 
 type Check = {
   id?: string;
@@ -65,20 +72,6 @@ type RepoRef = {
   project?: string;
   projectLabel?: string;
 };
-
-type ManualItem = {
-  key: string;
-  name: string;
-  note?: string;
-  done?: boolean;
-};
-
-type ManualWeekState = {
-  added: ManualItem[];
-  removed: string[];
-};
-
-type ManualState = Record<string, ManualWeekState>;
 
 type DecoratedItem = Item & { manualKey?: string; manual?: boolean };
 type DecoratedWeek = Week & { manualKey: string; manualState: ManualWeekState; items?: DecoratedItem[] };
@@ -424,36 +417,6 @@ function normalizeRepoRef(ref: Partial<RepoRef> | RepoRef): RepoRef {
   return { owner, repo, label, ...(project ? { project } : {}), ...(projectLabel ? { projectLabel } : {}) };
 }
 
-function sanitizeManualState(value: unknown): ManualState {
-  const safe: ManualState = {};
-  if (!value || typeof value !== "object") return safe;
-
-  for (const [weekKey, rawWeek] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof weekKey !== "string") continue;
-    const weekValue = rawWeek as Partial<ManualWeekState>;
-    const addedRaw = Array.isArray(weekValue?.added) ? weekValue.added : [];
-    const removedRaw = Array.isArray(weekValue?.removed) ? weekValue.removed : [];
-    const added = addedRaw.reduce<ManualItem[]>((list, entry) => {
-      if (!entry || typeof entry !== "object") return list;
-      const item = entry as ManualItem;
-      const key = typeof item.key === "string" ? item.key : null;
-      const name = typeof item.name === "string" ? item.name : null;
-      if (!key || !name) return list;
-      const note = typeof item.note === "string" ? item.note : undefined;
-      const done = typeof item.done === "boolean" ? item.done : undefined;
-      list.push({ key, name, note, done });
-      return list;
-    }, []);
-    const removed = removedRaw.filter((entry): entry is string => typeof entry === "string");
-
-    if (added.length > 0 || removed.length > 0) {
-      safe[weekKey] = { added, removed };
-    }
-  }
-
-  return safe;
-}
-
 function getWeekKey(week: Week, index: number) {
   return week.id || week.title || `week-${index + 1}`;
 }
@@ -597,12 +560,18 @@ function useStoredRepos() {
 function useManualRoadmap(owner?: string, repo?: string, project?: string | null) {
   const storageKey = owner && repo ? `${MANUAL_STORAGE_PREFIX}${repoKey(owner, repo, project)}` : null;
   const [state, setState] = useState<ManualState>({});
-  const [ready, setReady] = useState(false);
+  const [localReady, setLocalReady] = useState(false);
+  const [remoteChecked, setRemoteChecked] = useState(false);
+  const [remoteAvailable, setRemoteAvailable] = useState(false);
+
+  const projectKey = normalizeProjectKey(project ?? undefined);
+  const endpoint = owner && repo ? `/api/manual/${owner}/${repo}${projectKey ? `?project=${projectKey}` : ""}` : null;
+  const allowRemoteSync = Boolean(endpoint && remoteChecked && remoteAvailable);
 
   useEffect(() => {
     if (!storageKey) {
       setState({});
-      setReady(false);
+      setLocalReady(false);
       return;
     }
     if (typeof window === "undefined") return;
@@ -618,30 +587,89 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
     } catch {
       setState({});
     }
-    setReady(true);
+    setLocalReady(true);
   }, [storageKey]);
+
+  useEffect(() => {
+    if (!endpoint) {
+      setRemoteChecked(false);
+      setRemoteAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    setRemoteChecked(false);
+    fetch(endpoint, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          const message = body?.error || response.statusText || "Failed to load manual state";
+          throw new Error(message);
+        }
+        return response.json();
+      })
+      .then((json: { available?: boolean; state?: unknown }) => {
+        if (cancelled) return;
+        if (json?.available) {
+          const sanitized = sanitizeManualState(json.state);
+          setState(sanitized);
+          if (storageKey && typeof window !== "undefined") {
+            if (manualStateIsEmpty(sanitized)) {
+              window.localStorage.removeItem(storageKey);
+            } else {
+              window.localStorage.setItem(storageKey, JSON.stringify(sanitized));
+            }
+          }
+          setRemoteAvailable(true);
+        } else {
+          setRemoteAvailable(false);
+        }
+        setRemoteChecked(true);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Failed to load remote manual state", error);
+        setRemoteAvailable(false);
+        setRemoteChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [endpoint, storageKey]);
+
+  const persistRemote = useCallback(
+    (next: ManualState) => {
+      if (!allowRemoteSync || !endpoint) return;
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state: next }),
+      }).catch((error) => {
+        console.error("Failed to persist manual state", error);
+      });
+    },
+    [allowRemoteSync, endpoint],
+  );
 
   const setAndStore = useCallback(
     (updater: (prev: ManualState) => ManualState) => {
-      if (!storageKey) return;
       setState((prev) => {
-        const next = updater(prev);
-        if (typeof window !== "undefined") {
-          if (Object.keys(next).length === 0) {
+        const next = sanitizeManualState(updater(prev));
+        if (storageKey && typeof window !== "undefined") {
+          if (manualStateIsEmpty(next)) {
             window.localStorage.removeItem(storageKey);
           } else {
             window.localStorage.setItem(storageKey, JSON.stringify(next));
           }
         }
+        persistRemote(next);
         return next;
       });
     },
-    [storageKey]
+    [persistRemote, storageKey],
   );
 
   const addManualItem = useCallback(
     (weekKey: string, payload: { name: string; note?: string }) => {
-      if (!storageKey) return;
       const trimmedName = payload.name.trim();
       if (!trimmedName) return;
       const trimmedNote = payload.note?.trim() || undefined;
@@ -661,12 +689,11 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
         return { ...prev, [weekKey]: nextWeek };
       });
     },
-    [setAndStore, storageKey]
+    [setAndStore],
   );
 
   const removeManualItem = useCallback(
     (weekKey: string, manualKey: string) => {
-      if (!storageKey) return;
       setAndStore((prev) => {
         const current = prev[weekKey];
         if (!current) return prev;
@@ -681,12 +708,12 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
         return next;
       });
     },
-    [setAndStore, storageKey]
+    [setAndStore],
   );
 
   const hideExistingItem = useCallback(
     (weekKey: string, itemKey: string) => {
-      if (!storageKey || !itemKey) return;
+      if (!itemKey) return;
       setAndStore((prev) => {
         const current = prev[weekKey] ?? { added: [], removed: [] };
         if (current.removed.includes(itemKey)) return prev;
@@ -697,12 +724,11 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
         return { ...prev, [weekKey]: nextWeek };
       });
     },
-    [setAndStore, storageKey]
+    [setAndStore],
   );
 
   const resetWeek = useCallback(
     (weekKey: string) => {
-      if (!storageKey) return;
       setAndStore((prev) => {
         if (!prev[weekKey]) return prev;
         const next = { ...prev };
@@ -710,16 +736,14 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
         return next;
       });
     },
-    [setAndStore, storageKey]
+    [setAndStore],
   );
 
   const resetAll = useCallback(() => {
-    if (!storageKey) return;
-    setState({});
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(storageKey);
-    }
-  }, [storageKey]);
+    setAndStore(() => ({}));
+  }, [setAndStore]);
+
+  const ready = localReady && (!endpoint || remoteChecked);
 
   return { state, ready, addManualItem, removeManualItem, hideExistingItem, resetWeek, resetAll };
 }

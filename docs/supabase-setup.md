@@ -50,11 +50,30 @@ No other roles (e.g., `anon`, `authenticated`) will be able to read secrets, so 
 
 > **Troubleshooting:** until this migration runs, any dashboard API call will fail with messages such as `Could not find the table 'public.dashboard_secrets' in the schema cache`. That's Supabase reporting that the table is missing—run the SQL above and redeploy to resolve it.
 
-## 5. Deploy with the new env vars
+## 5. Provision manual roadmap progress storage
+
+Run [`docs/supabase-roadmap-progress.sql`](./supabase-roadmap-progress.sql) to create the
+`roadmap_manual_state` table. This table lets the dashboard persist manual adjustments (added tasks,
+hidden checklist items, and completion notes) so that future status runs reflect the same edits.
+
+```bash
+supabase db remote commit --file docs/supabase-roadmap-progress.sql
+```
+
+The script will:
+
+- Create a composite primary key on `(owner, repo, project_id)` so each project snapshot stores a single JSON payload.
+- Enable RLS and grant read/write access exclusively to the service role (the Next.js API routes use this key).
+- Keep `updated_at` in sync via a trigger so you can audit when the dashboard last saved progress.
+
+Until this migration runs, the dashboard will fall back to local-only storage for manual roadmap edits and they
+won't affect the generated `docs/roadmap-status.json` snapshot.
+
+## 6. Deploy with the new env vars
 
 Redeploy your Next.js app (e.g., `npm run build` locally, or trigger a Vercel redeploy). During boot, the API routes will read `SB_URL` + `SB_SERVICE_ROLE_KEY` and start persisting secrets to the database.
 
-## 6. Migrate existing secrets from local storage (if any)
+## 7. Migrate existing secrets from local storage (if any)
 
 The previous versions of the dashboard cached secrets in `localStorage`. To move them into Supabase:
 
@@ -67,7 +86,7 @@ The previous versions of the dashboard cached secrets in `localStorage`. To move
 
 If you no longer have a browser with the legacy data, re-enter the keys manually on the settings page—the save flow will add them to Supabase.
 
-## 7. Verify storage (optional)
+## 8. Verify storage (optional)
 
 Run the dashboard locally with `npm run dev` and watch the terminal; successful saves log the Supabase upsert. You can also query the table from the Supabase SQL Editor to confirm encrypted rows appear.
 
