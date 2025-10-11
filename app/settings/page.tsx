@@ -273,7 +273,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6 py-10">
+    <div className="settings-page mx-auto flex w-full max-w-6xl flex-col gap-10 px-6 py-10">
       <div className="space-y-3">
         <h1 className="text-3xl font-semibold text-slate-900">Secrets &amp; integrations</h1>
         <p className="max-w-3xl text-sm text-slate-600">
