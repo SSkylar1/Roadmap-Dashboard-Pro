@@ -8,6 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   useCallback,
+  useId,
   useEffect,
   useMemo,
   useRef,
@@ -1263,6 +1264,68 @@ function ProjectForm({
   const [repoInput, setRepoInput] = useState("");
   const [projectInput, setProjectInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [slugOptions, setSlugOptions] = useState<string[]>([]);
+  const [slugLoading, setSlugLoading] = useState(false);
+  const [slugError, setSlugError] = useState<string | null>(null);
+  const slugListId = useId();
+
+  const lookup = useMemo(() => {
+    let owner = ownerInput.trim();
+    let repo = repoInput.trim();
+    if (!repo && owner.includes("/")) {
+      const [maybeOwner, maybeRepo] = owner.split("/");
+      if (maybeOwner && maybeRepo) {
+        owner = maybeOwner.trim();
+        repo = maybeRepo.trim();
+      }
+    }
+    return { owner, repo };
+  }, [ownerInput, repoInput]);
+
+  useEffect(() => {
+    if (!lookup.owner || !lookup.repo) {
+      setSlugOptions([]);
+      setSlugError(null);
+      setSlugLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setSlugLoading(true);
+    setSlugError(null);
+
+    fetch(`/api/projects/${lookup.owner}/${lookup.repo}`, { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          const message = body?.error || response.statusText || "Failed to load project slugs";
+          throw new Error(message);
+        }
+        return response.json();
+      })
+      .then((json: { projects?: Array<{ slug?: string }> }) => {
+        if (cancelled) return;
+        const slugs = Array.isArray(json?.projects)
+          ? json.projects
+              .map((project) => (typeof project?.slug === "string" ? project.slug.trim() : ""))
+              .filter((slug) => slug.length > 0)
+          : [];
+        setSlugOptions(slugs);
+        setSlugLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSlugOptions([]);
+        setSlugError(String(err?.message || err));
+        setSlugLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [lookup.owner, lookup.repo]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1333,7 +1396,17 @@ function ProjectForm({
             }}
             placeholder="growth-experiments"
             autoComplete="off"
+            list={slugOptions.length > 0 ? slugListId : undefined}
           />
+          {slugOptions.length > 0 ? (
+            <datalist id={slugListId}>
+              {slugOptions.map((slug) => (
+                <option key={slug} value={slug} />
+              ))}
+            </datalist>
+          ) : null}
+          {slugLoading ? <div className="project-hint">Loading project slugs…</div> : null}
+          {slugError ? <div className="project-hint">{slugError}</div> : null}
         </div>
       </div>
       {error ? <div className="project-error">{error}</div> : null}
