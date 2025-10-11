@@ -11,6 +11,8 @@ import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/li
 type Check = {
   type: "files_exist" | "http_ok" | "sql_exists";
   globs?: string[];
+  files?: string[];
+  detail?: string;
   url?: string;
   must_match?: string[];
   query?: string;
@@ -58,12 +60,34 @@ function parseProbeHeaders(source: unknown): ProbeHeaders {
 
 const ENV_PROBE_HEADERS: ProbeHeaders = parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS);
 
-async function files_exist(owner: string, repo: string, globs: string[], ref?: string) {
-  for (const p of globs) {
-    const raw = await getFileRaw(owner, repo, p, ref).catch(() => null);
-    if (raw === null) return { ok: false };
+function normalizeFileList(check: Check) {
+  const collected: string[] = [];
+  if (Array.isArray(check.globs)) collected.push(...check.globs.map((value) => String(value).trim()).filter(Boolean));
+  if (Array.isArray(check.files)) collected.push(...check.files.map((value) => String(value).trim()).filter(Boolean));
+  if (typeof check.detail === "string") {
+    const extras = check.detail
+      .split(/[\n,]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    collected.push(...extras);
   }
-  return { ok: true };
+  return Array.from(new Set(collected));
+}
+
+async function files_exist(owner: string, repo: string, check: Check, ref?: string) {
+  const paths = normalizeFileList(check);
+  if (paths.length === 0) {
+    return { ok: false, error: "no files provided", files: [], missing: [] as string[] };
+  }
+
+  const missing: string[] = [];
+  for (const p of paths) {
+    // eslint-disable-next-line no-await-in-loop
+    const raw = await getFileRaw(owner, repo, p, ref).catch(() => null);
+    if (raw === null) missing.push(p);
+  }
+
+  return { ok: missing.length === 0, files: paths, missing };
 }
 
 async function http_ok(url: string, must_match: string[] = []) {
@@ -144,7 +168,7 @@ export async function POST(req: NextRequest) {
         const results: any[] = [];
         for (const c of (it.checks as Check[]) ?? []) {
           let r;
-          if (c.type === "files_exist") r = await files_exist(owner, repo, c.globs || [], branch);
+          if (c.type === "files_exist") r = await files_exist(owner, repo, c, branch);
           else if (c.type === "http_ok") r = await http_ok(c.url!, c.must_match || []);
           else if (c.type === "sql_exists") {
             if (!probeUrl) r = { ok: false, error: "probeUrl not provided" };
