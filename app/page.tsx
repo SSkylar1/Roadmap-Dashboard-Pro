@@ -1376,8 +1376,17 @@ function ProjectSidebar({
             {repos.map((repo) => {
               const key = repoKey(repo.owner, repo.repo, repo.project);
               const slug = `${repo.owner}/${repo.repo}`;
-              const projectLabel = repo.projectLabel || repo.project;
-              const display = projectLabel ? `${slug} · ${projectLabel}` : slug;
+              const projectLabel =
+                typeof repo.projectLabel === "string" && repo.projectLabel.trim()
+                  ? repo.projectLabel.trim()
+                  : undefined;
+              const projectKey =
+                typeof repo.project === "string" && repo.project.trim() ? repo.project.trim() : undefined;
+              const display = projectLabel
+                ? `${slug} · ${projectLabel}`
+                : projectKey
+                  ? `${slug} · #${projectKey}`
+                  : slug;
               const active = key === activeKey;
               return (
                 <li key={key} className="project-item">
