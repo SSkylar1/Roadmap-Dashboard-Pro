@@ -8,6 +8,7 @@ import yaml from "js-yaml";
 
 import { getFileRaw, listRepoTreePaths, putFile } from "@/lib/github";
 import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
+import { probeReadOnlyCheck } from "@/lib/read-only-probe";
 
 const READ_ONLY_CHECKS_URL = process.env.READ_ONLY_CHECKS_URL || "";
 
@@ -57,29 +58,26 @@ async function probeSupabase(queries: string[], overrideUrl?: string): Promise<P
     return queries.map((q) => ({ q, ok: false, why: "READ_ONLY_CHECKS_URL not configured" }));
   }
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ queries }),
-    });
+  const results = await Promise.all(
+    queries.map(async (q) => {
+      try {
+        const outcome = await probeReadOnlyCheck(url, q);
+        if (outcome.ok) {
+          return { q, ok: true } as ProbeResult;
+        }
 
-    if (!response.ok) {
-      const detail = await response
-        .text()
-        .then((text) => text.trim())
-        .catch(() => "");
-      const why = detail ? `${response.status} ${detail}` : String(response.status);
-      return queries.map((q) => ({ q, ok: false, why }));
-    }
+        const parts: string[] = [];
+        if (outcome.status) parts.push(String(outcome.status));
+        if (outcome.why) parts.push(outcome.why);
+        const why = parts.join(" ").trim() || undefined;
+        return { q, ok: false, why } as ProbeResult;
+      } catch (error: any) {
+        return { q, ok: false, why: error?.message || String(error) } as ProbeResult;
+      }
+    }),
+  );
 
-    const json = await response.json().catch(() => ({}));
-    const arr = Array.isArray(json?.results) ? json.results : [];
-    const byQuery = new Map(arr.map((entry: any) => [entry?.q, !!entry?.ok]));
-    return queries.map((q) => ({ q, ok: !!byQuery.get(q) }));
-  } catch (error: any) {
-    return queries.map((q) => ({ q, ok: false, why: error?.message || String(error) }));
-  }
+  return results;
 }
 
 function parseDiscoverConfig(raw: string | null, pathLabel: string): DiscoverConfig {
