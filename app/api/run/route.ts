@@ -60,6 +60,117 @@ function parseProbeHeaders(source: unknown): ProbeHeaders {
 
 const ENV_PROBE_HEADERS: ProbeHeaders = parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS);
 
+type RoadmapItem = {
+  id?: string;
+  name?: string;
+  checks?: Check[];
+  manual?: boolean;
+  done?: boolean;
+  note?: string;
+  manualKey?: string;
+};
+
+type RoadmapWeek = { id?: string; title?: string; items?: RoadmapItem[] };
+
+type RoadmapMilestone = {
+  week?: string;
+  title?: string;
+  tasks?: unknown[];
+};
+
+type RoadmapPhase = {
+  phase?: string;
+  milestones?: RoadmapMilestone[];
+};
+
+function slugify(value: string, fallback: string) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) return fallback;
+  const slug = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return slug || fallback;
+}
+
+function extractTaskName(input: unknown): string | undefined {
+  if (typeof input === "string") return input.trim();
+  if (input && typeof input === "object") {
+    const record = input as Record<string, unknown>;
+    const candidate = record.task || record.title || record.name;
+    if (typeof candidate === "string") return candidate.trim();
+  }
+  return undefined;
+}
+
+function extractPhaseWeeks(roadmap: unknown): RoadmapWeek[] {
+  if (!Array.isArray(roadmap)) return [];
+
+  const weeks: RoadmapWeek[] = [];
+  (roadmap as RoadmapPhase[]).forEach((phase, phaseIndex) => {
+    const phaseLabel =
+      typeof phase?.phase === "string" && phase.phase.trim()
+        ? phase.phase.trim()
+        : `Phase ${phaseIndex + 1}`;
+    const milestones = Array.isArray(phase?.milestones) ? phase.milestones : [];
+    milestones.forEach((milestone: RoadmapMilestone, milestoneIndex) => {
+      const tasks = Array.isArray(milestone?.tasks) ? milestone.tasks : [];
+      const items = tasks.reduce<RoadmapItem[]>((acc, task: unknown, taskIndex) => {
+        const name = extractTaskName(task);
+        if (!name) return acc;
+        const id = slugify(
+          `${phaseLabel}-${name}`,
+          `task-${phaseIndex + 1}-${milestoneIndex + 1}-${taskIndex + 1}`,
+        );
+
+        acc.push({
+          id,
+          name,
+          checks: [] as Check[],
+          manual: true,
+          done: false,
+        });
+
+        return acc;
+      }, []);
+
+      const weekLabel = typeof milestone?.week === "string" ? milestone.week.trim() : "";
+      const milestoneTitle = typeof milestone?.title === "string" ? milestone.title.trim() : "";
+      const descriptor = milestoneTitle || (weekLabel ? `Weeks ${weekLabel}` : "");
+      const title = descriptor ? `${phaseLabel} — ${descriptor}` : phaseLabel;
+      const weekIdSource = weekLabel || milestoneTitle || `${phaseIndex + 1}-${milestoneIndex + 1}`;
+      const id = slugify(`${phaseLabel}-${weekIdSource}`, `week-${phaseIndex + 1}-${milestoneIndex + 1}`);
+
+      weeks.push({
+        id,
+        title,
+        items,
+      });
+    });
+  });
+
+  return weeks;
+}
+
+function extractWeeks(raw: any): RoadmapWeek[] {
+  const directWeeks = Array.isArray(raw?.weeks) ? raw.weeks : [];
+  if (directWeeks.length > 0) return directWeeks as RoadmapWeek[];
+
+  if (Array.isArray(raw?.roadmap)) {
+    const derived = extractPhaseWeeks(raw.roadmap);
+    if (derived.length > 0) return derived;
+  }
+
+  if (Array.isArray(raw?.phases)) {
+    const derived = extractPhaseWeeks(raw.phases);
+    if (derived.length > 0) return derived;
+  }
+
+  return [];
+}
+
 function normalizeFileList(check: Check) {
   const collected: string[] = [];
   if (Array.isArray(check.globs)) collected.push(...check.globs.map((value) => String(value).trim()).filter(Boolean));
@@ -153,6 +264,8 @@ export async function POST(req: NextRequest) {
     const rm: any = yaml.load(rmRaw);
 
     // Execute checks
+    const weeks = extractWeeks(rm);
+
     const status: any = {
       generated_at: new Date().toISOString(),
       owner,
@@ -161,12 +274,14 @@ export async function POST(req: NextRequest) {
       project: projectKey || undefined,
       weeks: [] as any[],
     };
-    for (const w of rm.weeks ?? []) {
+    for (const w of weeks) {
       const W: any = { id: w.id, title: w.title, items: [] as any[] };
       for (const it of w.items ?? []) {
         let passed = true;
+        let hadChecks = false;
         const results: any[] = [];
         for (const c of (it.checks as Check[]) ?? []) {
+          hadChecks = true;
           let r;
           if (c.type === "files_exist") r = await files_exist(owner, repo, c, branch);
           else if (c.type === "http_ok") r = await http_ok(c.url!, c.must_match || []);
@@ -177,7 +292,15 @@ export async function POST(req: NextRequest) {
           results.push({ ...c, ...r });
           if (!r.ok) passed = false;
         }
-        W.items.push({ id: it.id, name: it.name, done: passed, results });
+        const manual = it.manual === true;
+        const note = typeof it.note === "string" ? it.note : undefined;
+        const manualKey = typeof it.manualKey === "string" ? it.manualKey : undefined;
+        const itemDone = hadChecks ? passed : it.done === true;
+        const item: any = { id: it.id, name: it.name, done: itemDone, results };
+        if (manual) item.manual = true;
+        if (note) item.note = note;
+        if (manualKey) item.manualKey = manualKey;
+        W.items.push(item);
       }
       status.weeks.push(W);
     }
