@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from "next/server";
 import yaml from "js-yaml";
 import { getFileRaw, putFile } from "@/lib/github";
 import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
+import { loadManualState } from "@/lib/manual-store";
+import type { ManualState } from "@/lib/manual-state";
 
 type Check = {
   type: "files_exist" | "http_ok" | "sql_exists";
@@ -68,6 +70,7 @@ type RoadmapItem = {
   done?: boolean;
   note?: string;
   manualKey?: string;
+  manualOverride?: { done?: boolean; note?: string };
 };
 
 type RoadmapWeek = { id?: string; title?: string; items?: RoadmapItem[] };
@@ -77,6 +80,77 @@ type RoadmapMilestone = {
   title?: string;
   tasks?: unknown[];
 };
+
+function deriveWeekKey(week: any, index: number): string {
+  const id = typeof week?.id === "string" ? week.id.trim() : "";
+  if (id) return id;
+  const title = typeof week?.title === "string" ? week.title.trim() : "";
+  if (title) return title;
+  return `week-${index + 1}`;
+}
+
+function deriveItemKey(item: any, index: number): string {
+  const manualKey = typeof item?.manualKey === "string" ? item.manualKey.trim() : "";
+  if (manualKey) return manualKey;
+  const id = typeof item?.id === "string" ? item.id.trim() : "";
+  if (id) return id;
+  const name = typeof item?.name === "string" ? item.name.trim() : "";
+  if (name) return name;
+  return `item-${index + 1}`;
+}
+
+function applyManualAdjustments(weeks: any[], manualState: ManualState): any[] {
+  if (!Array.isArray(weeks)) return weeks;
+  if (!manualState || Object.keys(manualState).length === 0) return weeks;
+
+  return weeks.map((week, weekIndex) => {
+    const manualKey = deriveWeekKey(week, weekIndex);
+    const manualWeek = manualState[manualKey];
+    if (!manualWeek) return week;
+
+    const baseItems: RoadmapItem[] = Array.isArray(week?.items) ? (week.items as RoadmapItem[]) : [];
+    const removedKeys = new Set(manualWeek.removed ?? []);
+    const filtered = baseItems
+      .map((item: RoadmapItem, itemIndex: number) => ({ item, key: deriveItemKey(item, itemIndex) }))
+      .filter(({ key }: { key: string }) => !removedKeys.has(key))
+      .map(({ item, key }) => {
+        const manualKeyValue = item?.manualKey ?? key;
+        const override = (manualWeek.overrides ?? []).find((entry) => entry.key === manualKeyValue);
+        const note = typeof override?.note === "string" ? override.note.trim() : "";
+        const overridePayload =
+          override && (override.done !== undefined || note)
+            ? {
+                ...(override.done !== undefined ? { done: override.done } : {}),
+                ...(note ? { note } : {}),
+              }
+            : null;
+        const next: RoadmapItem = {
+          ...item,
+          manualKey: manualKeyValue,
+          ...(overridePayload ? { manualOverride: overridePayload } : {}),
+        };
+        if (typeof override?.done === "boolean") {
+          next.done = override.done;
+        }
+        return next;
+      });
+
+    const manualItems = (manualWeek.added ?? []).map((manualItem) => ({
+      id: manualItem.key,
+      name: manualItem.name,
+      note: manualItem.note,
+      done: manualItem.done === true,
+      manual: true,
+      manualKey: manualItem.key,
+      results: [],
+    }));
+
+    return {
+      ...week,
+      items: [...filtered, ...manualItems],
+    };
+  });
+}
 
 type RoadmapPhase = {
   phase?: string;
@@ -303,6 +377,19 @@ export async function POST(req: NextRequest) {
         W.items.push(item);
       }
       status.weeks.push(W);
+    }
+
+    let manualState: ManualState | null = null;
+    try {
+      const manualResult = await loadManualState(owner, repo, projectKey ?? null);
+      if (manualResult.available) {
+        manualState = manualResult.state;
+      }
+    } catch (error) {
+      console.error("Failed to load manual roadmap overrides", error);
+    }
+    if (manualState && Object.keys(manualState).length > 0) {
+      status.weeks = applyManualAdjustments(status.weeks, manualState);
     }
 
     // Commit artifacts (write both root docs/* and legacy docs/roadmap/*)

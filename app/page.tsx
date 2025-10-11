@@ -20,6 +20,14 @@ import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
+import {
+  type ManualItem,
+  type ManualOverride,
+  type ManualState,
+  type ManualWeekState,
+  manualStateIsEmpty,
+  sanitizeManualState,
+} from "@/lib/manual-state";
 
 type Check = {
   id?: string;
@@ -44,6 +52,7 @@ type Item = {
   note?: string;
   manual?: boolean;
   manualKey?: string;
+  manualOverride?: { done?: boolean; note?: string };
 };
 
 type Week = {
@@ -66,22 +75,12 @@ type RepoRef = {
   projectLabel?: string;
 };
 
-type ManualItem = {
-  key: string;
-  name: string;
-  note?: string;
-  done?: boolean;
+type DecoratedItem = Item & { manualKey?: string; manual?: boolean; manualOverride?: ManualOverride };
+type DecoratedWeek = Omit<Week, "items"> & {
+  manualKey: string;
+  manualState: ManualWeekState;
+  items?: DecoratedItem[];
 };
-
-type ManualWeekState = {
-  added: ManualItem[];
-  removed: string[];
-};
-
-type ManualState = Record<string, ManualWeekState>;
-
-type DecoratedItem = Item & { manualKey?: string; manual?: boolean };
-type DecoratedWeek = Week & { manualKey: string; manualState: ManualWeekState; items?: DecoratedItem[] };
 
 type GtmPlanTabProps = {
   repo: RepoRef | null;
@@ -424,36 +423,6 @@ function normalizeRepoRef(ref: Partial<RepoRef> | RepoRef): RepoRef {
   return { owner, repo, label, ...(project ? { project } : {}), ...(projectLabel ? { projectLabel } : {}) };
 }
 
-function sanitizeManualState(value: unknown): ManualState {
-  const safe: ManualState = {};
-  if (!value || typeof value !== "object") return safe;
-
-  for (const [weekKey, rawWeek] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof weekKey !== "string") continue;
-    const weekValue = rawWeek as Partial<ManualWeekState>;
-    const addedRaw = Array.isArray(weekValue?.added) ? weekValue.added : [];
-    const removedRaw = Array.isArray(weekValue?.removed) ? weekValue.removed : [];
-    const added = addedRaw.reduce<ManualItem[]>((list, entry) => {
-      if (!entry || typeof entry !== "object") return list;
-      const item = entry as ManualItem;
-      const key = typeof item.key === "string" ? item.key : null;
-      const name = typeof item.name === "string" ? item.name : null;
-      if (!key || !name) return list;
-      const note = typeof item.note === "string" ? item.note : undefined;
-      const done = typeof item.done === "boolean" ? item.done : undefined;
-      list.push({ key, name, note, done });
-      return list;
-    }, []);
-    const removed = removedRaw.filter((entry): entry is string => typeof entry === "string");
-
-    if (added.length > 0 || removed.length > 0) {
-      safe[weekKey] = { added, removed };
-    }
-  }
-
-  return safe;
-}
-
 function getWeekKey(week: Week, index: number) {
   return week.id || week.title || `week-${index + 1}`;
 }
@@ -597,12 +566,18 @@ function useStoredRepos() {
 function useManualRoadmap(owner?: string, repo?: string, project?: string | null) {
   const storageKey = owner && repo ? `${MANUAL_STORAGE_PREFIX}${repoKey(owner, repo, project)}` : null;
   const [state, setState] = useState<ManualState>({});
-  const [ready, setReady] = useState(false);
+  const [localReady, setLocalReady] = useState(false);
+  const [remoteChecked, setRemoteChecked] = useState(false);
+  const [remoteAvailable, setRemoteAvailable] = useState(false);
+
+  const projectKey = normalizeProjectKey(project ?? undefined);
+  const endpoint = owner && repo ? `/api/manual/${owner}/${repo}${projectKey ? `?project=${projectKey}` : ""}` : null;
+  const allowRemoteSync = Boolean(endpoint && remoteChecked && remoteAvailable);
 
   useEffect(() => {
     if (!storageKey) {
       setState({});
-      setReady(false);
+      setLocalReady(false);
       return;
     }
     if (typeof window === "undefined") return;
@@ -618,30 +593,89 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
     } catch {
       setState({});
     }
-    setReady(true);
+    setLocalReady(true);
   }, [storageKey]);
+
+  useEffect(() => {
+    if (!endpoint) {
+      setRemoteChecked(false);
+      setRemoteAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    setRemoteChecked(false);
+    fetch(endpoint, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          const message = body?.error || response.statusText || "Failed to load manual state";
+          throw new Error(message);
+        }
+        return response.json();
+      })
+      .then((json: { available?: boolean; state?: unknown }) => {
+        if (cancelled) return;
+        if (json?.available) {
+          const sanitized = sanitizeManualState(json.state);
+          setState(sanitized);
+          if (storageKey && typeof window !== "undefined") {
+            if (manualStateIsEmpty(sanitized)) {
+              window.localStorage.removeItem(storageKey);
+            } else {
+              window.localStorage.setItem(storageKey, JSON.stringify(sanitized));
+            }
+          }
+          setRemoteAvailable(true);
+        } else {
+          setRemoteAvailable(false);
+        }
+        setRemoteChecked(true);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Failed to load remote manual state", error);
+        setRemoteAvailable(false);
+        setRemoteChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [endpoint, storageKey]);
+
+  const persistRemote = useCallback(
+    (next: ManualState) => {
+      if (!allowRemoteSync || !endpoint) return;
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state: next }),
+      }).catch((error) => {
+        console.error("Failed to persist manual state", error);
+      });
+    },
+    [allowRemoteSync, endpoint],
+  );
 
   const setAndStore = useCallback(
     (updater: (prev: ManualState) => ManualState) => {
-      if (!storageKey) return;
       setState((prev) => {
-        const next = updater(prev);
-        if (typeof window !== "undefined") {
-          if (Object.keys(next).length === 0) {
+        const next = sanitizeManualState(updater(prev));
+        if (storageKey && typeof window !== "undefined") {
+          if (manualStateIsEmpty(next)) {
             window.localStorage.removeItem(storageKey);
           } else {
             window.localStorage.setItem(storageKey, JSON.stringify(next));
           }
         }
+        persistRemote(next);
         return next;
       });
     },
-    [storageKey]
+    [persistRemote, storageKey],
   );
 
   const addManualItem = useCallback(
     (weekKey: string, payload: { name: string; note?: string }) => {
-      if (!storageKey) return;
       const trimmedName = payload.name.trim();
       if (!trimmedName) return;
       const trimmedNote = payload.note?.trim() || undefined;
@@ -653,27 +687,31 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
       };
 
       setAndStore((prev) => {
-        const current = prev[weekKey] ?? { added: [], removed: [] };
+        const current = prev[weekKey] ?? { added: [], removed: [], overrides: [] };
         const nextWeek: ManualWeekState = {
           added: [...current.added, manualItem],
-          removed: current.removed,
+          removed: [...current.removed],
+          overrides: [...(current.overrides ?? [])],
         };
         return { ...prev, [weekKey]: nextWeek };
       });
     },
-    [setAndStore, storageKey]
+    [setAndStore],
   );
 
   const removeManualItem = useCallback(
     (weekKey: string, manualKey: string) => {
-      if (!storageKey) return;
       setAndStore((prev) => {
         const current = prev[weekKey];
         if (!current) return prev;
         const nextAdded = current.added.filter((item) => item.key !== manualKey);
-        const nextWeek: ManualWeekState = { added: nextAdded, removed: current.removed };
+        const nextWeek: ManualWeekState = {
+          added: nextAdded,
+          removed: [...current.removed],
+          overrides: [...(current.overrides ?? [])],
+        };
         const next = { ...prev };
-        if (nextWeek.added.length === 0 && nextWeek.removed.length === 0) {
+        if (nextWeek.added.length === 0 && nextWeek.removed.length === 0 && nextWeek.overrides.length === 0) {
           delete next[weekKey];
         } else {
           next[weekKey] = nextWeek;
@@ -681,28 +719,28 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
         return next;
       });
     },
-    [setAndStore, storageKey]
+    [setAndStore],
   );
 
   const hideExistingItem = useCallback(
     (weekKey: string, itemKey: string) => {
-      if (!storageKey || !itemKey) return;
+      if (!itemKey) return;
       setAndStore((prev) => {
-        const current = prev[weekKey] ?? { added: [], removed: [] };
+        const current = prev[weekKey] ?? { added: [], removed: [], overrides: [] };
         if (current.removed.includes(itemKey)) return prev;
         const nextWeek: ManualWeekState = {
-          added: current.added,
+          added: [...current.added],
           removed: [...current.removed, itemKey],
+          overrides: [...(current.overrides ?? [])],
         };
         return { ...prev, [weekKey]: nextWeek };
       });
     },
-    [setAndStore, storageKey]
+    [setAndStore],
   );
 
   const resetWeek = useCallback(
     (weekKey: string) => {
-      if (!storageKey) return;
       setAndStore((prev) => {
         if (!prev[weekKey]) return prev;
         const next = { ...prev };
@@ -710,18 +748,101 @@ function useManualRoadmap(owner?: string, repo?: string, project?: string | null
         return next;
       });
     },
-    [setAndStore, storageKey]
+    [setAndStore],
   );
 
   const resetAll = useCallback(() => {
-    if (!storageKey) return;
-    setState({});
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(storageKey);
-    }
-  }, [storageKey]);
+    setAndStore(() => ({}));
+  }, [setAndStore]);
 
-  return { state, ready, addManualItem, removeManualItem, hideExistingItem, resetWeek, resetAll };
+  const setManualOverride = useCallback(
+    (weekKey: string, itemKey: string, override: { done?: boolean; note?: string | null }) => {
+      const trimmedKey = itemKey.trim();
+      if (!trimmedKey) return;
+      setAndStore((prev) => {
+        const current = prev[weekKey] ?? { added: [], removed: [], overrides: [] };
+        const existingOverrides = current.overrides ?? [];
+        const existingOverride = existingOverrides.find((entry) => entry.key === trimmedKey);
+        const filtered = existingOverrides.filter((entry) => entry.key !== trimmedKey);
+
+        let noteValue: string | undefined;
+        if (override.note === undefined) {
+          noteValue = existingOverride?.note;
+        } else if (override.note === null) {
+          noteValue = undefined;
+        } else {
+          const trimmedNote = override.note.trim();
+          noteValue = trimmedNote ? trimmedNote : undefined;
+        }
+
+        const shouldStore = override.done !== undefined || noteValue !== undefined;
+        const nextOverrides = shouldStore
+          ? [
+              ...filtered,
+              {
+                key: trimmedKey,
+                ...(override.done !== undefined ? { done: override.done } : {}),
+                ...(noteValue ? { note: noteValue } : {}),
+              },
+            ]
+          : filtered;
+
+        const nextWeek: ManualWeekState = {
+          added: [...current.added],
+          removed: [...current.removed],
+          overrides: nextOverrides,
+        };
+
+        const next = { ...prev };
+        if (nextWeek.added.length === 0 && nextWeek.removed.length === 0 && nextWeek.overrides.length === 0) {
+          delete next[weekKey];
+        } else {
+          next[weekKey] = nextWeek;
+        }
+        return next;
+      });
+    },
+    [setAndStore],
+  );
+
+  const clearManualOverride = useCallback(
+    (weekKey: string, itemKey: string) => {
+      const trimmedKey = itemKey.trim();
+      if (!trimmedKey) return;
+      setAndStore((prev) => {
+        const current = prev[weekKey];
+        if (!current) return prev;
+        const nextOverrides = (current.overrides ?? []).filter((entry) => entry.key !== trimmedKey);
+        const nextWeek: ManualWeekState = {
+          added: [...current.added],
+          removed: [...current.removed],
+          overrides: nextOverrides,
+        };
+        const next = { ...prev };
+        if (nextWeek.added.length === 0 && nextWeek.removed.length === 0 && nextWeek.overrides.length === 0) {
+          delete next[weekKey];
+        } else {
+          next[weekKey] = nextWeek;
+        }
+        return next;
+      });
+    },
+    [setAndStore],
+  );
+
+  const ready = localReady && (!endpoint || remoteChecked);
+
+  return {
+    state,
+    ready,
+    addManualItem,
+    removeManualItem,
+    hideExistingItem,
+    resetWeek,
+    resetAll,
+    setManualOverride,
+    clearManualOverride,
+  };
 }
 
 function statusIcon(ok: boolean | undefined) {
@@ -821,6 +942,15 @@ function buildItemCopyText(item: Item, week?: Week) {
     lines.push("Blocked by: No checks configured yet.");
   } else {
     lines.push("Blocked by: None");
+  }
+
+  if (item.manualOverride?.note) {
+    lines.push(`Manual note: ${item.manualOverride.note}`);
+  }
+  if (item.manualOverride?.done !== undefined) {
+    lines.push(
+      `Manual override status: ${item.manualOverride.done ? "Marked complete" : "Marked incomplete"}`,
+    );
   }
 
   return lines.join("\n");
@@ -1035,16 +1165,100 @@ function CheckRow({ c }: { c: Check }) {
   );
 }
 
+function ManualOverrideControls({
+  manualOverride,
+  disabled,
+  onManualOverride,
+  onClearManualOverride,
+}: {
+  manualOverride?: ManualOverride;
+  disabled: boolean;
+  onManualOverride?: (override: { done?: boolean; note?: string | null }) => void;
+  onClearManualOverride?: () => void;
+}) {
+  if (!onManualOverride && !onClearManualOverride) return null;
+
+  const statusLabel = manualOverride
+    ? manualOverride.done === true
+      ? "Marked complete manually"
+      : manualOverride.done === false
+        ? "Marked incomplete manually"
+        : "Manual override saved"
+    : "No manual override yet";
+
+  const note = manualOverride?.note;
+
+  const handleMark = (done: boolean) => {
+    onManualOverride?.({ done, note: manualOverride?.note });
+  };
+
+  const handleEditNote = () => {
+    if (!onManualOverride) return;
+    const current = manualOverride?.note ?? "";
+    const next = window.prompt("Add an optional note for this manual override:", current);
+    if (next === null) return;
+    const trimmed = next.trim();
+    onManualOverride({ done: manualOverride?.done, note: trimmed.length > 0 ? trimmed : null });
+  };
+
+  const handleClear = () => {
+    if (onClearManualOverride) {
+      onClearManualOverride();
+    } else if (onManualOverride) {
+      onManualOverride({ done: undefined, note: null });
+    }
+  };
+
+  return (
+    <div className="manual-override">
+      <div className="manual-override-info">
+        <div className="manual-override-status">{statusLabel}</div>
+        {note ? <div className="manual-override-note">{note}</div> : null}
+      </div>
+      <div className="manual-override-actions">
+        <button
+          type="button"
+          className="ghost-button compact"
+          onClick={() => handleMark(true)}
+          disabled={disabled}
+        >
+          Mark complete
+        </button>
+        <button
+          type="button"
+          className="ghost-button compact"
+          onClick={() => handleMark(false)}
+          disabled={disabled}
+        >
+          Mark incomplete
+        </button>
+        <button type="button" className="ghost-button compact" onClick={handleEditNote} disabled={disabled}>
+          {note ? "Edit note" : "Add note"}
+        </button>
+        <button type="button" className="ghost-button compact" onClick={handleClear} disabled={disabled}>
+          Clear override
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ItemCard({
   item,
   week,
   onDelete,
   allowDelete,
+  manualReady,
+  onManualOverride,
+  onClearManualOverride,
 }: {
   item: DecoratedItem;
   week: DecoratedWeek;
   onDelete?: () => void;
   allowDelete: boolean;
+  manualReady: boolean;
+  onManualOverride?: (override: { done?: boolean; note?: string | null }) => void;
+  onClearManualOverride?: () => void;
 }) {
   const sum = summarizeChecks(item.checks);
   const summary = formatStatusSummary(sum);
@@ -1057,6 +1271,8 @@ function ItemCard({
   const canDelete = allowDelete && Boolean(onDelete) && Boolean(item.manualKey);
   const hasIncomplete = ok !== true;
   const copyText = useMemo(() => buildItemCopyText(item, week), [item, week]);
+  const manualOverride = item.manualOverride;
+  const allowManualOverride = manualReady && !isManual && Boolean(onManualOverride || onClearManualOverride);
 
   return (
     <div className={`item-card item-${tone}`}>
@@ -1095,6 +1311,15 @@ function ItemCard({
           {isManual ? "No linked checks yet for this manual item." : "No sub tasks yet."}
         </div>
       )}
+
+      {allowManualOverride ? (
+        <ManualOverrideControls
+          manualOverride={manualOverride}
+          disabled={!manualReady}
+          onManualOverride={onManualOverride}
+          onClearManualOverride={onClearManualOverride}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1166,12 +1391,16 @@ function WeekCard({
   onAddManualItem,
   onDeleteItem,
   onResetManual,
+  onOverrideItem,
+  onClearOverride,
 }: {
   week: DecoratedWeek;
   manualReady: boolean;
   onAddManualItem: (weekKey: string, payload: { name: string; note?: string }) => void;
   onDeleteItem: (weekKey: string, item: DecoratedItem) => void;
   onResetManual: (weekKey: string) => void;
+  onOverrideItem: (weekKey: string, itemKey: string, override: { done?: boolean; note?: string | null }) => void;
+  onClearOverride: (weekKey: string, itemKey: string) => void;
 }) {
   const rollup = useMemo(() => {
     let total = 0,
@@ -1194,14 +1423,16 @@ function WeekCard({
   const title = week.title || week.id || "Untitled week";
   const subtitle = week.id && week.id !== week.title ? week.id : null;
   const items = week.items ?? [];
-  const manualState = week.manualState ?? { added: [], removed: [] };
+  const manualState = week.manualState ?? { added: [], removed: [], overrides: [] };
   const manualCounts = {
     added: manualState.added.length,
     removed: manualState.removed.length,
+    overrides: manualState.overrides.length,
   };
   const manualSummaryParts: string[] = [];
   if (manualCounts.added > 0) manualSummaryParts.push(`${manualCounts.added} added`);
   if (manualCounts.removed > 0) manualSummaryParts.push(`${manualCounts.removed} hidden`);
+  if (manualCounts.overrides > 0) manualSummaryParts.push(`${manualCounts.overrides} overrides`);
   const manualSummary = manualSummaryParts.join(" · ");
   const showManualSummary = manualReady && manualSummaryParts.length > 0;
 
@@ -1233,6 +1464,17 @@ function WeekCard({
               week={week}
               allowDelete={manualReady}
               onDelete={it.manualKey ? () => onDeleteItem(week.manualKey, it) : undefined}
+              manualReady={manualReady}
+              onManualOverride={
+                manualReady && it.manualKey
+                  ? (override) => onOverrideItem(week.manualKey, it.manualKey!, override)
+                  : undefined
+              }
+              onClearManualOverride={
+                manualReady && it.manualKey
+                  ? () => onClearOverride(week.manualKey, it.manualKey!)
+                  : undefined
+              }
             />
           ))}
         </div>
@@ -2546,19 +2788,63 @@ function DashboardPage() {
     hideExistingItem,
     resetWeek,
     resetAll,
+    setManualOverride,
+    clearManualOverride,
   } = useManualRoadmap(activeRepo?.owner, activeRepo?.repo, activeRepo?.project ?? null);
 
   const decoratedWeeks: DecoratedWeek[] = useMemo(() => {
     if (!data) return [];
     return (data.weeks ?? []).map((week, weekIndex) => {
       const manualKey = getWeekKey(week, weekIndex);
-      const manualWeek = manualState[manualKey] ?? { added: [], removed: [] };
-      const baseItems: DecoratedItem[] = (week.items ?? []).map((item, itemIndex) => ({
-        ...item,
-        manual: false,
-        manualKey: getItemKey(item, itemIndex),
-      }));
-      const filteredBase = baseItems.filter((item) => !manualWeek.removed.includes(item.manualKey ?? ""));
+      const manualWeek = manualState[manualKey] ?? { added: [], removed: [], overrides: [] };
+      const overrideMap = new Map(
+        (manualWeek.overrides ?? []).map((override) => [override.key, override] as const),
+      );
+      const baseItems: DecoratedItem[] = (week.items ?? []).map((item, itemIndex) => {
+        const manualKeyValue = getItemKey(item, itemIndex);
+        const existingOverride: ManualOverride | undefined = item.manualOverride
+          ? {
+              key: manualKeyValue,
+              ...(typeof item.manualOverride.done === "boolean"
+                ? { done: item.manualOverride.done }
+                : {}),
+              ...(typeof item.manualOverride.note === "string" && item.manualOverride.note.trim()
+                ? { note: item.manualOverride.note.trim() }
+                : {}),
+            }
+          : undefined;
+        const base = {
+          ...item,
+          manual: false,
+          manualKey: manualKeyValue,
+        } as DecoratedItem;
+        base.manualOverride = existingOverride;
+        return base;
+      });
+      const filteredBase = baseItems
+        .filter((item) => !manualWeek.removed.includes(item.manualKey ?? ""))
+        .map((item) => {
+          if (!item.manualKey) return item;
+          let override = overrideMap.get(item.manualKey);
+          if (!override && item.manualOverride) {
+            override = item.manualOverride;
+          }
+          if (!override) return item;
+          const note = typeof override.note === "string" ? override.note.trim() : "";
+          const normalizedOverride: ManualOverride = {
+            key: override.key,
+            ...(override.done !== undefined ? { done: override.done } : {}),
+            ...(note ? { note } : {}),
+          };
+          const next: DecoratedItem = {
+            ...item,
+            manualOverride: normalizedOverride,
+          };
+          if (normalizedOverride.done !== undefined) {
+            next.done = normalizedOverride.done;
+          }
+          return next;
+        });
       const manualItems: DecoratedItem[] = manualWeek.added.map((manualItem) => ({
         id: manualItem.key,
         name: manualItem.name,
@@ -2580,16 +2866,27 @@ function DashboardPage() {
   const manualTotals = useMemo(() => {
     let added = 0;
     let removed = 0;
+    let overrides = 0;
     for (const week of Object.values(manualState)) {
       added += week.added.length;
       removed += week.removed.length;
+      overrides += week.overrides.length;
     }
-    return { added, removed };
+    return { added, removed, overrides };
   }, [manualState]);
 
   const incompleteEntries = useMemo(() => collectIncompleteEntries(decoratedWeeks), [decoratedWeeks]);
 
-  const hasManualChanges = manualReady && (manualTotals.added > 0 || manualTotals.removed > 0);
+  const hasManualChanges =
+    manualReady && (manualTotals.added > 0 || manualTotals.removed > 0 || manualTotals.overrides > 0);
+
+  const manualProjectSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (manualTotals.added > 0) parts.push(`${manualTotals.added} added`);
+    if (manualTotals.removed > 0) parts.push(`${manualTotals.removed} hidden`);
+    if (manualTotals.overrides > 0) parts.push(`${manualTotals.overrides} overrides`);
+    return parts.join(" · ");
+  }, [manualTotals]);
 
   const handleSelectRepo = useCallback(
     (repo: RepoRef) => {
@@ -2635,6 +2932,20 @@ function DashboardPage() {
       }
     },
     [hideExistingItem, removeManualItem]
+  );
+
+  const handleManualOverride = useCallback(
+    (weekKey: string, itemKey: string, override: { done?: boolean; note?: string | null }) => {
+      setManualOverride(weekKey, itemKey, override);
+    },
+    [setManualOverride]
+  );
+
+  const handleClearManualOverride = useCallback(
+    (weekKey: string, itemKey: string) => {
+      clearManualOverride(weekKey, itemKey);
+    },
+    [clearManualOverride]
   );
 
   return (
@@ -2699,9 +3010,7 @@ function DashboardPage() {
                   <div className="card manual-project-banner">
                     <div>
                       <div className="banner-title">Manual adjustments in this project</div>
-                      <div className="banner-subtitle">
-                        {manualTotals.added} added · {manualTotals.removed} hidden
-                      </div>
+                      <div className="banner-subtitle">{manualProjectSummary}</div>
                     </div>
                     <button type="button" className="ghost-button danger" onClick={resetAll} disabled={!manualReady}>
                       Reset all manual items
@@ -2735,6 +3044,8 @@ function DashboardPage() {
                         onAddManualItem={handleAddManualItem}
                         onDeleteItem={handleDeleteItem}
                         onResetManual={resetWeek}
+                        onOverrideItem={handleManualOverride}
+                        onClearOverride={handleClearManualOverride}
                       />
                     ))}
                   </div>
