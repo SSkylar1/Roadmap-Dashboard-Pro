@@ -2,6 +2,7 @@ node_modules
 .next
 dist
 build
+.tmp-tests
 .out
 .turbo
 .parcel-cache

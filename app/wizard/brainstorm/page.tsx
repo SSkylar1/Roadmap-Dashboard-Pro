@@ -4,6 +4,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "re
 import Link from "next/link";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { mergeProjectOptions } from "@/lib/project-options";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ChatMessage = {
@@ -95,6 +96,9 @@ export default function BrainstormPage() {
   const [project, setProject] = useState("");
   const [selectedRepoId, setSelectedRepoId] = useState<string>(ADD_NEW_REPO_OPTION);
   const [selectedProjectOption, setSelectedProjectOption] = useState<string>("");
+  const [discoveredProjectSlugs, setDiscoveredProjectSlugs] = useState<string[]>([]);
+  const [projectSlugsLoading, setProjectSlugsLoading] = useState(false);
+  const [projectSlugsError, setProjectSlugsError] = useState<string | null>(null);
   const [openAsPr, setOpenAsPr] = useState(false);
   const [initialContextLoaded, setInitialContextLoaded] = useState(false);
 
@@ -111,7 +115,10 @@ export default function BrainstormPage() {
     );
   }, [repoEntries, repoSlug]);
 
-  const projectOptions = useMemo(() => matchedRepoEntry?.projects ?? [], [matchedRepoEntry]);
+  const projectOptions = useMemo(
+    () => mergeProjectOptions(matchedRepoEntry?.projects, discoveredProjectSlugs),
+    [matchedRepoEntry?.projects, discoveredProjectSlugs],
+  );
 
   const projectKey = useMemo(() => normalizeProjectKey(project), [project]);
   const secrets = useResolvedSecrets(owner, repo, project || undefined);
@@ -176,6 +183,66 @@ export default function BrainstormPage() {
     const nextRepoId = matchedRepoEntry?.id ?? ADD_NEW_REPO_OPTION;
     setSelectedRepoId((current) => (current === nextRepoId ? current : nextRepoId));
   }, [matchedRepoEntry?.id]);
+
+  useEffect(() => {
+    const trimmedOwner = owner.trim();
+    const trimmedRepo = repo.trim();
+    const trimmedBranch = branch.trim() || "main";
+    if (!trimmedOwner || !trimmedRepo) {
+      setDiscoveredProjectSlugs([]);
+      setProjectSlugsError(null);
+      setProjectSlugsLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setProjectSlugsLoading(true);
+    setProjectSlugsError(null);
+
+    const headers: HeadersInit = {};
+    if (secrets.githubPat && secrets.sources.githubPat) {
+      headers["x-github-pat"] = secrets.githubPat;
+    }
+
+    fetch(
+      `/api/projects/${encodeURIComponent(trimmedOwner)}/${encodeURIComponent(trimmedRepo)}?branch=${encodeURIComponent(trimmedBranch)}`,
+      {
+        cache: "no-store",
+        signal: controller.signal,
+        headers,
+      },
+    )
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          const message = body?.error || response.statusText || "Failed to load project slugs";
+          throw new Error(message);
+        }
+        return response.json();
+      })
+      .then((json: { projects?: Array<{ slug?: string }> }) => {
+        if (cancelled) return;
+        const slugs = Array.isArray(json?.projects)
+          ? json.projects
+              .map((project) => (typeof project?.slug === "string" ? project.slug.trim() : ""))
+              .filter((slug) => slug.length > 0)
+          : [];
+        setDiscoveredProjectSlugs(slugs);
+        setProjectSlugsLoading(false);
+      })
+      .catch((fetchError) => {
+        if (cancelled) return;
+        setDiscoveredProjectSlugs([]);
+        setProjectSlugsError(String(fetchError?.message || fetchError));
+        setProjectSlugsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [owner, repo, branch, secrets.githubPat, secrets.sources.githubPat]);
 
   useEffect(() => {
     if (!project) {
@@ -483,20 +550,26 @@ export default function BrainstormPage() {
           </label>
           <label className="tw-flex tw-flex-col tw-gap-1">
             <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Project (optional)</span>
-            <select
-              value={selectedProjectOption}
-              onChange={handleProjectSelect}
-              className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
-            >
-              <option value="">Use repo defaults</option>
-              {projectOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name}
-                </option>
-              ))}
-              <option value={ADD_NEW_PROJECT_OPTION}>Add new project…</option>
-            </select>
-          </label>
+              <select
+                value={selectedProjectOption}
+                onChange={handleProjectSelect}
+                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+              >
+                <option value="">Use repo defaults</option>
+                {projectOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+                <option value={ADD_NEW_PROJECT_OPTION}>Add new project…</option>
+              </select>
+              {projectSlugsLoading ? (
+                <span className="tw-text-xs tw-text-slate-400">Loading project slugs…</span>
+              ) : null}
+              {projectSlugsError ? (
+                <span className="tw-text-xs tw-text-rose-300">{projectSlugsError}</span>
+              ) : null}
+            </label>
           <div className="tw-flex tw-flex-col tw-gap-1">
             <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Pull request</span>
             <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-xs tw-font-medium tw-text-slate-200">
