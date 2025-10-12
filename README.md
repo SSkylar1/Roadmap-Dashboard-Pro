@@ -7,6 +7,14 @@
 
 Next.js dashboard for roadmap-kit projects with **GitHub App auth** (PAT fallback), a **Settings** page to edit `.roadmaprc.json` via PR, and basic **webhook** support.
 
+## Smart editor & project management
+
+- **Smart editor card** – On the main dashboard (`/`), open a project and use the **Smart editor** to load any file in the repo, apply GPT-powered wording tweaks, and save the result to the selected branch. Provide a short instruction and the tool sends the request to the OpenAI API configured in Settings (`OPENAI_API_KEY`). It respects project-aware paths so Roadmap Kit overlays remain intact.
+- **Rewrite assistance** – When checks are almost passing, click **Ask GPT to rewrite** and the dashboard will suggest edits that keep structure intact while updating phrasing so verification jobs turn green. Review the diff before saving.
+- **Repo/project removal** – Every wizard workspace (Brainstorm, Concept, Mid-project, and Roadmap) now includes removal controls. Use the kebab menu next to the repo/project selector to delete stale entries from encrypted storage without leaving the flow.
+
+> The smart editor depends on the `/api/editor/*` routes. Confirm your deployment allows outbound requests to `api.openai.com` and store the OpenAI key via Settings → Secrets.
+
 ## Quickstart (local)
 
 ```bash
