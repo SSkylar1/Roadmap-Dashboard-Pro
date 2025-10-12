@@ -1759,7 +1759,10 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
   const [planExists, setPlanExists] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const secretsStore = useLocalSecrets();
-  const resolvedSecrets = useMemo(() => resolveSecrets(secretsStore, owner, repoName), [secretsStore, owner, repoName]);
+  const resolvedSecrets = useMemo(
+    () => resolveSecrets(secretsStore, owner, repoName, project),
+    [secretsStore, owner, repoName, project],
+  );
   const githubConfigured = Boolean(resolvedSecrets.githubPat);
 
   useEffect(() => {
@@ -2544,6 +2547,421 @@ function OnboardingChecklist({
   );
 }
 
+function SmartEditorCard({
+  repo,
+  status,
+  entries,
+}: {
+  repo: RepoRef | null;
+  status: StatusResponse | null;
+  entries: IncompleteEntry[];
+}) {
+  const owner = repo?.owner ?? "";
+  const repoName = repo?.repo ?? "";
+  const project = repo?.project ?? undefined;
+
+  const [branch, setBranch] = useState("main");
+  const [path, setPath] = useState("docs/roadmap.yml");
+  const [content, setContent] = useState("");
+  const [fileExists, setFileExists] = useState<boolean | null>(null);
+  const [loadedPath, setLoadedPath] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [instructions, setInstructions] = useState("");
+  const [instructionsTouched, setInstructionsTouched] = useState(false);
+  const [selectedEntryKey, setSelectedEntryKey] = useState("");
+  const pathListId = useId();
+  const secretsStore = useLocalSecrets();
+  const resolvedSecrets = useMemo(
+    () => resolveSecrets(secretsStore, owner, repoName, project),
+    [secretsStore, owner, repoName, project],
+  );
+
+  const githubConfigured = Boolean(resolvedSecrets.githubPat);
+  const openAiConfigured = Boolean(resolvedSecrets.openaiKey);
+  const hasRepo = Boolean(owner && repoName);
+
+  const fileSuggestions = useMemo(() => {
+    const base = [
+      "docs/roadmap.yml",
+      "docs/roadmap-status.json",
+      "docs/summary.txt",
+      "docs/gtm-plan.md",
+    ];
+    const suggestions = new Set<string>(base);
+    for (const week of status?.weeks ?? []) {
+      for (const item of week.items ?? []) {
+        for (const check of item.checks ?? []) {
+          if (Array.isArray(check.globs)) {
+            for (const glob of check.globs) {
+              if (typeof glob === "string" && glob.trim()) {
+                suggestions.add(glob.trim());
+              }
+            }
+          }
+        }
+      }
+    }
+    return Array.from(suggestions).sort((a, b) => a.localeCompare(b));
+  }, [status]);
+
+  useEffect(() => {
+    setBranch("main");
+    setPath("docs/roadmap.yml");
+    setContent("");
+    setFileExists(null);
+    setLoadedPath(null);
+    setMessage(null);
+    setError(null);
+    setInstructions("");
+    setInstructionsTouched(false);
+    setSelectedEntryKey("");
+  }, [owner, repoName, project]);
+
+  useEffect(() => {
+    if (!fileSuggestions.includes(path)) {
+      setPath(fileSuggestions[0] ?? "docs/roadmap.yml");
+    }
+  }, [fileSuggestions, path]);
+
+  const selectedEntry = useMemo(
+    () => entries.find((entry) => entry.key === selectedEntryKey) ?? null,
+    [entries, selectedEntryKey],
+  );
+
+  useEffect(() => {
+    if (!selectedEntry) {
+      if (!instructionsTouched && instructions) {
+        setInstructions("");
+      }
+      return;
+    }
+    if (instructionsTouched) return;
+    const promptLines: string[] = [];
+    const meta = selectedEntry.itemMeta ? ` (${selectedEntry.itemMeta})` : "";
+    promptLines.push(`Focus on ${selectedEntry.itemLabel}${meta}.`);
+    promptLines.push(`Status today: ${selectedEntry.statusLabel}.`);
+    if (selectedEntry.blockers.length > 0) {
+      promptLines.push("Checks to satisfy:");
+      for (const blocker of selectedEntry.blockers) {
+        promptLines.push(`- ${blocker}`);
+      }
+    }
+    promptLines.push("Make light wording updates only and keep the existing structure.");
+    setInstructions(promptLines.join("\n"));
+  }, [selectedEntry, instructionsTouched, instructions]);
+
+  const handleEntrySelect = useCallback((event: ChangeEvent<HTMLSelectElement>) => {
+    setSelectedEntryKey(event.target.value);
+    setInstructionsTouched(false);
+  }, []);
+
+  const handleLoad = useCallback(async () => {
+    if (!hasRepo) {
+      setError("Select a project before loading a file.");
+      return;
+    }
+    const trimmedPath = path.trim();
+    if (!trimmedPath) {
+      setError("Enter a file path to load.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const params = new URLSearchParams();
+      params.set("path", trimmedPath);
+      if (branch.trim()) {
+        params.set("branch", branch.trim());
+      }
+      if (project) {
+        params.set("project", project);
+      }
+      const requestInit: RequestInit = { cache: "no-store" };
+      if (resolvedSecrets.githubPat) {
+        requestInit.headers = { "x-github-pat": resolvedSecrets.githubPat };
+      }
+      const response = await fetch(
+        `/api/editor/${owner}/${repoName}?${params.toString()}`,
+        requestInit,
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        path?: string;
+        content?: string;
+        exists?: boolean;
+        error?: string;
+      };
+      if (!response.ok) {
+        const msg = body?.error ?? response.statusText ?? "Failed to load file";
+        throw new Error(msg);
+      }
+      const text = typeof body?.content === "string" ? body.content : "";
+      setContent(text);
+      setFileExists(body?.exists ?? false);
+      setLoadedPath(typeof body?.path === "string" ? body.path : trimmedPath);
+      setMessage(
+        body?.exists
+          ? `Loaded ${body?.path ?? trimmedPath} from ${branch.trim() || "main"}.`
+          : `Start a new ${body?.path ?? trimmedPath} on ${branch.trim() || "main"}.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [branch, hasRepo, owner, path, project, repoName, resolvedSecrets.githubPat]);
+
+  const handleSave = useCallback(async () => {
+    if (!hasRepo) {
+      setError("Select a project before saving.");
+      return;
+    }
+    if (!githubConfigured) {
+      setError("Add a GitHub PAT in Settings to save changes.");
+      return;
+    }
+    const trimmedPath = path.trim();
+    if (!trimmedPath) {
+      setError("Enter a file path before saving.");
+      return;
+    }
+    if (!content.trim()) {
+      setError("Load or draft content before saving.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const payload = {
+        path: trimmedPath,
+        content,
+        branch: branch.trim() || "main",
+        project,
+      };
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (resolvedSecrets.githubPat) {
+        headers["x-github-pat"] = resolvedSecrets.githubPat;
+      }
+      const response = await fetch(`/api/editor/${owner}/${repoName}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        path?: string;
+        branch?: string;
+      };
+      if (!response.ok) {
+        const msg = body?.error ?? response.statusText ?? "Failed to save file";
+        throw new Error(msg);
+      }
+      setMessage(
+        `Saved ${body?.path ?? trimmedPath} on ${body?.branch ?? branch.trim() || "main"}.`,
+      );
+      setFileExists(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [branch, content, githubConfigured, hasRepo, owner, path, project, repoName, resolvedSecrets.githubPat]);
+
+  const handleRewrite = useCallback(async () => {
+    if (!hasRepo) {
+      setError("Select a project before using the smart editor.");
+      return;
+    }
+    if (!openAiConfigured) {
+      setError("Add an OpenAI API key in Settings to use the smart editor.");
+      return;
+    }
+    if (!content.trim()) {
+      setError("Load file content before requesting an edit.");
+      return;
+    }
+
+    setAiLoading(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (resolvedSecrets.openaiKey) {
+        headers["x-openai-key"] = resolvedSecrets.openaiKey;
+      }
+      const response = await fetch(`/api/editor/${owner}/${repoName}/rewrite`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          path: path.trim(),
+          content,
+          project,
+          instructions: instructions.trim(),
+          contextSummary: selectedEntry?.summary,
+          blockers: selectedEntry?.blockers,
+          statusLabel: selectedEntry?.statusLabel,
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as {
+        suggestion?: string;
+        error?: string;
+        detail?: string;
+        path?: string;
+      };
+      if (!response.ok) {
+        const msg = body?.detail ?? body?.error ?? response.statusText ?? "Failed to generate suggestion";
+        throw new Error(msg);
+      }
+      if (typeof body?.suggestion === "string" && body.suggestion.trim()) {
+        setContent(body.suggestion);
+        setMessage(`Applied AI suggestion for ${body?.path ?? path.trim()}.`);
+        setInstructionsTouched(true);
+      } else {
+        throw new Error("AI response was empty.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAiLoading(false);
+    }
+  }, [content, hasRepo, instructions, openAiConfigured, owner, path, project, repoName, resolvedSecrets.openaiKey, selectedEntry]);
+
+  const disableActions = !hasRepo;
+
+  return (
+    <section className="card smart-editor-card">
+      <div className="status-row">
+        <div>
+          <div className="section-title">Smart editor</div>
+          <p className="hint small">
+            Use ChatGPT to polish roadmap wording so checks go green without leaving the dashboard.
+          </p>
+        </div>
+      </div>
+      <p className="hint small">
+        {hasRepo
+          ? `Editing ${owner}/${repoName}${project ? ` · #${project}` : ""}.`
+          : "Select a project to load its roadmap files."}
+        {githubConfigured ? " · GitHub token ready." : " · Add a GitHub PAT in Settings to save."}
+        {openAiConfigured ? " · OpenAI key ready." : " · Add an OpenAI key for AI rewrites."}
+      </p>
+
+      {error ? <div className="manual-error">{error}</div> : null}
+      {message ? <div className="hint small">{message}</div> : null}
+
+      <div className="grid">
+        <div className="form-row">
+          <label>
+            Branch
+            <input
+              value={branch}
+              onChange={(event) => setBranch(event.target.value)}
+              placeholder="main"
+              disabled={disableActions}
+            />
+          </label>
+          <label>
+            File path
+            <input
+              value={path}
+              onChange={(event) => setPath(event.target.value)}
+              list={pathListId}
+              placeholder="docs/roadmap.yml"
+              disabled={disableActions}
+            />
+            <datalist id={pathListId}>
+              {fileSuggestions.map((option) => (
+                <option key={option} value={option} />
+              ))}
+            </datalist>
+          </label>
+        </div>
+
+        <label>
+          Incomplete item context (optional)
+          <select
+            value={selectedEntryKey}
+            onChange={handleEntrySelect}
+            disabled={entries.length === 0 || disableActions}
+          >
+            <option value="">Choose an incomplete item…</option>
+            {entries.map((entry) => (
+              <option key={entry.key} value={entry.key}>
+                {entry.itemLabel}
+                {entry.itemMeta ? ` (${entry.itemMeta})` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Guidance for ChatGPT
+          <textarea
+            value={instructions}
+            onChange={(event) => {
+              setInstructions(event.target.value);
+              setInstructionsTouched(true);
+            }}
+            placeholder="Add any specific messaging or tone updates you need."
+            disabled={disableActions}
+          />
+        </label>
+
+        <div>
+          <div className="hint small">
+            {loadedPath
+              ? fileExists
+                ? `Loaded ${loadedPath}`
+                : `Drafting new ${loadedPath}`
+              : "Load a roadmap file to begin editing."}
+          </div>
+          <div className="incomplete-actions" style={{ marginTop: "8px" }}>
+            <button type="button" className="ghost-button compact" onClick={handleLoad} disabled={loading || disableActions}>
+              {loading ? "Loading…" : "Load file"}
+            </button>
+            <button
+              type="button"
+              className="ghost-button compact"
+              onClick={handleRewrite}
+              disabled={aiLoading || disableActions || !openAiConfigured || !content.trim()}
+            >
+              {aiLoading ? "Asking ChatGPT…" : "Rewrite with AI"}
+            </button>
+            <button
+              type="button"
+              className="ghost-button compact"
+              onClick={handleSave}
+              disabled={saving || disableActions || !githubConfigured || !content.trim()}
+            >
+              {saving ? "Saving…" : "Save to GitHub"}
+            </button>
+          </div>
+        </div>
+
+        <label>
+          File contents
+          <textarea
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            placeholder="Load a roadmap file or start typing to scaffold a new one."
+            disabled={disableActions}
+          />
+        </label>
+      </div>
+    </section>
+  );
+}
+
 function CreateEdgeFunctionGuide() {
   return (
     <section className="card guide-card">
@@ -3033,6 +3451,9 @@ function DashboardPage() {
                 {decoratedWeeks.length > 0 ? <WeekProgress weeks={decoratedWeeks} /> : null}
 
                 {decoratedWeeks.length > 0 ? <IncompleteSummary entries={incompleteEntries} /> : null}
+                {activeRepo ? (
+                  <SmartEditorCard repo={activeRepo} status={data ?? null} entries={incompleteEntries} />
+                ) : null}
 
                 {data && decoratedWeeks.length > 0 ? (
                   <div className="week-grid">
