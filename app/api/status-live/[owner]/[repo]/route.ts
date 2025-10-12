@@ -1,12 +1,19 @@
 import { NextResponse } from "next/server";
 import yaml from "js-yaml";
 import { encodeGitHubPath } from "@/lib/github";
+import { enrichWeeks, type RunCheckResult } from "../enrich-weeks";
 
 export const runtime = "nodejs";
 
 const DEFAULT_BRANCH = process.env.DEFAULT_BRANCH || "main";
 const REVALIDATE_SECS = 15;
 const UA = "roadmap-dashboard-pro";
+
+type NextFetchInit = RequestInit & { next?: { revalidate?: number } };
+
+function fetchWithNext(input: Parameters<typeof fetch>[0], init?: NextFetchInit) {
+  return fetch(input, init as any);
+}
 
 function hasGitHubAppConfig() {
   return Boolean(
@@ -44,12 +51,12 @@ function ghHeaders(token?: string) {
 }
 
 async function fetchJSON(url: string, token?: string) {
-  const r = await fetch(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
+  const r = await fetchWithNext(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`);
   return r.json();
 }
 async function fetchText(url: string, token?: string) {
-  const r = await fetch(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
+  const r = await fetchWithNext(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} for ${url}`);
   return r.text();
 }
@@ -72,7 +79,7 @@ async function fetchViaContentsAPI(owner: string, repo: string, path: string, re
   if (!token) return null;
   const encodedPath = encodeGitHubPath(path);
   const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
-  const r = await fetch(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
+  const r = await fetchWithNext(url, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) return null;
 
   try {
@@ -89,7 +96,7 @@ async function fetchViaContentsAPI(owner: string, repo: string, path: string, re
 async function fetchViaRaw(owner: string, repo: string, path: string, ref: string) {
   const encodedPath = encodeGitHubPath(path);
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
-  const r = await fetch(url, { headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
+  const r = await fetchWithNext(url, { headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
   if (!r.ok) return null;
   return r.text();
 }
@@ -107,11 +114,11 @@ async function fileExists(owner: string, repo: string, path: string, ref: string
   const encodedPath = encodeGitHubPath(path);
   if (token) {
     const u = `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
-    const r = await fetch(u, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
+    const r = await fetchWithNext(u, { headers: ghHeaders(token), next: { revalidate: REVALIDATE_SECS } });
     if (r.ok) return true;
   }
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
-  const r = await fetch(url, { method: "GET", headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
+  const r = await fetchWithNext(url, { method: "GET", headers: ghHeaders(), next: { revalidate: REVALIDATE_SECS } });
   return r.ok;
 }
 
@@ -127,7 +134,7 @@ async function runCheck(
   token: string | undefined,
   rc: any,
   check: any
-): Promise<{ status: "pass" | "fail" | "skip"; note?: string }> {
+): Promise<RunCheckResult> {
   const type = String(check?.type || "").trim();
 
   if (type === "files_exist") {
@@ -159,7 +166,7 @@ async function runCheck(
     const url = check.url || check.detail;
     if (!url) return { status: "skip", note: "no url" };
     try {
-      const r = await fetch(url, { next: { revalidate: 0 } });
+      const r = await fetchWithNext(url, { next: { revalidate: 0 } });
       if (!r.ok) return { status: "fail", note: `HTTP ${r.status}` };
       const body = await r.text();
       const must = asArray<string>(check.must_match);
@@ -180,7 +187,7 @@ async function runCheck(
     if (!envUrl) return { status: "skip", note: "READ_ONLY_CHECKS_URL not configured" };
     if (!q) return { status: "skip", note: "no query" };
     try {
-      const r = await fetch(envUrl, {
+      const r = await fetchWithNext(envUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ query: q }),
@@ -197,133 +204,6 @@ async function runCheck(
   return { status: "skip", note: `unknown type: ${type}` };
 }
 
-const PASS_STATUSES = new Set([
-  "pass",
-  "passed",
-  "ok",
-  "success",
-  "succeeded",
-  "complete",
-  "completed",
-  "done",
-  "✅",
-]);
-const FAIL_STATUSES = new Set(["fail", "failed", "error", "missing", "❌"]);
-
-function normalizeStatusValue(val: unknown) {
-  return typeof val === "string" ? val.trim().toLowerCase() : "";
-}
-
-function inferOk(status: unknown, fallback?: unknown): boolean | undefined {
-  if (typeof fallback === "boolean") return fallback;
-  const norm = normalizeStatusValue(status);
-  if (PASS_STATUSES.has(norm)) return true;
-  if (FAIL_STATUSES.has(norm)) return false;
-  if (norm === "skip" || norm === "skipped" || norm === "pending") return undefined;
-  return undefined;
-}
-
-function textOrNull(val: unknown) {
-  if (typeof val !== "string") return undefined;
-  const trimmed = val.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function mergeDetail(detail: unknown, note: unknown) {
-  const base = textOrNull(detail);
-  const extra = textOrNull(note);
-  if (base && extra && base !== extra) return `${base} – ${extra}`;
-  return extra ?? base;
-}
-
-function cloneCheck(check: any) {
-  if (check && typeof check === "object" && !Array.isArray(check)) {
-    return { ...check };
-  }
-  if (typeof check === "string") {
-    return { type: check };
-  }
-  return { type: "unknown" };
-}
-
-type EnrichMode = "live" | "artifact";
-
-async function enrichWeeks(
-  weeks: any,
-  ctx: {
-    owner: string;
-    repo: string;
-    branch: string;
-    token?: string;
-    rc: any;
-    mode: EnrichMode;
-  }
-) {
-  const sourceWeeks = Array.isArray(weeks) ? weeks : [];
-  const out: any[] = [];
-
-  for (const week of sourceWeeks) {
-    if (!week || typeof week !== "object") {
-      out.push(week);
-      continue;
-    }
-
-    const sourceItems = Array.isArray((week as any).items) ? (week as any).items : [];
-    const itemsOut: any[] = [];
-
-    for (const item of sourceItems) {
-      if (!item || typeof item !== "object") {
-        itemsOut.push(item);
-        continue;
-      }
-
-      const itemObj: any = { ...item };
-      const sourceChecks = Array.isArray(item.checks) ? item.checks : [];
-      const checksOut: any[] = [];
-
-      if (ctx.mode === "live") {
-        for (const check of sourceChecks) {
-          const base = cloneCheck(check);
-          // eslint-disable-next-line no-await-in-loop
-          const result = await runCheck(ctx.owner, ctx.repo, ctx.branch, ctx.token, ctx.rc, check);
-          base.status = result.status;
-          base.result = result.status;
-          if (result.note !== undefined) base.note = result.note;
-          const detail = mergeDetail(base.detail, result.note);
-          if (detail !== undefined) base.detail = detail;
-          base.ok = inferOk(result.status);
-          checksOut.push(base);
-        }
-      } else {
-        for (const check of sourceChecks) {
-          const base = cloneCheck(check);
-          const status = base.result ?? base.status;
-          base.result = status;
-          base.ok = inferOk(status, base.ok);
-          const detail = mergeDetail(base.detail, base.note);
-          if (detail !== undefined) base.detail = detail;
-          checksOut.push(base);
-        }
-      }
-
-      itemObj.checks = checksOut;
-
-      const computedDone = checksOut.length > 0 ? checksOut.every((c) => c.ok === true) : undefined;
-      const explicitDone = typeof item.done === "boolean" ? item.done : undefined;
-
-      if (computedDone !== undefined) itemObj.done = computedDone;
-      else if (explicitDone !== undefined) itemObj.done = explicitDone;
-      else delete itemObj.done;
-
-      itemsOut.push(itemObj);
-    }
-
-    out.push({ ...week, items: itemsOut });
-  }
-
-  return out;
-}
-
 export async function GET(_req: Request, { params }: Ctx) {
   const { owner, repo } = params;
 
@@ -337,7 +217,15 @@ export async function GET(_req: Request, { params }: Ctx) {
   if (statusTxt) {
     try {
       const json = JSON.parse(statusTxt);
-      const weeks = await enrichWeeks(json?.weeks, { owner, repo, branch, token, rc: null, mode: "artifact" });
+      const weeks = await enrichWeeks(json?.weeks, {
+        owner,
+        repo,
+        branch,
+        token,
+        rc: null,
+        mode: "artifact",
+        runCheck,
+      });
       const payload: any = {
         ...json,
         owner: json?.owner ?? owner,
@@ -407,7 +295,7 @@ export async function GET(_req: Request, { params }: Ctx) {
     );
   }
 
-  const weeks = await enrichWeeks(doc?.weeks, { owner, repo, branch, token, rc, mode: "live" });
+  const weeks = await enrichWeeks(doc?.weeks, { owner, repo, branch, token, rc, mode: "live", runCheck });
 
   return NextResponse.json(
     {
