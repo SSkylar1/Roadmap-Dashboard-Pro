@@ -169,14 +169,282 @@ function slugify(value: string, fallback: string) {
   return slug || fallback;
 }
 
-function extractTaskName(input: unknown): string | undefined {
-  if (typeof input === "string") return input.trim();
+const POSITIVE_STATUS_KEYWORDS = [
+  "done",
+  "complete",
+  "completed",
+  "finished",
+  "shipped",
+  "launched",
+  "achieved",
+  "met",
+  "approved",
+  "ready",
+  "live",
+  "delivered",
+  "published",
+  "released",
+  "true",
+  "yes",
+];
+
+const NEGATIVE_STATUS_KEYWORDS = [
+  "todo",
+  "backlog",
+  "pending",
+  "blocked",
+  "not started",
+  "tbd",
+  "in progress",
+  "wip",
+  "no",
+  "false",
+  "open",
+  "later",
+  "skip",
+  "hold",
+  "paused",
+  "stalled",
+  "deferred",
+];
+
+function normalizeWhitespace(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^[\s-]+/, "")
+    .trim();
+}
+
+function stripBulletPrefix(value: string) {
+  return value.replace(/^[-*+]\s+/, "").trim();
+}
+
+function parseCheckboxPrefix(value: string): { text: string; done?: boolean } {
+  const match = value.match(/^\s*(?:[-*+]\s*)?\[(?<mark>[^\]])\]\s*(?<rest>.+)$/u);
+  if (!match?.groups?.rest) {
+    return { text: value.trim() };
+  }
+
+  const mark = match.groups.mark.trim().toLowerCase();
+  const rest = match.groups.rest.trim();
+  const truthy = ["x", "✔", "✓", "☑", "1", "done", "yes", "y"];
+  const falsy = ["", " ", "-", "0"];
+  let done: boolean | undefined;
+  if (truthy.includes(mark)) done = true;
+  else if (falsy.includes(mark)) done = false;
+
+  return {
+    text: rest,
+    done,
+  };
+}
+
+function stripEmojiIndicators(value: string): { text: string; done?: boolean } {
+  let text = value.trim();
+  let done: boolean | undefined;
+
+  const leadingDone = text.match(/^(?:✅|☑️|✔️|✓)\s*(.+)$/u);
+  if (leadingDone?.[1]) {
+    text = leadingDone[1].trim();
+    done = true;
+  }
+
+  const leadingTodo = text.match(/^(?:❌|⛔️|🚫|🛑)\s*(.+)$/u);
+  if (leadingTodo?.[1]) {
+    text = leadingTodo[1].trim();
+    done = false;
+  }
+
+  const trailingDone = text.match(/^(.+?)(?:\s*(?:✅|☑️|✔️|✓))+$/u);
+  if (trailingDone?.[1]) {
+    text = trailingDone[1].trim();
+    done = true;
+  }
+
+  const trailingTodo = text.match(/^(.+?)(?:\s*(?:❌|⛔️|🚫|🛑))+$/u);
+  if (trailingTodo?.[1]) {
+    text = trailingTodo[1].trim();
+    done = false;
+  }
+
+  return { text, done };
+}
+
+function stripStatusSuffix(value: string): { text: string; done?: boolean } {
+  let text = value;
+  let done: boolean | undefined;
+
+  const patterns = [
+    { regex: /\b(done|complete|completed|finished|shipped|launched)\b/gi, value: true },
+    {
+      regex: /\b(todo|backlog|pending|blocked|tbd|in progress|wip|later|paused|stalled)\b/gi,
+      value: false,
+    },
+  ] as const;
+
+  for (const { regex, value: result } of patterns) {
+    if (regex.test(text)) {
+      text = text.replace(regex, "").replace(/\(\s*\)/g, "");
+      done = result;
+      break;
+    }
+  }
+
+  return { text: normalizeWhitespace(text), done };
+}
+
+function parseTaskString(raw: string): { name: string; done?: boolean } {
+  const withoutBullet = stripBulletPrefix(raw);
+  const { text: afterCheckbox, done: checkboxDone } = parseCheckboxPrefix(withoutBullet);
+  const { text: afterEmoji, done: emojiDone } = stripEmojiIndicators(afterCheckbox);
+  const { text: cleaned, done: suffixDone } = stripStatusSuffix(afterEmoji);
+
+  const done = checkboxDone ?? emojiDone ?? suffixDone;
+  return { name: cleaned, done };
+}
+
+function parseStatusValue(value: unknown, seen: Set<unknown> = new Set()): boolean | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return undefined;
+    if (value <= 0) return false;
+    if (value >= 1) return true;
+    return undefined;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const lower = trimmed.toLowerCase();
+    if (/[✅☑️✔️✓]/u.test(trimmed)) return true;
+    if (/[❌⛔️🚫🛑]/u.test(trimmed)) return false;
+
+    const percentMatch = lower.match(/(-?\d+(?:\.\d+)?)%/);
+    if (percentMatch) {
+      const pct = Number.parseFloat(percentMatch[1]);
+      if (!Number.isNaN(pct)) {
+        if (pct >= 100) return true;
+        if (pct <= 0) return false;
+      }
+    }
+
+    const numeric = Number.parseFloat(lower);
+    if (!Number.isNaN(numeric)) {
+      if (numeric <= 0) return false;
+      if (numeric >= 1) return true;
+    }
+
+    const cleaned = lower.replace(/[^a-z0-9]+/g, " ").trim();
+    if (!cleaned) return undefined;
+
+    const containsNegative = NEGATIVE_STATUS_KEYWORDS.some((token) => cleaned.includes(token));
+    if (containsNegative) return false;
+    const containsPositive = POSITIVE_STATUS_KEYWORDS.some((token) => cleaned.includes(token));
+    if (containsPositive) return true;
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const candidate = parseStatusValue(entry, seen);
+      if (candidate !== undefined) return candidate;
+    }
+    return undefined;
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const prioritizedKeys = [
+      "done",
+      "isDone",
+      "is_done",
+      "complete",
+      "completed",
+      "finished",
+      "status",
+      "state",
+      "value",
+      "result",
+      "progress",
+      "percent",
+      "percentage",
+    ];
+
+    for (const key of prioritizedKeys) {
+      if (!(key in record)) continue;
+      const candidate = parseStatusValue(record[key], seen);
+      if (candidate !== undefined) return candidate;
+    }
+
+    if (typeof record.percentage === "number") {
+      if (record.percentage >= 100) return true;
+      if (record.percentage <= 0) return false;
+    }
+    if (typeof record.percent === "number") {
+      if (record.percent >= 100) return true;
+      if (record.percent <= 0) return false;
+    }
+    if (typeof record.progress === "number") {
+      if (record.progress >= 100) return true;
+      if (record.progress <= 0) return false;
+    }
+  }
+
+  return undefined;
+}
+
+type TaskDescriptor = {
+  name?: string;
+  manual?: boolean;
+  done?: boolean;
+  note?: string;
+  manualKey?: string;
+  checks?: Check[];
+};
+
+function parseTaskDescriptor(input: unknown): TaskDescriptor {
+  if (typeof input === "string") {
+    const parsed = parseTaskString(input);
+    return { name: parsed.name, done: parsed.done };
+  }
+
   if (input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const candidate = record.task || record.title || record.name;
-    if (typeof candidate === "string") return candidate.trim();
+    const name = typeof candidate === "string" ? candidate.trim() : undefined;
+    const manual = typeof record.manual === "boolean" ? record.manual : undefined;
+    const note = typeof record.note === "string" ? record.note.trim() : undefined;
+    const manualKey = typeof record.manualKey === "string"
+      ? record.manualKey.trim()
+      : typeof record.manual_key === "string"
+        ? record.manual_key.trim()
+        : typeof record.key === "string"
+          ? record.key.trim()
+          : undefined;
+    const doneCandidate =
+      record.done ??
+      record.complete ??
+      record.completed ??
+      record.finished ??
+      record.status ??
+      record.state ??
+      record.progress ??
+      record.percent ??
+      record.percentage;
+    const done = parseStatusValue(doneCandidate);
+
+    const checksRaw = Array.isArray(record.checks) ? record.checks : [];
+    const checks = checksRaw
+      .map((entry) => (entry && typeof entry === "object" ? (entry as Check) : null))
+      .filter((entry): entry is Check => Boolean(entry?.type));
+
+    return { name, manual, done, note, manualKey, checks };
   }
-  return undefined;
+
+  return {};
 }
 
 function extractPhaseWeeks(roadmap: unknown): RoadmapWeek[] {
@@ -192,20 +460,40 @@ function extractPhaseWeeks(roadmap: unknown): RoadmapWeek[] {
     milestones.forEach((milestone: RoadmapMilestone, milestoneIndex) => {
       const tasks = Array.isArray(milestone?.tasks) ? milestone.tasks : [];
       const items = tasks.reduce<RoadmapItem[]>((acc, task: unknown, taskIndex) => {
-        const name = extractTaskName(task);
+        const descriptor = parseTaskDescriptor(task);
+        const name = descriptor.name?.trim();
         if (!name) return acc;
         const id = slugify(
           `${phaseLabel}-${name}`,
           `task-${phaseIndex + 1}-${milestoneIndex + 1}-${taskIndex + 1}`,
         );
 
-        acc.push({
+        const checks = Array.isArray(descriptor.checks) ? descriptor.checks : [];
+        const manual =
+          typeof descriptor.manual === "boolean" ? descriptor.manual : checks.length === 0;
+
+        const item: RoadmapItem = {
           id,
           name,
-          checks: [] as Check[],
-          manual: true,
-          done: false,
-        });
+          checks,
+          manual,
+        };
+
+        if (descriptor.done !== undefined) {
+          item.done = descriptor.done;
+        } else if (manual) {
+          item.done = false;
+        }
+
+        if (descriptor.note) {
+          item.note = descriptor.note;
+        }
+
+        if (descriptor.manualKey) {
+          item.manualKey = descriptor.manualKey;
+        }
+
+        acc.push(item);
 
         return acc;
       }, []);
