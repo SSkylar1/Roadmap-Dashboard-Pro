@@ -16,6 +16,7 @@ import yaml from "js-yaml";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { mergeProjectOptions } from "@/lib/project-options";
+import { removeProjectFromStore, removeRepoFromStore } from "@/lib/secrets-actions";
 import { CONCEPT_HANDOFF_KEY, ROADMAP_HANDOFF_KEY } from "@/lib/wizard-handoff";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
@@ -222,6 +223,10 @@ function ConceptWizardPageInner() {
   const [projectSlugsLoading, setProjectSlugsLoading] = useState(false);
   const [projectSlugsError, setProjectSlugsError] = useState<string | null>(null);
   const [initialContextApplied, setInitialContextApplied] = useState(false);
+  const [isRemovingRepo, setIsRemovingRepo] = useState(false);
+  const [removeRepoError, setRemoveRepoError] = useState<string | null>(null);
+  const [isRemovingProject, setIsRemovingProject] = useState(false);
+  const [removeProjectError, setRemoveProjectError] = useState<string | null>(null);
   const repoSlug = useMemo(() => {
     const ownerSlug = owner.trim().toLowerCase();
     const repoSlugValue = repo.trim().toLowerCase();
@@ -236,6 +241,11 @@ function ConceptWizardPageInner() {
   const projectOptions = useMemo(
     () => mergeProjectOptions(matchedRepoEntry?.projects, discoveredProjectSlugs),
     [matchedRepoEntry?.projects, discoveredProjectSlugs],
+  );
+
+  const selectedProjectMeta = useMemo(
+    () => projectOptions.find((option) => option.id === selectedProjectOption) ?? null,
+    [projectOptions, selectedProjectOption],
   );
 
   const combinedPrompt = useMemo(() => {
@@ -343,6 +353,14 @@ function ConceptWizardPageInner() {
     setSelectedProjectOption((current) => (current === nextProjectOption ? current : nextProjectOption));
   }, [project, projectOptions]);
 
+  useEffect(() => {
+    setRemoveRepoError(null);
+  }, [selectedRepoId, matchedRepoEntry?.id]);
+
+  useEffect(() => {
+    setRemoveProjectError(null);
+  }, [selectedProjectOption, matchedRepoEntry?.id]);
+
   const handleRepoSelect = (event: ChangeEvent<HTMLSelectElement>) => {
     const value = event.target.value;
     setSelectedRepoId(value);
@@ -375,6 +393,61 @@ function ConceptWizardPageInner() {
     const match = projectOptions.find((option) => option.id === value);
     if (match) {
       setProject(match.id);
+    }
+  };
+
+  const handleRemoveRepo = async () => {
+    if (!matchedRepoEntry) {
+      return;
+    }
+    if (!window.confirm(`Remove ${matchedRepoEntry.owner}/${matchedRepoEntry.repo} from the dashboard?`)) {
+      return;
+    }
+    setIsRemovingRepo(true);
+    setRemoveRepoError(null);
+    try {
+      await removeRepoFromStore(secretsStore, matchedRepoEntry.id);
+      setOwner("");
+      setRepo("");
+      setProject("");
+      setSelectedRepoId(ADD_NEW_REPO_OPTION);
+      setSelectedProjectOption("");
+    } catch (removeError) {
+      setRemoveRepoError(
+        removeError instanceof Error ? removeError.message : String(removeError ?? "Failed to remove repository"),
+      );
+    } finally {
+      setIsRemovingRepo(false);
+    }
+  };
+
+  const handleRemoveProject = async () => {
+    if (!matchedRepoEntry || !selectedProjectMeta || selectedProjectMeta.source !== "stored") {
+      return;
+    }
+    const projectEntry = matchedRepoEntry.projects.find((entry) => entry.id === selectedProjectMeta.id);
+    if (!projectEntry) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Remove project ${projectEntry.name} from ${matchedRepoEntry.owner}/${matchedRepoEntry.repo}?`,
+      )
+    ) {
+      return;
+    }
+    setIsRemovingProject(true);
+    setRemoveProjectError(null);
+    try {
+      await removeProjectFromStore(secretsStore, matchedRepoEntry.id, projectEntry.id);
+      setProject("");
+      setSelectedProjectOption("");
+    } catch (removeError) {
+      setRemoveProjectError(
+        removeError instanceof Error ? removeError.message : String(removeError ?? "Failed to remove project"),
+      );
+    } finally {
+      setIsRemovingProject(false);
     }
   };
 
@@ -991,6 +1064,21 @@ function ConceptWizardPageInner() {
                   );
                 })}
               </select>
+              {matchedRepoEntry && selectedRepoId !== ADD_NEW_REPO_OPTION ? (
+                <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3 tw-pt-1">
+                  <button
+                    type="button"
+                    onClick={handleRemoveRepo}
+                    disabled={isRemovingRepo}
+                    className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-rose-300 hover:tw-text-rose-100"
+                  >
+                    {isRemovingRepo ? "Removing…" : "Remove repo"}
+                  </button>
+                  {removeRepoError ? (
+                    <span className="tw-text-xs tw-text-rose-300">{removeRepoError}</span>
+                  ) : null}
+                </div>
+              ) : null}
             </label>
             <label className="tw-flex tw-flex-col tw-gap-1">
               <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Branch</span>
@@ -1023,6 +1111,21 @@ function ConceptWizardPageInner() {
               ) : null}
               {projectSlugsError ? (
                 <span className="tw-text-xs tw-text-rose-300">{projectSlugsError}</span>
+              ) : null}
+              {matchedRepoEntry && selectedProjectMeta?.source === "stored" ? (
+                <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3 tw-pt-1">
+                  <button
+                    type="button"
+                    onClick={handleRemoveProject}
+                    disabled={isRemovingProject}
+                    className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-rose-300 hover:tw-text-rose-100"
+                  >
+                    {isRemovingProject ? "Removing…" : "Remove project"}
+                  </button>
+                  {removeProjectError ? (
+                    <span className="tw-text-xs tw-text-rose-300">{removeProjectError}</span>
+                  ) : null}
+                </div>
               ) : null}
             </label>
             {selectedRepoId === ADD_NEW_REPO_OPTION && (
