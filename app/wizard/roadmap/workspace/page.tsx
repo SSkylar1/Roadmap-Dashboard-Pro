@@ -14,6 +14,7 @@ import { useSearchParams } from "next/navigation";
 import { load } from "js-yaml";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { mergeProjectOptions } from "@/lib/project-options";
 import { ROADMAP_HANDOFF_KEY } from "@/lib/wizard-handoff";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
@@ -203,6 +204,9 @@ function RoadmapProvisionerInner() {
   const repoEntries = secretsStore.repos;
   const [selectedRepoId, setSelectedRepoId] = useState<string>(ADD_NEW_REPO_OPTION);
   const [selectedProjectOption, setSelectedProjectOption] = useState<string>("");
+  const [discoveredProjectSlugs, setDiscoveredProjectSlugs] = useState<string[]>([]);
+  const [projectSlugsLoading, setProjectSlugsLoading] = useState(false);
+  const [projectSlugsError, setProjectSlugsError] = useState<string | null>(null);
   const repoSlug = useMemo(() => {
     const ownerSlug = owner.trim().toLowerCase();
     const repoSlugValue = repo.trim().toLowerCase();
@@ -226,7 +230,10 @@ function RoadmapProvisionerInner() {
   const workflowPath = describeProjectFile(".github/workflows/roadmap.yml", effectiveProjectKey);
   const statusPath = describeProjectFile("docs/roadmap-status.json", effectiveProjectKey);
   const planPath = describeProjectFile("docs/project-plan.md", effectiveProjectKey);
-  const projectOptions = useMemo(() => matchedRepoEntry?.projects ?? [], [matchedRepoEntry]);
+  const projectOptions = useMemo(
+    () => mergeProjectOptions(matchedRepoEntry?.projects, discoveredProjectSlugs),
+    [matchedRepoEntry?.projects, discoveredProjectSlugs],
+  );
   const canSubmit = Boolean(!isSubmitting && owner && repo && branch && hasRoadmap);
   const normalizedRunArtifacts = useMemo(
     () => runArtifacts.map((artifact) => artifact.replace(/\s*\(FAILED:.*\)$/i, "")),
@@ -288,6 +295,66 @@ function RoadmapProvisionerInner() {
     const nextRepoId = matchedRepoEntry?.id ?? ADD_NEW_REPO_OPTION;
     setSelectedRepoId((current) => (current === nextRepoId ? current : nextRepoId));
   }, [matchedRepoEntry?.id]);
+
+  useEffect(() => {
+    const trimmedOwner = owner.trim();
+    const trimmedRepo = repo.trim();
+    const trimmedBranch = branch.trim() || "main";
+    if (!trimmedOwner || !trimmedRepo) {
+      setDiscoveredProjectSlugs([]);
+      setProjectSlugsError(null);
+      setProjectSlugsLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setProjectSlugsLoading(true);
+    setProjectSlugsError(null);
+
+    const headers: HeadersInit = {};
+    if (secrets.githubPat && secrets.sources.githubPat) {
+      headers["x-github-pat"] = secrets.githubPat;
+    }
+
+    fetch(
+      `/api/projects/${encodeURIComponent(trimmedOwner)}/${encodeURIComponent(trimmedRepo)}?branch=${encodeURIComponent(trimmedBranch)}`,
+      {
+        cache: "no-store",
+        signal: controller.signal,
+        headers,
+      },
+    )
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          const message = body?.error || response.statusText || "Failed to load project slugs";
+          throw new Error(message);
+        }
+        return response.json();
+      })
+      .then((json: { projects?: Array<{ slug?: string }> }) => {
+        if (cancelled) return;
+        const slugs = Array.isArray(json?.projects)
+          ? json.projects
+              .map((project) => (typeof project?.slug === "string" ? project.slug.trim() : ""))
+              .filter((slug) => slug.length > 0)
+          : [];
+        setDiscoveredProjectSlugs(slugs);
+        setProjectSlugsLoading(false);
+      })
+      .catch((fetchError) => {
+        if (cancelled) return;
+        setDiscoveredProjectSlugs([]);
+        setProjectSlugsError(String(fetchError?.message || fetchError));
+        setProjectSlugsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [owner, repo, branch, secrets.githubPat, secrets.sources.githubPat]);
 
   useEffect(() => {
     if (owner || repo) {
@@ -695,6 +762,12 @@ function RoadmapProvisionerInner() {
                 ))}
                 <option value={ADD_NEW_PROJECT_OPTION}>Add new project…</option>
               </select>
+              {projectSlugsLoading ? (
+                <span className="tw-text-xs tw-text-slate-400">Loading project slugs…</span>
+              ) : null}
+              {projectSlugsError ? (
+                <span className="tw-text-xs tw-text-rose-300">{projectSlugsError}</span>
+              ) : null}
             </label>
             {selectedRepoId === ADD_NEW_REPO_OPTION && (
               <div className="tw-grid tw-gap-4 md:tw-col-span-2 md:tw-grid-cols-2">

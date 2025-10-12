@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./.tmp-tests",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["lib/project-options.ts", "lib/project-paths.ts", "tests/**/*.ts"],
+  "exclude": []
+}
