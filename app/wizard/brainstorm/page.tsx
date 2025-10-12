@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { mergeProjectOptions } from "@/lib/project-options";
+import { removeProjectFromStore, removeRepoFromStore } from "@/lib/secrets-actions";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
 type ChatMessage = {
@@ -101,6 +102,10 @@ export default function BrainstormPage() {
   const [projectSlugsError, setProjectSlugsError] = useState<string | null>(null);
   const [openAsPr, setOpenAsPr] = useState(false);
   const [initialContextLoaded, setInitialContextLoaded] = useState(false);
+  const [isRemovingRepo, setIsRemovingRepo] = useState(false);
+  const [removeRepoError, setRemoveRepoError] = useState<string | null>(null);
+  const [isRemovingProject, setIsRemovingProject] = useState(false);
+  const [removeProjectError, setRemoveProjectError] = useState<string | null>(null);
 
   const repoSlug = useMemo(() => {
     const ownerSlug = owner.trim().toLowerCase();
@@ -118,6 +123,11 @@ export default function BrainstormPage() {
   const projectOptions = useMemo(
     () => mergeProjectOptions(matchedRepoEntry?.projects, discoveredProjectSlugs),
     [matchedRepoEntry?.projects, discoveredProjectSlugs],
+  );
+
+  const selectedProjectMeta = useMemo(
+    () => projectOptions.find((option) => option.id === selectedProjectOption) ?? null,
+    [projectOptions, selectedProjectOption],
   );
 
   const projectKey = useMemo(() => normalizeProjectKey(project), [project]);
@@ -254,6 +264,14 @@ export default function BrainstormPage() {
     setSelectedProjectOption((current) => (current === optionValue ? current : optionValue));
   }, [project, projectOptions]);
 
+  useEffect(() => {
+    setRemoveRepoError(null);
+  }, [selectedRepoId, matchedRepoEntry?.id]);
+
+  useEffect(() => {
+    setRemoveProjectError(null);
+  }, [selectedProjectOption, matchedRepoEntry?.id]);
+
   const handleRepoSelect = (event: ChangeEvent<HTMLSelectElement>) => {
     const value = event.target.value;
     setSelectedRepoId(value);
@@ -284,6 +302,61 @@ export default function BrainstormPage() {
     const match = projectOptions.find((option) => option.id === value);
     if (match) {
       setProject(match.id);
+    }
+  };
+
+  const handleRemoveRepo = async () => {
+    if (!matchedRepoEntry) {
+      return;
+    }
+    if (!window.confirm(`Remove ${matchedRepoEntry.owner}/${matchedRepoEntry.repo} from the dashboard?`)) {
+      return;
+    }
+    setIsRemovingRepo(true);
+    setRemoveRepoError(null);
+    try {
+      await removeRepoFromStore(secretsStore, matchedRepoEntry.id);
+      setOwner("");
+      setRepo("");
+      setProject("");
+      setSelectedRepoId(ADD_NEW_REPO_OPTION);
+      setSelectedProjectOption("");
+    } catch (removeError) {
+      setRemoveRepoError(
+        removeError instanceof Error ? removeError.message : String(removeError ?? "Failed to remove repository"),
+      );
+    } finally {
+      setIsRemovingRepo(false);
+    }
+  };
+
+  const handleRemoveProject = async () => {
+    if (!matchedRepoEntry || !selectedProjectMeta || selectedProjectMeta.source !== "stored") {
+      return;
+    }
+    const projectEntry = matchedRepoEntry.projects.find((entry) => entry.id === selectedProjectMeta.id);
+    if (!projectEntry) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Remove project ${projectEntry.name} from ${matchedRepoEntry.owner}/${matchedRepoEntry.repo}?`,
+      )
+    ) {
+      return;
+    }
+    setIsRemovingProject(true);
+    setRemoveProjectError(null);
+    try {
+      await removeProjectFromStore(secretsStore, matchedRepoEntry.id, projectEntry.id);
+      setProject("");
+      setSelectedProjectOption("");
+    } catch (removeError) {
+      setRemoveProjectError(
+        removeError instanceof Error ? removeError.message : String(removeError ?? "Failed to remove project"),
+      );
+    } finally {
+      setIsRemovingProject(false);
     }
   };
 
@@ -538,6 +611,21 @@ export default function BrainstormPage() {
                 );
               })}
             </select>
+            {matchedRepoEntry && selectedRepoId !== ADD_NEW_REPO_OPTION ? (
+              <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3 tw-pt-1">
+                <button
+                  type="button"
+                  onClick={handleRemoveRepo}
+                  disabled={isRemovingRepo}
+                  className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-rose-300 hover:tw-text-rose-100"
+                >
+                  {isRemovingRepo ? "Removing…" : "Remove repo"}
+                </button>
+                {removeRepoError ? (
+                  <span className="tw-text-xs tw-text-rose-300">{removeRepoError}</span>
+                ) : null}
+              </div>
+            ) : null}
           </label>
           <label className="tw-flex tw-flex-col tw-gap-1">
             <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Branch</span>
@@ -550,26 +638,41 @@ export default function BrainstormPage() {
           </label>
           <label className="tw-flex tw-flex-col tw-gap-1">
             <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Project (optional)</span>
-              <select
-                value={selectedProjectOption}
-                onChange={handleProjectSelect}
-                className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
-              >
-                <option value="">Use repo defaults</option>
-                {projectOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-                <option value={ADD_NEW_PROJECT_OPTION}>Add new project…</option>
-              </select>
-              {projectSlugsLoading ? (
-                <span className="tw-text-xs tw-text-slate-400">Loading project slugs…</span>
-              ) : null}
-              {projectSlugsError ? (
-                <span className="tw-text-xs tw-text-rose-300">{projectSlugsError}</span>
-              ) : null}
-            </label>
+            <select
+              value={selectedProjectOption}
+              onChange={handleProjectSelect}
+              className="tw-w-full tw-rounded-xl tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-sm tw-text-slate-100 focus:tw-border-slate-600"
+            >
+              <option value="">Use repo defaults</option>
+              {projectOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+              <option value={ADD_NEW_PROJECT_OPTION}>Add new project…</option>
+            </select>
+            {projectSlugsLoading ? (
+              <span className="tw-text-xs tw-text-slate-400">Loading project slugs…</span>
+            ) : null}
+            {projectSlugsError ? (
+              <span className="tw-text-xs tw-text-rose-300">{projectSlugsError}</span>
+            ) : null}
+            {matchedRepoEntry && selectedProjectMeta?.source === "stored" ? (
+              <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3 tw-pt-1">
+                <button
+                  type="button"
+                  onClick={handleRemoveProject}
+                  disabled={isRemovingProject}
+                  className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-rose-300 hover:tw-text-rose-100"
+                >
+                  {isRemovingProject ? "Removing…" : "Remove project"}
+                </button>
+                {removeProjectError ? (
+                  <span className="tw-text-xs tw-text-rose-300">{removeProjectError}</span>
+                ) : null}
+              </div>
+            ) : null}
+          </label>
           <div className="tw-flex tw-flex-col tw-gap-1">
             <span className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">Pull request</span>
             <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/70 tw-px-3 tw-py-2 tw-text-xs tw-font-medium tw-text-slate-200">
