@@ -42,11 +42,22 @@ const ROADMAP_STATUS_JSON =
               id: "repo-ci",
               name: "Repo + CI scaffolding",
               done: false,
+              checks: [
+                {
+                  type: "files_exist",
+                  globs: [".github/workflows/roadmap.yml"],
+                  ok: false,
+                  status: "fail",
+                  result: "fail",
+                },
+              ],
               results: [
                 {
                   type: "files_exist",
                   globs: [".github/workflows/roadmap.yml"],
                   ok: false,
+                  status: "fail",
+                  result: "fail",
                 },
               ],
             },
@@ -146,11 +157,22 @@ const ROADMAP_STATUS_STUB =
               id: "repo-ci",
               name: "Repo + CI scaffolding",
               done: false,
+              checks: [
+                {
+                  type: "files_exist",
+                  globs: [".github/workflows/roadmap.yml"],
+                  ok: false,
+                  status: "fail",
+                  result: "fail",
+                },
+              ],
               results: [
                 {
                   type: "files_exist",
                   globs: [".github/workflows/roadmap.yml"],
                   ok: false,
+                  status: "fail",
+                  result: "fail",
                 },
               ],
             },

@@ -1,0 +1,29 @@
+{
+  "generated_at": "2024-01-01T00:00:00.000Z",
+  "weeks": [
+    {
+      "id": "wk-1",
+      "title": "Week 1",
+      "items": [
+        {
+          "id": "setup-ci",
+          "name": "Set up CI",
+          "done": false,
+          "results": [
+            {
+              "type": "files_exist",
+              "globs": [".github/workflows/ci.yml"],
+              "ok": true
+            },
+            {
+              "type": "http_ok",
+              "url": "https://example.com/health",
+              "ok": false,
+              "note": "HTTP 500"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
