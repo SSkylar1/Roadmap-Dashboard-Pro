@@ -100,9 +100,11 @@ export function extractCheckResult(query: string, payload: JsonLike): boolean | 
     if (typeof record.ok === "boolean") return record.ok;
 
     const containers = [
+      record.checks,
       record.results,
       record.result,
       record.data,
+      isRecord(record.data) ? (record.data as Record<string, unknown>).checks : undefined,
       isRecord(record.data) ? (record.data as Record<string, unknown>).results : undefined,
       record.payload,
     ];

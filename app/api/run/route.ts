@@ -142,6 +142,7 @@ function applyManualAdjustments(weeks: any[], manualState: ManualState): any[] {
       done: manualItem.done === true,
       manual: true,
       manualKey: manualItem.key,
+      checks: [],
       results: [],
     }));
 
@@ -641,7 +642,7 @@ export async function POST(req: NextRequest) {
       for (const it of w.items ?? []) {
         let passed = true;
         let hadChecks = false;
-        const results: any[] = [];
+        const checks: any[] = [];
         for (const c of (it.checks as Check[]) ?? []) {
           hadChecks = true;
           let r;
@@ -651,14 +652,24 @@ export async function POST(req: NextRequest) {
             if (!probeUrl) r = { ok: false, error: "probeUrl not provided" };
             else r = await sql_exists(probeUrl, c.query!, combinedProbeHeaders);
           } else r = { ok: false, error: "unknown check" };
-          results.push({ ...c, ...r });
-          if (!r.ok) passed = false;
+          const ok = typeof r.ok === "boolean" ? r.ok : undefined;
+          const statusValue = ok === undefined ? "unknown" : ok ? "pass" : "fail";
+          const payload = {
+            ...c,
+            ...r,
+            ...(ok !== undefined ? { ok } : {}),
+            status: statusValue,
+            result: statusValue,
+          };
+          checks.push(payload);
+          if (ok !== true) passed = false;
         }
         const manual = it.manual === true;
         const note = typeof it.note === "string" ? it.note : undefined;
         const manualKey = typeof it.manualKey === "string" ? it.manualKey : undefined;
         const itemDone = hadChecks ? passed : it.done === true;
-        const item: any = { id: it.id, name: it.name, done: itemDone, results };
+        const item: any = { id: it.id, name: it.name, done: itemDone, checks };
+        item.results = checks;
         if (manual) item.manual = true;
         if (note) item.note = note;
         if (manualKey) item.manualKey = manualKey;
