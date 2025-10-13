@@ -19,6 +19,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { mergeProjectOptions } from "@/lib/project-options";
 import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
 import {
   type ManualItem,
@@ -1505,11 +1506,53 @@ function ProjectForm({
   const [ownerInput, setOwnerInput] = useState("");
   const [repoInput, setRepoInput] = useState("");
   const [projectInput, setProjectInput] = useState("");
+  const [projectLabel, setProjectLabel] = useState<string | undefined>(undefined);
+  const [selectedRepoId, setSelectedRepoId] = useState<string>("");
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [slugOptions, setSlugOptions] = useState<string[]>([]);
   const [slugLoading, setSlugLoading] = useState(false);
   const [slugError, setSlugError] = useState<string | null>(null);
   const slugListId = useId();
+  const secretsStore = useLocalSecrets();
+
+  const repoOptions = useMemo(() => {
+    const entries = secretsStore?.repos ?? [];
+    return entries
+      .map((entry) => {
+        const label = entry.displayName?.trim()
+          ? `${entry.displayName.trim()} (${entry.owner}/${entry.repo})`
+          : `${entry.owner}/${entry.repo}`;
+        return {
+          id: entry.id,
+          owner: entry.owner,
+          repo: entry.repo,
+          label,
+          projects: entry.projects ?? [],
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [secretsStore]);
+
+  const selectedRepo = useMemo(
+    () => repoOptions.find((option) => option.id === selectedRepoId) ?? null,
+    [repoOptions, selectedRepoId],
+  );
+
+  const projectOptions = useMemo(() => {
+    const merged = mergeProjectOptions(selectedRepo?.projects, slugOptions);
+    return merged.map((option) => {
+      const slug = option.slug ?? option.id;
+      const label = option.source === "stored" ? `${option.name} · #${slug}` : slug;
+      return {
+        value: slug,
+        label,
+        slug,
+        name: option.name,
+        source: option.source,
+      };
+    });
+  }, [selectedRepo?.projects, slugOptions]);
 
   const lookup = useMemo(() => {
     let owner = ownerInput.trim();
@@ -1523,6 +1566,46 @@ function ProjectForm({
     }
     return { owner, repo };
   }, [ownerInput, repoInput]);
+
+  useEffect(() => {
+    const normalizedOwner = lookup.owner.toLowerCase();
+    const normalizedRepo = lookup.repo.toLowerCase();
+    const match = repoOptions.find(
+      (option) => option.owner.toLowerCase() === normalizedOwner && option.repo.toLowerCase() === normalizedRepo,
+    );
+    const matchId = match?.id ?? "";
+    setSelectedRepoId((prev) => (prev === matchId ? prev : matchId));
+  }, [lookup.owner, lookup.repo, repoOptions]);
+
+  useEffect(() => {
+    if (!projectInput) {
+      if (selectedProjectKey) {
+        setSelectedProjectKey("");
+      }
+      if (projectLabel) {
+        setProjectLabel(undefined);
+      }
+      return;
+    }
+    const match = projectOptions.find((option) => option.slug === projectInput);
+    if (match) {
+      if (selectedProjectKey !== match.value) {
+        setSelectedProjectKey(match.value);
+      }
+      if (match.source === "stored") {
+        if (projectLabel !== match.name) {
+          setProjectLabel(match.name);
+        }
+      } else if (projectLabel) {
+        setProjectLabel(undefined);
+      }
+    } else if (selectedProjectKey) {
+      setSelectedProjectKey("");
+      if (projectLabel) {
+        setProjectLabel(undefined);
+      }
+    }
+  }, [projectInput, projectOptions, projectLabel, selectedProjectKey]);
 
   useEffect(() => {
     if (!lookup.owner || !lookup.repo) {
@@ -1569,6 +1652,40 @@ function ProjectForm({
     };
   }, [lookup.owner, lookup.repo]);
 
+  const handleRepoSelect = (event: ChangeEvent<HTMLSelectElement>) => {
+    const nextId = event.currentTarget.value;
+    setSelectedRepoId(nextId);
+    if (!nextId) {
+      setProjectInput("");
+      setProjectLabel(undefined);
+      setSelectedProjectKey("");
+      return;
+    }
+    const option = repoOptions.find((entry) => entry.id === nextId);
+    if (!option) return;
+    setOwnerInput(option.owner);
+    setRepoInput(option.repo);
+    setProjectInput("");
+    setProjectLabel(undefined);
+    setSelectedProjectKey("");
+    if (error) setError(null);
+  };
+
+  const handleProjectSelect = (event: ChangeEvent<HTMLSelectElement>) => {
+    const value = event.currentTarget.value;
+    setSelectedProjectKey(value);
+    if (!value) {
+      setProjectInput("");
+      setProjectLabel(undefined);
+      if (error) setError(null);
+      return;
+    }
+    const option = projectOptions.find((entry) => entry.value === value);
+    setProjectInput(option?.slug ?? value);
+    setProjectLabel(option?.source === "stored" ? option.name : undefined);
+    if (error) setError(null);
+  };
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     let owner = ownerInput.trim();
@@ -1588,7 +1705,13 @@ function ProjectForm({
     }
 
     const project = projectInput.trim();
-    const added = onAdd({ owner, repo, project });
+    const payload: RepoRef = {
+      owner,
+      repo,
+      ...(project ? { project } : {}),
+      ...(project && projectLabel ? { projectLabel } : {}),
+    };
+    const added = onAdd(payload);
     if (!added) {
       setError("Unable to add project. Check the owner and repo name.");
       return;
@@ -1598,11 +1721,43 @@ function ProjectForm({
     setOwnerInput("");
     setRepoInput("");
     setProjectInput("");
+    setProjectLabel(undefined);
+    setSelectedRepoId("");
+    setSelectedProjectKey("");
     setError(null);
   };
 
   return (
     <form className={className} onSubmit={handleSubmit}>
+      {repoOptions.length > 0 ? (
+        <div className="project-selects">
+          <div>
+            <label>Select repository</label>
+            <select value={selectedRepoId} onChange={handleRepoSelect}>
+              <option value="">Manual entry…</option>
+              {repoOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label>Select project (optional)</label>
+            <select value={selectedProjectKey} onChange={handleProjectSelect} disabled={projectOptions.length === 0}>
+              <option value="">Whole roadmap</option>
+              {projectOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {selectedRepo && projectOptions.length === 0 ? (
+              <div className="project-hint">No saved projects yet for this repository.</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div className="project-form-row">
         <div>
           <label>Owner or owner/repo</label>
@@ -1634,6 +1789,8 @@ function ProjectForm({
             value={projectInput}
             onChange={(e) => {
               setProjectInput(e.target.value);
+              setProjectLabel(undefined);
+              setSelectedProjectKey("");
               if (error) setError(null);
             }}
             placeholder="growth-experiments"
@@ -1651,6 +1808,9 @@ function ProjectForm({
           {slugError ? <div className="project-hint">{slugError}</div> : null}
         </div>
       </div>
+      {repoOptions.length > 0 ? (
+        <div className="project-hint">Use the selectors above to pick from linked repositories or enter details manually.</div>
+      ) : null}
       {error ? <div className="project-error">{error}</div> : null}
       <button type="submit">{submitLabel}</button>
     </form>
@@ -1676,15 +1836,12 @@ function ProjectSidebar({
     <aside className="project-panel">
       <div className="project-header">
         <h2>Projects</h2>
-        <a className="project-wizard" href="/new">
-          Open wizard ↗
-        </a>
       </div>
       <div className="project-panel-body">
         {initializing ? <div className="project-hint">Loading saved projects…</div> : null}
         {repos.length === 0 ? (
           <div className="project-empty">
-            No projects yet. Add one below or run the onboarding wizard to connect a repository.
+            No projects yet. Add one below to start tracking a roadmap.
           </div>
         ) : (
           <ul className="project-list">
