@@ -1,6 +1,14 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChangeEvent,
+  FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
@@ -77,6 +85,101 @@ function formatTranscript(messages: ChatMessage[]): string {
 const CONCEPT_HANDOFF_KEY = "wizard:handoff:concept";
 const ADD_NEW_REPO_OPTION = "__add_new_repo__";
 const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
+
+function emphasizeLead(line: string): ReactNode {
+  const colonIndex = line.indexOf(":");
+  if (colonIndex <= 0) {
+    return line;
+  }
+  const lead = line.slice(0, colonIndex).trim();
+  const rest = line.slice(colonIndex + 1).trim();
+  if (!lead || !rest) {
+    return line;
+  }
+  return (
+    <>
+      <span className="tw-text-sky-200 tw-font-semibold">{lead}:</span>{" "}
+      <span className="tw-text-slate-200">{rest}</span>
+    </>
+  );
+}
+
+function renderAssistantContent(content: string): ReactNode {
+  const sections = content
+    .split(/\n\s*\n/)
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  if (sections.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="tw-space-y-5">
+      {sections.map((section, sectionIndex) => {
+        const rawLines = section
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (rawLines.length === 0) {
+          return null;
+        }
+
+        const isNumberedList = rawLines.every((line) => /^\d+[\).]\s+/.test(line));
+        const isBulletedList = rawLines.every((line) => /^[-*•]\s+/.test(line));
+
+        if (isNumberedList || isBulletedList) {
+          const listItems = rawLines.map((line, lineIndex) => {
+            const cleaned = isNumberedList
+              ? line.replace(/^\d+[\).]\s*/, "")
+              : line.replace(/^[-*•]\s*/, "");
+            return (
+              <li key={lineIndex} className="tw-leading-relaxed tw-text-[15px] tw-text-slate-100">
+                {emphasizeLead(cleaned)}
+              </li>
+            );
+          });
+
+          if (isNumberedList) {
+            return (
+              <ol key={sectionIndex} className="tw-list-decimal tw-space-y-2 tw-pl-6 tw-marker:tw-text-sky-300">
+                {listItems}
+              </ol>
+            );
+          }
+
+          return (
+            <ul key={sectionIndex} className="tw-list-disc tw-space-y-2 tw-pl-6 tw-marker:tw-text-sky-400">
+              {listItems}
+            </ul>
+          );
+        }
+
+        if (rawLines.length > 1) {
+          const [firstLine, ...rest] = rawLines;
+          return (
+            <div key={sectionIndex} className="tw-space-y-2">
+              <p className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-widest tw-text-sky-300">
+                {firstLine.replace(/[:：]\s*$/, "")}
+              </p>
+              {rest.map((line, idx) => (
+                <p key={idx} className="tw-text-base tw-leading-relaxed tw-text-slate-100">
+                  {emphasizeLead(line)}
+                </p>
+              ))}
+            </div>
+          );
+        }
+
+        return (
+          <p key={sectionIndex} className="tw-text-base tw-leading-relaxed tw-text-slate-100">
+            {emphasizeLead(rawLines[0])}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function BrainstormPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -784,14 +887,20 @@ export default function BrainstormPage() {
               key={`${message.role}-${index}`}
               className={
                 message.role === "user"
-                  ? "tw-ml-auto tw-max-w-[75%] tw-rounded-2xl tw-bg-slate-800 tw-px-4 tw-py-3 tw-text-sm tw-text-slate-100"
-                  : "tw-mr-auto tw-max-w-[75%] tw-rounded-2xl tw-bg-slate-950 tw-px-4 tw-py-3 tw-text-sm tw-text-slate-200"
+                  ? "tw-ml-auto tw-max-w-[75%] tw-rounded-3xl tw-border tw-border-blue-500/40 tw-bg-blue-600/10 tw-px-4 tw-py-3 tw-text-sm tw-text-slate-100 tw-shadow-md tw-shadow-blue-900/40"
+                  : "tw-mr-auto tw-max-w-[75%] tw-rounded-3xl tw-border tw-border-sky-500/40 tw-bg-gradient-to-br tw-from-slate-950 tw-via-slate-950/90 tw-to-slate-900 tw-px-5 tw-py-4 tw-text-sm tw-text-slate-200 tw-shadow-lg tw-shadow-sky-900/40"
               }
             >
               <p className="tw-text-xs tw-font-semibold tw-uppercase tw-tracking-wide tw-text-slate-400">
                 {message.role === "user" ? "You" : "AI Partner"}
               </p>
-              <p className="tw-mt-1 tw-whitespace-pre-line">{message.content}</p>
+              {message.role === "assistant" ? (
+                <div className="tw-mt-3 tw-space-y-3">
+                  {renderAssistantContent(message.content)}
+                </div>
+              ) : (
+                <p className="tw-mt-1 tw-whitespace-pre-line tw-leading-relaxed">{message.content}</p>
+              )}
             </div>
           ))
         ) : (
