@@ -197,3 +197,10 @@ export const ROADMAP_CHECKER_SNIPPET = [
   "  process.exit(1);",
   "});",
 ].join("\n");
+
+const SCRIPTS_PACKAGE_JSON_OBJECT = { type: "module" };
+
+export const SCRIPTS_PACKAGE_JSON =
+  JSON.stringify(SCRIPTS_PACKAGE_JSON_OBJECT, null, 2) + "\n";
+
+export const SCRIPTS_PACKAGE_JSON_SNIPPET = SCRIPTS_PACKAGE_JSON.trimEnd();

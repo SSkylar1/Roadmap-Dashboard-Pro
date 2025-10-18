@@ -60,6 +60,16 @@ async function main() {
     content: readFileSync("docs/roadmap-status.json", "utf8"),
     message: "chore: add/update docs/roadmap-status.json",
   });
+  await putFile({
+    path: "scripts/roadmap-check.mjs",
+    content: readFileSync("scripts/roadmap-check.mjs", "utf8"),
+    message: "chore: add/update scripts/roadmap-check.mjs",
+  });
+  await putFile({
+    path: "scripts/package.json",
+    content: readFileSync("scripts/package.json", "utf8"),
+    message: "chore: add/update scripts/package.json",
+  });
   // If you truly must update package files, do it here too:
   // await putFile({ path: "package.json", content: readFileSync("package.json", "utf8"), message: "chore: add/update package.json" });
 }
