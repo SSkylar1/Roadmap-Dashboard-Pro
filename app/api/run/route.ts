@@ -9,6 +9,8 @@ import { getFileRaw, putFile } from "@/lib/github";
 import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 import { loadManualState } from "@/lib/manual-store";
 import type { ManualState } from "@/lib/manual-state";
+import { parseProbeHeaders, probeReadOnlyCheck } from "@/lib/read-only-probe";
+import type { ProbeHeaders } from "@/lib/read-only-probe";
 
 type Check = {
   type: "files_exist" | "http_ok" | "sql_exists";
@@ -19,46 +21,6 @@ type Check = {
   must_match?: string[];
   query?: string;
 };
-
-type ProbeHeaders = Record<string, string>;
-
-function parseProbeHeaders(source: unknown): ProbeHeaders {
-  if (!source) return {};
-
-  if (typeof source === "object" && !Array.isArray(source)) {
-    const entries = Object.entries(source as Record<string, unknown>)
-      .map(([key, value]) => [key.trim(), typeof value === "string" ? value.trim() : ""] as const)
-      .filter(([key, value]) => key.length > 0 && value.length > 0);
-    return Object.fromEntries(entries) as ProbeHeaders;
-  }
-
-  if (typeof source !== "string") return {};
-
-  const trimmed = source.trim();
-  if (!trimmed) return {};
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parseProbeHeaders(parsed as Record<string, unknown>);
-    }
-  } catch {
-    // fall through to newline parsing when JSON fails
-  }
-
-  const headers: ProbeHeaders = {};
-  for (const line of trimmed.split(/\r?\n|,/)) {
-    const text = line.trim();
-    if (!text) continue;
-    const separatorIndex = text.indexOf(":");
-    if (separatorIndex === -1) continue;
-    const key = text.slice(0, separatorIndex).trim();
-    const value = text.slice(separatorIndex + 1).trim();
-    if (!key || !value) continue;
-    headers[key] = value;
-  }
-  return headers;
-}
 
 const ENV_PROBE_HEADERS: ProbeHeaders = parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS);
 
@@ -573,15 +535,27 @@ async function http_ok(url: string, must_match: string[] = []) {
 }
 
 async function sql_exists(probeUrl: string, query: string, headers: ProbeHeaders) {
-  const r = await fetch(probeUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify({ queries: [query] }),
-  });
-  if (!r.ok) return { ok: false, code: r.status };
-  const j = await r.json();
-  const res = Array.isArray(j.results) ? j.results[0] : null;
-  return { ok: !!res?.ok };
+  const outcome = await probeReadOnlyCheck(probeUrl, query, headers);
+  if (outcome.ok) {
+    return { ok: true };
+  }
+
+  const status = outcome.status;
+  const detailParts = [] as string[];
+  if (typeof status === "number") {
+    detailParts.push(`HTTP ${status}`);
+  }
+  if (outcome.why) {
+    detailParts.push(outcome.why);
+  }
+  const detail = detailParts.join(" — ").trim();
+
+  return {
+    ok: false,
+    ...(outcome.why ? { why: outcome.why, error: outcome.why } : {}),
+    ...(typeof status === "number" ? { status, code: status } : {}),
+    ...(detail ? { detail } : {}),
+  };
 }
 
 export async function POST(req: NextRequest) {
