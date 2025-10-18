@@ -8,6 +8,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+const POSITIVE_PROBE_VALUES = new Set([
+  "true",
+  "ok",
+  "pass",
+  "passed",
+  "success",
+  "successful",
+  "allow",
+  "allowed",
+]);
+
+const NEGATIVE_PROBE_VALUES = new Set(["false", "fail", "failed", "error", "denied"]);
+
+function interpretProbeValue(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return undefined;
+    if (POSITIVE_PROBE_VALUES.has(normalized)) return true;
+    if (NEGATIVE_PROBE_VALUES.has(normalized)) return false;
+    return undefined;
+  }
+  if (!isRecord(value)) return undefined;
+
+  const record = value as Record<string, unknown>;
+
+  const ok = interpretProbeValue(record.ok);
+  if (typeof ok === "boolean") return ok;
+
+  const status = interpretProbeValue(record.status);
+  if (typeof status === "boolean") return status;
+
+  const allowed = interpretProbeValue(record.allowed);
+  if (typeof allowed === "boolean") return allowed;
+
+  const result = interpretProbeValue(record.result);
+  if (typeof result === "boolean") return result;
+
+  return undefined;
+}
+
 export function parseProbeHeaders(raw: unknown): ProbeHeaders {
   if (!raw) return {};
 
@@ -50,18 +95,22 @@ export function parseProbeHeaders(raw: unknown): ProbeHeaders {
 
 function matchFromEntry(query: string, entry: any): boolean | undefined {
   if (!entry) return undefined;
-  if (typeof entry === "boolean") return entry;
-  if (typeof entry?.ok === "boolean") return entry.ok;
-  if (typeof entry === "object") {
-    const candidate = (entry as Record<string, unknown>)[query];
-    if (typeof candidate === "boolean") return candidate;
-    if (typeof (candidate as any)?.ok === "boolean") return (candidate as any).ok;
+  const interpreted = interpretProbeValue(entry);
+  if (typeof interpreted === "boolean") return interpreted;
+  if (isRecord(entry)) {
+    const record = entry as Record<string, unknown>;
+    const candidate = record[query];
+    const candidateResult = interpretProbeValue(candidate);
+    if (typeof candidateResult === "boolean") return candidateResult;
   }
   return undefined;
 }
 
 function extractFromContainer(query: string, container: JsonLike): boolean | undefined {
   if (!container) return undefined;
+
+  const interpreted = interpretProbeValue(container);
+  if (typeof interpreted === "boolean") return interpreted;
 
   if (Array.isArray(container)) {
     for (const entry of container) {
@@ -78,11 +127,10 @@ function extractFromContainer(query: string, container: JsonLike): boolean | und
   }
 
   if (isRecord(container)) {
-    if (typeof container.ok === "boolean") return container.ok;
-    const direct = container[query];
+    const record = container as Record<string, unknown>;
+    const direct = interpretProbeValue(record[query]);
     if (typeof direct === "boolean") return direct;
-    if (typeof (direct as any)?.ok === "boolean") return (direct as any).ok;
-    for (const value of Object.values(container)) {
+    for (const value of Object.values(record)) {
       const nested = extractFromContainer(query, value as JsonLike);
       if (typeof nested === "boolean") return nested;
     }
