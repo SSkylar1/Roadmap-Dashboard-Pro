@@ -1,7 +1,7 @@
 // app/api/setup/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { openSetupPR } from "@/lib/github-pr";
-import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
+import { ROADMAP_CHECKER_SNIPPET, SCRIPTS_PACKAGE_JSON } from "@/lib/roadmap-snippets";
 import { authHeaders, getTokenForRepo, type RepoAuth } from "@/lib/token";
 import { encodeGitHubPath } from "@/lib/github";
 
@@ -439,6 +439,10 @@ export async function POST(req: NextRequest) {
         content: ROADMAP_CHECKER_SNIPPET + "\n",
       },
       {
+        path: "scripts/package.json",
+        content: SCRIPTS_PACKAGE_JSON,
+      },
+      {
         path: "package.json",
         content: ROADMAP_PACKAGE_JSON,
       },
@@ -454,6 +458,10 @@ export async function POST(req: NextRequest) {
         path: "scripts/roadmap-check.mjs",
         mode: "100755",
         content: ROADMAP_CHECKER_SNIPPET + "\n",
+      },
+      {
+        path: "scripts/package.json",
+        content: SCRIPTS_PACKAGE_JSON,
       },
       ...(packageJsonContent
         ? [

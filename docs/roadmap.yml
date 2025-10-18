@@ -22,6 +22,7 @@ weeks:
           - type: files_exist
             files:
               - scripts/roadmap-check.mjs
+              - scripts/package.json
   - id: w02
     title: Weeks 3–4 — Dashboard polish
     items:
