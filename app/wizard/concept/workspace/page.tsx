@@ -14,6 +14,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import yaml from "js-yaml";
 
+import { normalizeRoadmapYaml } from "@/lib/roadmap-normalize";
+
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { mergeProjectOptions } from "@/lib/project-options";
 import { removeProjectFromStore, removeRepoFromStore } from "@/lib/secrets-actions";
@@ -142,6 +144,7 @@ function normalizeRoadmapContent(raw: string) {
 
   const lines = initialCandidate.split(/\r?\n/);
   const attempted = new Set<string>();
+  let fallback: string | null = null;
 
   const tryCandidate = (value: string) => {
     const next = value.trim();
@@ -150,9 +153,16 @@ function normalizeRoadmapContent(raw: string) {
     }
     attempted.add(next);
     try {
-      yaml.load(next);
-      return next;
+      return normalizeRoadmapYaml(next);
     } catch (err) {
+      if (!fallback) {
+        try {
+          yaml.load(next);
+          fallback = next;
+        } catch (error) {
+          // ignore
+        }
+      }
       return null;
     }
   };
@@ -171,7 +181,7 @@ function normalizeRoadmapContent(raw: string) {
     }
   }
 
-  return initialCandidate;
+  return fallback ?? "";
 }
 
 function formatBytes(bytes: number) {

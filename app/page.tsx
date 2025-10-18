@@ -16,10 +16,7 @@ import {
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import {
-  ROADMAP_CHECKER_SNIPPET,
-  SCRIPTS_PACKAGE_JSON_SNIPPET,
-} from "@/lib/roadmap-snippets";
+import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { mergeProjectOptions } from "@/lib/project-options";
@@ -2576,10 +2573,8 @@ function OnboardingChecklist({
             <div>
               <div className="onboarding-step-title">3. Add the checker script</div>
               <p className="onboarding-step-description">
-                Drop <code>scripts/roadmap-check.mjs</code> into the repository, add
-                <code>scripts/package.json</code> so Node treats the folder as an ES module, and
-                install the <code>js-yaml</code> dev dependency so the script can parse your roadmap
-                definition.
+                Drop <code>scripts/roadmap-check.mjs</code> into the repository and install the
+                <code>js-yaml</code> dev dependency so the script can parse your roadmap definition.
               </p>
             </div>
             <StatusBadge
@@ -2602,16 +2597,12 @@ function OnboardingChecklist({
             <div className="guide-actions">
               <CopyButton label="Copy npm install" text={NPM_INSTALL_SNIPPET} />
               <CopyButton label="Copy package.json snippet" text={PACKAGE_JSON_SNIPPET} />
-              <CopyButton label="Copy scripts/package.json" text={SCRIPTS_PACKAGE_JSON_SNIPPET} />
             </div>
             <pre>
               <code>{NPM_INSTALL_SNIPPET}</code>
             </pre>
             <pre>
               <code>{PACKAGE_JSON_SNIPPET}</code>
-            </pre>
-            <pre>
-              <code>{SCRIPTS_PACKAGE_JSON_SNIPPET}</code>
             </pre>
           </details>
           <p className="onboarding-note">
