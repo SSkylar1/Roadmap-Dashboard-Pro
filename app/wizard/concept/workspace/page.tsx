@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import yaml from "js-yaml";
 
+import { STANDALONE_MODE } from "@/lib/config";
 import { normalizeRoadmapYaml } from "@/lib/roadmap-normalize";
 
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
@@ -916,20 +917,31 @@ function ConceptWizardPageInner() {
         <p className="tw-text-lg tw-leading-relaxed tw-text-slate-300">
           Paste your concept brief or upload research notes, generate a structured roadmap, and push docs/roadmap.yml to your repo.
         </p>
-        <div className="tw-flex tw-flex-wrap tw-gap-3">
-          <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
-            {openAiConfigured ? "OpenAI ready" : "Add an OpenAI key in Settings"}
-          </span>
+      <div className="tw-flex tw-flex-wrap tw-gap-3">
+        <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+          {openAiConfigured ? "OpenAI ready" : "Add an OpenAI key in Settings"}
+        </span>
+        {!STANDALONE_MODE ? (
           <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
             {githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings"}
           </span>
-        </div>
+        ) : (
+          <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+            Standalone Mode: GitHub syncing is optional and currently disabled.
+          </span>
+        )}
       </div>
+    </div>
 
-      <form onSubmit={onGenerate} className="tw-grid tw-gap-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6">
-        <div className="tw-space-y-2">
-          <label className="tw-text-sm tw-font-medium tw-text-slate-200">Concept notes</label>
-          <textarea
+    {!STANDALONE_MODE ? (
+      <>
+        <form
+          onSubmit={onGenerate}
+          className="tw-grid tw-gap-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6"
+        >
+          <div className="tw-space-y-2">
+            <label className="tw-text-sm tw-font-medium tw-text-slate-200">Concept notes</label>
+            <textarea
             value={conceptText}
             onChange={(event) => setConceptText(event.target.value)}
             className="tw-min-h-[160px] tw-w-full tw-resize-y tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950/80 tw-p-4 tw-text-sm tw-text-slate-100 tw-outline-none focus:tw-border-slate-600"
@@ -1230,7 +1242,13 @@ function ConceptWizardPageInner() {
           />
         </div>
       </div>
-    </section>
+      </>
+    ) : (
+      <div className="tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6 tw-text-sm tw-text-slate-300">
+        Standalone Mode: GitHub syncing is optional and currently disabled.
+      </div>
+    )}
+  </section>
   );
 }
 

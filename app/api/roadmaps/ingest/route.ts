@@ -3,10 +3,7 @@ import YAML from "yaml";
 import { RoadmapDoc, normalize } from "@/lib/roadmap/schema";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { STANDALONE_MODE } from "@/lib/config";
 
 export const runtime = "nodejs";
 
@@ -35,6 +32,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok:false, error:"missing_fields" }, { status: 400 });
     }
 
+    if (STANDALONE_MODE) {
+      return NextResponse.json(
+        { ok:false, error:"standalone_mode" },
+        { status: 503 },
+      );
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      return NextResponse.json(
+        { ok:false, error:"supabase_not_configured" },
+        { status: 503 },
+      );
+    }
+
     let parsed: unknown;
     try {
       parsed = format === "yaml" ? YAML.parse(source) : JSON.parse(source);
@@ -49,6 +63,8 @@ export async function POST(req: NextRequest) {
 
     const normalized = normalize(check.data);
     const status = computeStatus(normalized);
+
+    const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 
     const { data, error } = await supabase
       .from("roadmaps")

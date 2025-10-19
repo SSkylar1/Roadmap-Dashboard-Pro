@@ -16,6 +16,7 @@ import {
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { STANDALONE_MODE } from "@/lib/config";
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
@@ -2123,6 +2124,20 @@ function GtmPlanTab({ repo }: GtmPlanTabProps) {
         </div>
         <div className="gtm-plan-empty">
           Add a repository from the sidebar and reopen this tab to capture launch strategy alongside your roadmap.
+        </div>
+      </section>
+    );
+  }
+
+  if (STANDALONE_MODE) {
+    return (
+      <section className="card gtm-plan-card">
+        <div className="gtm-plan-header">
+          <h2>Go-to-market plan</h2>
+          <p className="hint">Keep launch, pricing, and success metrics in lockstep with the engineering roadmap.</p>
+        </div>
+        <div className="rounded border p-3 text-sm">
+          Standalone Mode: GitHub syncing is optional and currently disabled.
         </div>
       </section>
     );

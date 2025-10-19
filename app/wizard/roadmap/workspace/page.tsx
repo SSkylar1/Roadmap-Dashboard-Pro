@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { load } from "js-yaml";
 
+import { STANDALONE_MODE } from "@/lib/config";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { mergeProjectOptions } from "@/lib/project-options";
 import { removeProjectFromStore, removeRepoFromStore } from "@/lib/secrets-actions";
@@ -785,13 +786,20 @@ function RoadmapProvisionerInner() {
         <p className="tw-text-base tw-leading-relaxed tw-text-slate-300">
           Upload your finalized roadmap to sync docs/roadmap.yml, then generate the foundational artifacts that power status checks and team context.
         </p>
-        <p className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
-          {githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings to allow commits"}
-        </p>
+        {!STANDALONE_MODE ? (
+          <p className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+            {githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings to allow commits"}
+          </p>
+        ) : (
+          <p className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+            Standalone Mode: GitHub syncing is optional and currently disabled.
+          </p>
+        )}
       </header>
 
-      <form onSubmit={handleSubmit} className="tw-grid tw-gap-8 lg:tw-grid-cols-[2fr,1fr]">
-        <section className="tw-space-y-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
+      {!STANDALONE_MODE ? (
+        <form onSubmit={handleSubmit} className="tw-grid tw-gap-8 lg:tw-grid-cols-[2fr,1fr]">
+          <section className="tw-space-y-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
           <div className="tw-grid tw-gap-4 md:tw-grid-cols-2">
             <label className="tw-flex tw-flex-col tw-gap-2">
               <span className="tw-text-sm tw-font-medium tw-text-slate-200">Linked repository</span>
@@ -1168,6 +1176,11 @@ function RoadmapProvisionerInner() {
           </div>
         </aside>
       </form>
+      ) : (
+        <div className="tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6 tw-text-sm tw-text-slate-300">
+          Standalone Mode: GitHub syncing is optional and currently disabled.
+        </div>
+      )}
     </div>
   );
 }
