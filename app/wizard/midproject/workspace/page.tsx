@@ -19,6 +19,14 @@ type RunResponse = {
   wrote?: string[];
   error?: string;
   detail?: string;
+  snapshot?: Record<string, any> | null;
+  meta?: {
+    id?: string;
+    workspace_id?: string | null;
+    project_id?: string | null;
+    branch?: string | null;
+    created_at?: string;
+  };
 };
 
 type BacklogItem = {
