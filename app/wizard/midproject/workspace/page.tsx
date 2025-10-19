@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
 import StatusGrid from "@/components/StatusGrid";
+import { STANDALONE_MODE } from "@/lib/config";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { mergeProjectOptions } from "@/lib/project-options";
 import { removeProjectFromStore, removeRepoFromStore } from "@/lib/secrets-actions";
@@ -745,11 +746,15 @@ function MidProjectSyncWorkspaceInner() {
           Connect an active repository to regenerate roadmap status and discovery insights before diving into the full dashboard.
         </p>
         <div className="tw-flex tw-flex-wrap tw-gap-3 tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
-          <span>
-            {githubReady
-              ? `GitHub token ready (${githubSourceLabel ?? "global default"})`
-              : "Add a GitHub PAT in Settings"}
-          </span>
+          {!STANDALONE_MODE ? (
+            <span>
+              {githubReady
+                ? `GitHub token ready (${githubSourceLabel ?? "global default"})`
+                : "Add a GitHub PAT in Settings"}
+            </span>
+          ) : (
+            <span>Standalone Mode: GitHub syncing is optional and currently disabled.</span>
+          )}
           <span>
             {supabaseReady
               ? `Supabase probe ready (${supabaseSourceLabel ?? "global default"})`
@@ -757,8 +762,9 @@ function MidProjectSyncWorkspaceInner() {
           </span>
         </div>
       </header>
-
-      <form onSubmit={handleSync} className="tw-grid tw-gap-8 lg:tw-grid-cols-[1.4fr,1fr]">
+      {!STANDALONE_MODE ? (
+        <>
+          <form onSubmit={handleSync} className="tw-grid tw-gap-8 lg:tw-grid-cols-[1.4fr,1fr]">
         <section className="tw-space-y-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
           <div className="tw-grid tw-gap-4 md:tw-grid-cols-2">
             <label className="tw-flex tw-flex-col tw-gap-2 md:tw-col-span-2">
@@ -1256,6 +1262,12 @@ function MidProjectSyncWorkspaceInner() {
           )}
         </div>
       </section>
+        </>
+      ) : (
+        <div className="tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6 tw-text-sm tw-text-slate-300">
+          Standalone Mode: GitHub syncing is optional and currently disabled.
+        </div>
+      )}
     </div>
   );
 }
