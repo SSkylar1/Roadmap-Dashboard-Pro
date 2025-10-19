@@ -20,7 +20,13 @@ function useStatus(owner: string, repo: string, project?: string | null) {
       : `/api/status/${owner}/${repo}`;
     fetch(url, { cache: "no-store" })
       .then(r => (r.ok ? r.json() : r.json().then(x => Promise.reject(x))))
-      .then(setData)
+      .then(json => {
+        if (json && typeof json === "object" && "snapshot" in json) {
+          setData((json as { snapshot: { weeks: Week[] } }).snapshot);
+        } else {
+          setData(json as { weeks: Week[] });
+        }
+      })
       .catch(e => setErr(e?.message || e?.error || "Failed to load status"));
   }, [owner, repo, project]);
 
