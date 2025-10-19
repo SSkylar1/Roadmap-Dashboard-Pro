@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { normalizeOwner, normalizeRepo } from "../manual-state";
+
 export type StandaloneRoadmapStatus = {
   problems: string[];
   counts: Record<string, number>;
@@ -85,6 +87,15 @@ export function insertStandaloneRoadmap(
   return cloneRecord(record);
 }
 
+export function deriveStandaloneWorkspaceId(owner: string | undefined, repo: string | undefined): string | null {
+  const ownerKey = normalizeOwner(owner);
+  const repoKey = normalizeRepo(repo);
+  if (!ownerKey || !repoKey) {
+    return null;
+  }
+  return `${ownerKey}/${repoKey}`;
+}
+
 export function upsertStandaloneWorkspaceRoadmap(
   input: Omit<StandaloneRoadmapRecord, "id" | "created_at" | "updated_at"> & { id?: string },
 ): StandaloneRoadmapRecord {
@@ -135,6 +146,68 @@ export function getStandaloneRoadmap(id: string): StandaloneRoadmapRecord | null
   const store = getStore();
   const record = store.roadmaps.get(id);
   return record ? cloneRecord(record) : null;
+}
+
+function normalizeWorkspaceId(value: string | undefined | null): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+export function getCurrentStandaloneWorkspaceRoadmap(
+  workspaceId: string,
+): StandaloneRoadmapRecord | null {
+  const store = getStore();
+  const target = normalizeWorkspaceId(workspaceId);
+  if (!target) {
+    return null;
+  }
+
+  let fallback: StandaloneRoadmapRecord | null = null;
+
+  for (const record of store.roadmaps.values()) {
+    const candidateWorkspace = normalizeWorkspaceId(record.workspace_id);
+    if (candidateWorkspace !== target) {
+      continue;
+    }
+    if (record.is_current) {
+      return cloneRecord(record);
+    }
+    if (!fallback) {
+      fallback = record;
+    }
+  }
+
+  return fallback ? cloneRecord(fallback) : null;
+}
+
+export function computeStandaloneRoadmapStatus(
+  normalized: StandaloneNormalizedRoadmap,
+): StandaloneRoadmapStatus {
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of normalized.items) {
+    const id = typeof entry?.id === "string" ? entry.id : "";
+    if (!id) {
+      continue;
+    }
+    if (seen.has(id)) {
+      problems.push(`Duplicate id: ${id}`);
+    }
+    seen.add(id);
+  }
+
+  const counts = normalized.items.reduce<Record<string, number>>((map, entry) => {
+    const status = typeof entry?.status === "string" && entry.status.trim()
+      ? entry.status.trim()
+      : "todo";
+    map[status] = (map[status] ?? 0) + 1;
+    return map;
+  }, {});
+
+  return {
+    problems,
+    counts,
+    total: normalized.items.length,
+  };
 }
 
 export function updateStandaloneRoadmapStatus(

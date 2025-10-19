@@ -5,12 +5,21 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import yaml from "js-yaml";
+import { STANDALONE_MODE } from "@/lib/config";
 import { getFileRaw, putFile } from "@/lib/github";
 import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 import { loadManualState } from "@/lib/manual-store";
 import type { ManualState } from "@/lib/manual-state";
 import { parseProbeHeaders, probeReadOnlyCheck } from "@/lib/read-only-probe";
 import type { ProbeHeaders } from "@/lib/read-only-probe";
+import {
+  computeStandaloneRoadmapStatus,
+  deriveStandaloneWorkspaceId,
+  getCurrentStandaloneWorkspaceRoadmap,
+  updateStandaloneRoadmapStatus,
+  type StandaloneRoadmapRecord,
+} from "@/lib/standalone/roadmaps-store";
+import { insertStandaloneStatusSnapshot } from "@/lib/standalone/status-snapshots";
 
 type Check = {
   type: "files_exist" | "http_ok" | "sql_exists";
@@ -510,6 +519,64 @@ function normalizeFileList(check: Check) {
   return Array.from(new Set(collected));
 }
 
+function buildStandaloneWeeks(record: StandaloneRoadmapRecord): RoadmapWeek[] {
+  const normalized = Array.isArray(record.normalized?.items) ? record.normalized.items : [];
+  const fallbackTitle =
+    typeof record.normalized?.title === "string" && record.normalized.title.trim()
+      ? record.normalized.title.trim()
+      : "Standalone roadmap";
+
+  if (normalized.length === 0) {
+    const fallbackId = slugify(fallbackTitle, "week-1");
+    return [{ id: fallbackId, title: fallbackTitle, items: [] }];
+  }
+
+  const map = new Map<string, RoadmapWeek>();
+  const order: RoadmapWeek[] = [];
+
+  normalized.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    const recordEntry = entry as Record<string, any>;
+    const itemId = typeof recordEntry.id === "string" && recordEntry.id.trim()
+      ? recordEntry.id.trim()
+      : `item-${index + 1}`;
+    const itemTitle = typeof recordEntry.title === "string" && recordEntry.title.trim()
+      ? recordEntry.title.trim()
+      : itemId;
+    const phase = typeof recordEntry.phase === "string" && recordEntry.phase.trim()
+      ? recordEntry.phase.trim()
+      : fallbackTitle;
+    const weekRange = typeof recordEntry.week_range === "string" && recordEntry.week_range.trim()
+      ? recordEntry.week_range.trim()
+      : "";
+    const groupKey = `${phase}|||${weekRange}`;
+
+    let week = map.get(groupKey);
+    if (!week) {
+      const descriptor = weekRange ? `${phase} — Weeks ${weekRange}` : phase;
+      const fallbackId = `week-${order.length + 1}`;
+      const weekId = slugify(`${phase}-${weekRange || order.length + 1}`, fallbackId);
+      week = { id: weekId, title: descriptor, items: [] };
+      map.set(groupKey, week);
+      order.push(week);
+    }
+
+    const items = Array.isArray(week.items) ? week.items : (week.items = []);
+    const status = typeof recordEntry.status === "string" ? recordEntry.status.trim().toLowerCase() : "";
+    items.push({
+      id: itemId,
+      name: itemTitle,
+      done: status === "done",
+      manual: true,
+      checks: [],
+    });
+  });
+
+  return order.map((entry) => ({ ...entry, items: Array.isArray(entry.items) ? entry.items : [] }));
+}
+
 async function files_exist(owner: string, repo: string, check: Check, ref?: string) {
   const paths = normalizeFileList(check);
   if (paths.length === 0) {
@@ -590,6 +657,68 @@ export async function POST(req: NextRequest) {
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
+    }
+
+    if (STANDALONE_MODE) {
+      const workspaceId = deriveStandaloneWorkspaceId(owner, repo);
+      if (!workspaceId) {
+        return NextResponse.json({ error: "invalid_workspace" }, { status: 400 });
+      }
+
+      const record = getCurrentStandaloneWorkspaceRoadmap(workspaceId);
+      if (!record) {
+        return NextResponse.json({ error: "standalone_roadmap_missing" }, { status: 404 });
+      }
+
+      const weeks = buildStandaloneWeeks(record);
+      const statusPayload: any = {
+        generated_at: new Date().toISOString(),
+        owner,
+        repo,
+        branch,
+        project: projectKey || undefined,
+        weeks,
+      };
+
+      let manualState: ManualState | null = null;
+      try {
+        const manualResult = await loadManualState(owner, repo, projectKey ?? null);
+        if (manualResult.available) {
+          manualState = manualResult.state;
+        }
+      } catch (error) {
+        console.error("Failed to load manual roadmap overrides", error);
+      }
+
+      if (manualState && Object.keys(manualState).length > 0) {
+        statusPayload.weeks = applyManualAdjustments(statusPayload.weeks, manualState);
+      }
+
+      const computedStatus = computeStandaloneRoadmapStatus(record.normalized);
+      updateStandaloneRoadmapStatus(record.id, computedStatus);
+
+      const snapshot = insertStandaloneStatusSnapshot({
+        workspace_id: workspaceId,
+        project_id: projectKey ?? null,
+        branch: branch ?? null,
+        payload: statusPayload,
+      });
+
+      return NextResponse.json(
+        {
+          ok: true,
+          wrote: [],
+          snapshot: statusPayload,
+          meta: {
+            id: snapshot.id,
+            workspace_id: snapshot.workspace_id,
+            project_id: snapshot.project_id,
+            branch: snapshot.branch,
+            created_at: snapshot.created_at,
+          },
+        },
+        { headers: { "cache-control": "no-store" } },
+      );
     }
 
     // Load roadmap spec

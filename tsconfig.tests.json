@@ -13,6 +13,7 @@
   "include": [
     "lib/project-options.ts",
     "lib/project-paths.ts",
+    "lib/manual-state.ts",
     "lib/standalone/**/*.ts",
     "lib/roadmap/**/*.ts",
     "app/api/roadmaps/**/*.ts",
