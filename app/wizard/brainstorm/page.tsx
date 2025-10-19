@@ -11,6 +11,7 @@ import {
 } from "react";
 import Link from "next/link";
 
+import { STANDALONE_MODE } from "@/lib/config";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { mergeProjectOptions } from "@/lib/project-options";
 import { removeProjectFromStore, removeRepoFromStore } from "@/lib/secrets-actions";
@@ -672,13 +673,21 @@ export default function BrainstormPage() {
           <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
             {openAiConfigured ? "OpenAI ready" : "Add an OpenAI key in Settings"}
           </span>
-          <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
-            {githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings"}
-          </span>
+          {!STANDALONE_MODE ? (
+            <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+              {githubConfigured ? "GitHub token ready" : "Add a GitHub PAT in Settings"}
+            </span>
+          ) : (
+            <span className="tw-text-xs tw-font-medium tw-uppercase tw-tracking-wide tw-text-slate-400">
+              Standalone Mode: GitHub syncing is optional and currently disabled.
+            </span>
+          )}
         </div>
       </div>
 
-      <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6">
+      {!STANDALONE_MODE ? (
+        <>
+          <div className="tw-space-y-4 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6">
         <div className="tw-flex tw-flex-wrap tw-items-center tw-justify-between tw-gap-3">
           <div className="tw-space-y-1">
             <h2 className="tw-text-base tw-font-semibold tw-text-slate-100">Promote this brainstorm into your repo</h2>
@@ -911,37 +920,43 @@ export default function BrainstormPage() {
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={sendMessage} className="tw-space-y-3">
-        <label htmlFor="brainstorm-input" className="tw-text-sm tw-font-medium tw-text-slate-200">
-          Drop your next thought
-        </label>
-        <textarea
-          id="brainstorm-input"
-          className="tw-min-h-[140px] tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-p-4 tw-text-sm tw-text-slate-100 focus:tw-border-slate-700"
-          placeholder={placeholder}
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          disabled={isSending}
-        />
-        <div className="tw-flex tw-items-center tw-justify-between">
-          <p className="tw-text-xs tw-text-slate-400">
-            {openAiConfigured ? (
-              <span>Using your saved OpenAI key from Settings.</span>
-            ) : (
-              <span>
-                Add an OpenAI key in <Link href="/settings">Settings</Link> so the assistant can respond.
-              </span>
-            )}
-          </p>
-          <button
-            type="submit"
-            className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-blue-600/10 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-blue-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-blue-500/60 disabled:tw-opacity-60"
-            disabled={isSending || !input.trim()}
-          >
-            {isSending ? "Thinking…" : "Send idea"}
-          </button>
+          <form onSubmit={sendMessage} className="tw-space-y-3">
+            <label htmlFor="brainstorm-input" className="tw-text-sm tw-font-medium tw-text-slate-200">
+              Drop your next thought
+            </label>
+            <textarea
+              id="brainstorm-input"
+              className="tw-min-h-[140px] tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-p-4 tw-text-sm tw-text-slate-100 focus:tw-border-slate-700"
+              placeholder={placeholder}
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              disabled={isSending}
+            />
+            <div className="tw-flex tw-items-center tw-justify-between">
+              <p className="tw-text-xs tw-text-slate-400">
+                {openAiConfigured ? (
+                  <span>Using your saved OpenAI key from Settings.</span>
+                ) : (
+                  <span>
+                    Add an OpenAI key in <Link href="/settings">Settings</Link> so the assistant can respond.
+                  </span>
+                )}
+              </p>
+              <button
+                type="submit"
+                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-blue-600/10 tw-px-4 tw-py-2 tw-text-sm tw-font-semibold tw-text-blue-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-blue-500/60 disabled:tw-opacity-60"
+                disabled={isSending || !input.trim()}
+              >
+                {isSending ? "Thinking…" : "Send idea"}
+              </button>
+            </div>
+          </form>
+        </>
+      ) : (
+        <div className="tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6 tw-text-sm tw-text-slate-300">
+          Standalone Mode: GitHub syncing is optional and currently disabled.
         </div>
-      </form>
+      )}
     </section>
   );
 }
