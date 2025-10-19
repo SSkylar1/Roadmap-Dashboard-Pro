@@ -3,6 +3,9 @@ import { load } from "js-yaml";
 
 import { getFileRaw, putFile } from "@/lib/github";
 import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
+import { STANDALONE_MODE } from "@/lib/config";
+import { RoadmapDoc, normalize } from "@/lib/roadmap/schema";
+import { upsertStandaloneWorkspaceRoadmap } from "@/lib/standalone/roadmaps-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,6 +75,8 @@ type ImportSuccess = {
   branch?: string;
   prUrl?: string;
   pullRequestNumber?: number;
+  standaloneRoadmapId?: string;
+  standaloneWorkspaceId?: string;
 };
 
 type ImportError = {
@@ -105,9 +110,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Roadmap file is empty" }, { status: 400 });
   }
 
+  let parsedRoadmap: unknown;
   try {
-    const parsed = load(roadmap);
-    if (!parsed || typeof parsed !== "object") {
+    parsedRoadmap = load(roadmap);
+    if (!parsedRoadmap || typeof parsedRoadmap !== "object") {
       return NextResponse.json({ error: "docs/roadmap.yml must parse into an object" }, { status: 400 });
     }
   } catch (error: any) {
@@ -115,6 +121,60 @@ export async function POST(req: Request) {
       { error: "Failed to parse roadmap.yml", detail: error?.message ?? String(error) },
       { status: 400 },
     );
+  }
+
+  if (STANDALONE_MODE) {
+    const check = RoadmapDoc.safeParse(parsedRoadmap);
+    if (!check.success) {
+      const detail = check.error?.format?.()?.message;
+      return NextResponse.json(
+        {
+          error: "Roadmap validation failed",
+          detail: typeof detail === "string" ? detail : undefined,
+        },
+        { status: 400 },
+      );
+    }
+
+    const normalized = normalize(check.data);
+    const problems: string[] = [];
+    const dedupe = new Set<string>();
+    for (const item of normalized.items) {
+      if (dedupe.has(item.id)) {
+        problems.push(`Duplicate id: ${item.id}`);
+      }
+      dedupe.add(item.id);
+    }
+    const counts = normalized.items.reduce<Record<string, number>>((map, item) => {
+      const status = item.status ?? "todo";
+      map[status] = (map[status] ?? 0) + 1;
+      return map;
+    }, {});
+
+    const record = upsertStandaloneWorkspaceRoadmap({
+      workspace_id: `${owner}/${repo}`,
+      title: normalized.title ?? "Untitled Roadmap",
+      format: "yaml",
+      source: roadmap,
+      normalized,
+      status: {
+        problems,
+        counts,
+        total: normalized.items.length,
+      },
+      is_current: true,
+    });
+
+    const response: ImportSuccess = {
+      ok: true,
+      created: [],
+      skipped: [],
+      branch,
+      standaloneRoadmapId: record.id,
+      standaloneWorkspaceId: record.workspace_id,
+    };
+
+    return NextResponse.json(response);
   }
 
   const created: string[] = [];

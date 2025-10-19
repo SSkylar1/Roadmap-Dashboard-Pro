@@ -523,6 +523,8 @@ function ConceptWizardPageInner() {
           project: hint.project ?? null,
           prUrl: hint.prUrl,
           pullRequestNumber: hint.pullRequestNumber,
+          standaloneRoadmapId: hint.standaloneRoadmapId,
+          standaloneWorkspaceId: hint.standaloneWorkspaceId,
         } satisfies HandoffHint;
       };
 
