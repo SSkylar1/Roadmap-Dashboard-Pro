@@ -933,8 +933,7 @@ function ConceptWizardPageInner() {
       </div>
     </div>
 
-    {!STANDALONE_MODE ? (
-      <>
+    <>
         <form
           onSubmit={onGenerate}
           className="tw-grid tw-gap-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6"
@@ -1242,12 +1241,7 @@ function ConceptWizardPageInner() {
           />
         </div>
       </div>
-      </>
-    ) : (
-      <div className="tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6 tw-text-sm tw-text-slate-300">
-        Standalone Mode: GitHub syncing is optional and currently disabled.
-      </div>
-    )}
+    </>
   </section>
   );
 }
