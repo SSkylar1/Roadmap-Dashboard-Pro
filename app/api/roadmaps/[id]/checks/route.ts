@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 import { STANDALONE_MODE } from "@/lib/config";
+import {
+  getStandaloneRoadmap,
+  updateStandaloneRoadmapStatus,
+} from "@/lib/standalone/roadmaps-store";
 
 export const runtime = "nodejs";
 
@@ -24,8 +28,17 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const id = params.id;
+
   if (STANDALONE_MODE) {
-    return NextResponse.json({ ok: false, error: "standalone_mode" }, { status: 503 });
+    const record = getStandaloneRoadmap(id);
+    if (!record) {
+      return NextResponse.json({ ok: false, error: "not_found" }, { status: 404 });
+    }
+
+    const status = computeStatus(record.normalized);
+    updateStandaloneRoadmapStatus(id, status);
+    return NextResponse.json({ ok: true, status });
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -40,7 +53,6 @@ export async function POST(
 
   const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 
-  const id = params.id;
   const { data, error } = await supabase
     .from("roadmaps")
     .select("id, normalized")

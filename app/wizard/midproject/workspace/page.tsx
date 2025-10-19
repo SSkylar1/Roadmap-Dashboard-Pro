@@ -762,8 +762,7 @@ function MidProjectSyncWorkspaceInner() {
           </span>
         </div>
       </header>
-      {!STANDALONE_MODE ? (
-        <>
+      <>
           <form onSubmit={handleSync} className="tw-grid tw-gap-8 lg:tw-grid-cols-[1.4fr,1fr]">
         <section className="tw-space-y-6 tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-8">
           <div className="tw-grid tw-gap-4 md:tw-grid-cols-2">
@@ -1262,12 +1261,7 @@ function MidProjectSyncWorkspaceInner() {
           )}
         </div>
       </section>
-        </>
-      ) : (
-        <div className="tw-rounded-3xl tw-border tw-border-slate-800 tw-bg-slate-900 tw-p-6 tw-text-sm tw-text-slate-300">
-          Standalone Mode: GitHub syncing is optional and currently disabled.
-        </div>
-      )}
+      </>
     </div>
   );
 }
