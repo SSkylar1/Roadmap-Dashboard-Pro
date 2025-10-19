@@ -66,7 +66,17 @@ type Week = {
 type StatusResponse = {
   generated_at?: string;
   env?: string;
+  project?: string;
   weeks: Week[];
+};
+
+type StatusMeta = {
+  source: "github" | "standalone";
+  branch?: string | null;
+  project?: string | null;
+  updatedAt?: string | null;
+  snapshotId?: string | null;
+  workspaceId?: string | null;
 };
 
 type RepoRef = {
@@ -437,11 +447,13 @@ function useStatus(owner: string, repo: string, project?: string | null) {
   const [data, setData] = useState<StatusResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [meta, setMeta] = useState<StatusMeta | null>(null);
 
   useEffect(() => {
     if (!owner || !repo) {
       setData(null);
       setErr(null);
+      setMeta(null);
       setLoading(false);
       return;
     }
@@ -465,16 +477,46 @@ function useStatus(owner: string, repo: string, project?: string | null) {
         }
         return r.json();
       })
-      .then((json: StatusResponse) => {
-        if (!cancelled) {
-          setData(json);
-          setErr(null);
+      .then((json: any) => {
+        if (cancelled) return;
+        setErr(null);
+        if (json && typeof json === "object" && "snapshot" in json) {
+          const snapshot = json.snapshot as StatusResponse;
+          setData(snapshot);
+          const metaPayload = typeof json.meta === "object" && json.meta ? json.meta : null;
+          const branch = typeof metaPayload?.branch === "string" ? metaPayload.branch : null;
+          const projectId =
+            typeof metaPayload?.project_id === "string" && metaPayload.project_id
+              ? metaPayload.project_id
+              : projectKey ?? null;
+          const updatedAt =
+            typeof metaPayload?.created_at === "string" ? metaPayload.created_at : null;
+          const snapshotId = typeof metaPayload?.id === "string" ? metaPayload.id : null;
+          const workspaceId =
+            typeof metaPayload?.workspace_id === "string" ? metaPayload.workspace_id : null;
+          setMeta({
+            source: "standalone",
+            branch,
+            project: projectId,
+            updatedAt,
+            snapshotId,
+            workspaceId,
+          });
+        } else {
+          const payload = json as StatusResponse;
+          setData(payload);
+          setMeta({
+            source: "github",
+            project: projectKey ?? null,
+            updatedAt: typeof payload?.generated_at === "string" ? payload.generated_at : null,
+          });
         }
       })
       .catch((e) => {
         if (!cancelled) {
           setErr(String(e?.message || e));
           setData(null);
+          setMeta(null);
         }
       })
       .finally(() => {
@@ -486,7 +528,7 @@ function useStatus(owner: string, repo: string, project?: string | null) {
     };
   }, [owner, repo, project]);
 
-  return { data, err, loading };
+  return { data, err, loading, meta };
 }
 
 function useStoredRepos() {
@@ -3371,7 +3413,12 @@ function DashboardPage() {
     searchString,
   ]);
 
-  const { data, err, loading } = useStatus(activeRepo?.owner ?? "", activeRepo?.repo ?? "", activeRepo?.project);
+  const {
+    data,
+    err,
+    loading,
+    meta: statusMeta,
+  } = useStatus(activeRepo?.owner ?? "", activeRepo?.repo ?? "", activeRepo?.project);
   const {
     state: manualState,
     ready: manualReady,
@@ -3468,6 +3515,17 @@ function DashboardPage() {
   }, [manualState]);
 
   const incompleteEntries = useMemo(() => collectIncompleteEntries(decoratedWeeks), [decoratedWeeks]);
+  const snapshotMetaParts = useMemo(() => {
+    if (!statusMeta || statusMeta.source !== "standalone") return [];
+    const parts: string[] = ["Standalone snapshot"];
+    if (statusMeta.updatedAt) {
+      parts.push(`updated ${statusMeta.updatedAt}`);
+    }
+    if (statusMeta.branch) {
+      parts.push(`branch ${statusMeta.branch}`);
+    }
+    return parts;
+  }, [statusMeta]);
 
   const hasManualChanges =
     manualReady && (manualTotals.added > 0 || manualTotals.removed > 0 || manualTotals.overrides > 0);
@@ -3648,6 +3706,7 @@ function DashboardPage() {
                 {data ? (
                   <div className="timestamp">
                     Generated at: {data.generated_at ?? "unknown"} · env: {data.env ?? "unknown"}
+                    {snapshotMetaParts.length > 0 ? ` · ${snapshotMetaParts.join(" · ")}` : null}
                   </div>
                 ) : null}
                 {!loading && !err && (!data || decoratedWeeks.length === 0) ? (
