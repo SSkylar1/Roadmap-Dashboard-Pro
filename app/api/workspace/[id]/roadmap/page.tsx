@@ -1,17 +1,40 @@
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 
-export default async function RoadmapPage({ params }: { params: { id: string } }) {
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+import { STANDALONE_MODE } from "@/lib/config";
+import { getCurrentStandaloneWorkspaceRoadmap } from "@/lib/standalone/roadmaps-store";
 
-  const { data: roadmap } = await supabase
-    .from("roadmaps")
-    .select("*")
-    .eq("workspace_id", params.id)
-    .eq("is_current", true)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+export default async function RoadmapPage({ params }: { params: { id: string } }) {
+  let roadmap: any | null = null;
+  let loadError: string | null = null;
+
+  if (STANDALONE_MODE) {
+    roadmap = getCurrentStandaloneWorkspaceRoadmap(params.id);
+  } else {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      loadError =
+        "Supabase environment variables are missing. Configure NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY or enable STANDALONE_MODE.";
+    } else {
+      const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+      const { data, error } = await supabase
+        .from("roadmaps")
+        .select("*")
+        .eq("workspace_id", params.id)
+        .eq("is_current", true)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        loadError = error.message;
+      } else {
+        roadmap = data;
+      }
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -26,8 +49,16 @@ export default async function RoadmapPage({ params }: { params: { id: string } }
           ) : null}
         </div>
       </div>
-      {!roadmap ? (
-        <p>No roadmap yet. Paste one to get started.</p>
+      {loadError ? (
+        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          Failed to load the latest roadmap. {loadError}
+        </div>
+      ) : !roadmap ? (
+        <p>
+          {STANDALONE_MODE
+            ? "No standalone roadmap snapshot yet. Paste or upload one to get started."
+            : "No roadmap yet. Paste one to get started."}
+        </p>
       ) : (
         <div className="space-y-2">
           <div className="font-medium">{roadmap.title}</div>

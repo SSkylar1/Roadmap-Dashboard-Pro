@@ -21,8 +21,13 @@ function WizardConceptContent() {
       alert(`Error: ${j.error}\n${j.detail ? JSON.stringify(j.detail, null, 2) : ""}`);
       return;
     }
-    if (workspaceId) {
-      router.push(`/workspace/${workspaceId}/roadmap`);
+    const nextWorkspaceId =
+      typeof j?.roadmap?.workspace_id === "string" && j.roadmap.workspace_id
+        ? j.roadmap.workspace_id
+        : workspaceId;
+
+    if (nextWorkspaceId) {
+      router.push(`/workspace/${nextWorkspaceId}/roadmap`);
     }
   }
 
