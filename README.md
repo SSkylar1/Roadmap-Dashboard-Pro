@@ -20,6 +20,7 @@ Next.js dashboard for roadmap-kit projects with **GitHub App auth** (PAT fallbac
 ```bash
 npm install
 cp .env.example .env.local
+# Optional: set STANDALONE_MODE=true to use in-memory workflows without Supabase/GitHub writes
 # Fill ONE of the auth paths:
 # - GitHub App: GH_APP_ID, GH_APP_PRIVATE_KEY (GH_APP_INSTALLATION_ID optional; the wizard auto-detects when omitted)
 # - OR PAT: GITHUB_TOKEN with repo scope
@@ -39,6 +40,36 @@ npm run dev
 > local secrets into the new storage. For backward compatibility the code still falls back to
 > `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`, but migrate to the `SB_` names when you can to avoid
 > confusion when reading runtime errors.
+
+## Standalone mode
+
+Standalone mode keeps roadmap ingestion and status runs entirely local so you can demo the dashboard without wiring it up to
+Supabase or GitHub.
+
+### Prerequisites
+
+- Keep the Supabase migrations ready for when you reconnect to a persistent backend. Run
+  [`docs/supabase-dashboard-secrets.sql`](docs/supabase-dashboard-secrets.sql) to create the encrypted secrets table and
+  [`docs/supabase-roadmap-progress.sql`](docs/supabase-roadmap-progress.sql) to capture manual roadmap adjustments once you
+  leave standalone mode.
+- Copy `.env.example` to `.env.local` and toggle `STANDALONE_MODE=true` (see the Quickstart snippet above).
+
+### Features and limitations
+
+- The roadmap wizard (`/wizard/roadmap/workspace`) and status API (`/api/roadmaps/*`, `/api/status/*`) store data in-memory
+  using the helpers in `lib/standalone/`. Restarting the dev server clears the snapshot history.
+- GitHub branch operations, Supabase persistence, webhook verification, and PAT inputs are intentionally disabled. The UI will
+  show a "Standalone Mode" notice wherever these controls normally appear.
+- Brainstorm, concept, mid-project, and roadmap flows continue to accept uploads or pasted `.roadmap.yml` content so you can
+  validate structure and rehearse workshops without committing anything to GitHub.
+
+### Launching standalone workflows
+
+1. Set `STANDALONE_MODE=true` in `.env.local` and restart `npm run dev`.
+2. Open `http://localhost:3000/new` to create a workspace, then dive into the wizard cards (Brainstorm → Concept → Mid-project →
+   Roadmap) to upload artifacts.
+3. Review the generated status cards locally—the dashboard reads from the standalone stores until you remove the environment
+   flag.
 
 ### Verify your GitHub App env vars
 
