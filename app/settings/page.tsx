@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 
+import { STANDALONE_MODE } from "@/lib/config";
 import {
   createProjectEntry,
   createRepoEntry,
@@ -129,6 +130,12 @@ export default function SettingsPage() {
       ? "repo default"
       : "global default"
     : null;
+
+  const StandaloneNotice = () => (
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+      Standalone Mode: GitHub syncing is optional and currently disabled.
+    </div>
+  );
 
   const handleRepoFormChange = (field: keyof RepoFormState) => (event: ChangeEvent<HTMLInputElement>) => {
     setRepoForm((prev) => ({ ...prev, [field]: event.target.value }));
@@ -292,27 +299,35 @@ export default function SettingsPage() {
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <header className="space-y-1">
           <h2 className="text-xl font-medium text-slate-900">Global defaults</h2>
-          <p className="text-sm text-slate-600">GitHub and OpenAI keys apply to every project unless you override them below.</p>
+          <p className="text-sm text-slate-600">
+            {STANDALONE_MODE
+              ? "OpenAI keys apply to every project unless you override them below."
+              : "GitHub and OpenAI keys apply to every project unless you override them below."}
+          </p>
         </header>
         <div className="mt-6 grid gap-6 md:grid-cols-2">
-          <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
-            GitHub personal access token
-            <input
-              type="password"
-              value={store.defaults.githubPat ?? ""}
-              onChange={(event) =>
-                setStore((prev) => ({
-                  ...prev,
-                  defaults: { ...prev.defaults, githubPat: event.target.value },
-                }))
-              }
-              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200"
-              placeholder="ghp_xxxxxxxxxxxxxxxxxxxxx"
-            />
-            <span className="text-xs font-normal text-slate-500">
-              {defaultGithub ? "Default GitHub token detected." : "Required for committing roadmap artifacts."}
-            </span>
-          </label>
+          {!STANDALONE_MODE ? (
+            <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
+              GitHub personal access token
+              <input
+                type="password"
+                value={store.defaults.githubPat ?? ""}
+                onChange={(event) =>
+                  setStore((prev) => ({
+                    ...prev,
+                    defaults: { ...prev.defaults, githubPat: event.target.value },
+                  }))
+                }
+                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                placeholder="ghp_xxxxxxxxxxxxxxxxxxxxx"
+              />
+              <span className="text-xs font-normal text-slate-500">
+                {defaultGithub ? "Default GitHub token detected." : "Required for committing roadmap artifacts."}
+              </span>
+            </label>
+          ) : (
+            <StandaloneNotice />
+          )}
           <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
             OpenAI API key
             <input
@@ -429,6 +444,7 @@ export default function SettingsPage() {
                     <h3 className="text-lg font-semibold text-slate-900">{selectedRepo.displayName || `${selectedRepo.owner}/${selectedRepo.repo}`}</h3>
                     <p className="text-xs uppercase tracking-wide text-slate-500">Repository settings</p>
                   </header>
+                  {STANDALONE_MODE ? <StandaloneNotice /> : null}
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
                       Owner
@@ -464,16 +480,18 @@ export default function SettingsPage() {
                         className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                       />
                     </label>
-                    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
-                      GitHub PAT override (optional)
-                      <input
-                        type="password"
-                        value={selectedRepo.githubPat ?? ""}
-                        onChange={onRepoFieldChange("githubPat")}
-                        placeholder="Override default token"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                      />
-                    </label>
+                    {!STANDALONE_MODE ? (
+                      <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        GitHub PAT override (optional)
+                        <input
+                          type="password"
+                          value={selectedRepo.githubPat ?? ""}
+                          onChange={onRepoFieldChange("githubPat")}
+                          placeholder="Override default token"
+                          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                        />
+                      </label>
+                    ) : null}
                     <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
                       OpenAI key override (optional)
                       <input
@@ -538,6 +556,7 @@ export default function SettingsPage() {
                           Remove project
                         </button>
                       </div>
+                      {STANDALONE_MODE ? <StandaloneNotice /> : null}
                       <div className="grid gap-4 sm:grid-cols-2">
                         <label className="flex flex-col gap-1 text-xs font-medium text-slate-600 sm:col-span-2">
                           Project name
@@ -556,16 +575,18 @@ export default function SettingsPage() {
                             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
                           />
                         </label>
-                        <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
-                          GitHub PAT override
-                          <input
-                            type="password"
-                            value={selectedProject.githubPat ?? ""}
-                            onChange={onProjectFieldChange("githubPat")}
-                            placeholder="Inherit repo default"
-                            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
-                          />
-                        </label>
+                        {!STANDALONE_MODE ? (
+                          <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                            GitHub PAT override
+                            <input
+                              type="password"
+                              value={selectedProject.githubPat ?? ""}
+                              onChange={onProjectFieldChange("githubPat")}
+                              placeholder="Inherit repo default"
+                              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                            />
+                          </label>
+                        ) : null}
                         <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
                           OpenAI key override
                           <input
