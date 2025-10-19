@@ -76,6 +76,23 @@ type RunResponse = {
   wrote?: string[];
   error?: string;
   detail?: string;
+  snapshot?: Record<string, any> | null;
+  meta?: {
+    id?: string;
+    workspace_id?: string | null;
+    project_id?: string | null;
+    branch?: string | null;
+    created_at?: string;
+  };
+};
+
+type StandaloneSnapshotMeta = {
+  id: string | null;
+  workspaceId: string | null;
+  projectId: string | null;
+  branch: string | null;
+  createdAt: string | null;
+  generatedAt: string | null;
 };
 
 function formatBytes(bytes: number) {
@@ -120,6 +137,7 @@ function RoadmapProvisionerInner() {
   const [runArtifacts, setRunArtifacts] = useState<string[]>([]);
   const [runNotice, setRunNotice] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [standaloneSnapshotMeta, setStandaloneSnapshotMeta] = useState<StandaloneSnapshotMeta | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -271,6 +289,25 @@ function RoadmapProvisionerInner() {
   }, [normalizedRunArtifacts]);
   const hasStatusArtifact = useMemo(() => distinctRunArtifacts.includes(statusPath), [distinctRunArtifacts, statusPath]);
   const hasPlanArtifact = useMemo(() => distinctRunArtifacts.includes(planPath), [distinctRunArtifacts, planPath]);
+  const standaloneSnapshotSummary = useMemo(() => {
+    if (!standaloneSnapshotMeta) {
+      return [] as string[];
+    }
+    const parts: string[] = [];
+    if (standaloneSnapshotMeta.generatedAt) {
+      parts.push(`generated ${standaloneSnapshotMeta.generatedAt}`);
+    }
+    if (standaloneSnapshotMeta.createdAt) {
+      parts.push(`saved ${standaloneSnapshotMeta.createdAt}`);
+    }
+    if (standaloneSnapshotMeta.branch) {
+      parts.push(`branch ${standaloneSnapshotMeta.branch}`);
+    }
+    if (standaloneSnapshotMeta.projectId) {
+      parts.push(`project ${standaloneSnapshotMeta.projectId}`);
+    }
+    return parts;
+  }, [standaloneSnapshotMeta]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -650,16 +687,16 @@ function RoadmapProvisionerInner() {
       branch: string;
       project?: string;
     }) => {
-      if (STANDALONE_MODE) {
-        return;
-      }
       setIsRunningRun(true);
       setRunError(null);
       setRunNotice(null);
       setRunArtifacts([]);
+      if (STANDALONE_MODE) {
+        setStandaloneSnapshotMeta(null);
+      }
       try {
         const headers: HeadersInit = { "Content-Type": "application/json" };
-        if (secrets.githubPat) {
+        if (!STANDALONE_MODE && secrets.githubPat) {
           headers["x-github-pat"] = secrets.githubPat;
         }
         const body: Record<string, string> = {
@@ -678,12 +715,44 @@ function RoadmapProvisionerInner() {
         const payload = (await response.json().catch(() => ({}))) as RunResponse;
         if (!response.ok || payload?.ok === false || payload?.error) {
           const detail = typeof payload?.detail === "string" && payload.detail.trim() ? payload.detail : null;
-          setRunError(detail ? `${payload?.error ?? "Failed to refresh status"}: ${detail}` : payload?.error ?? "Failed to refresh status");
+          const fallbackMessage = STANDALONE_MODE ? "Failed to refresh snapshot" : "Failed to refresh status";
+          const message = payload?.error ?? fallbackMessage;
+          setRunError(detail ? `${message}: ${detail}` : message);
           setRunArtifacts(payload?.wrote ?? []);
+          if (STANDALONE_MODE) {
+            const generatedAt =
+              payload?.snapshot && typeof payload.snapshot === "object" && typeof (payload.snapshot as any)?.generated_at === "string"
+                ? ((payload.snapshot as Record<string, any>).generated_at as string)
+                : null;
+            setStandaloneSnapshotMeta({
+              id: payload?.meta?.id ?? null,
+              workspaceId: payload?.meta?.workspace_id ?? null,
+              projectId: payload?.meta?.project_id ?? null,
+              branch: payload?.meta?.branch ?? null,
+              createdAt: payload?.meta?.created_at ?? null,
+              generatedAt,
+            });
+          }
           return;
         }
         setRunArtifacts(payload?.wrote ?? []);
-        setRunNotice("Dashboard prerequisites committed.");
+        if (STANDALONE_MODE) {
+          const generatedAt =
+            payload?.snapshot && typeof payload.snapshot === "object" && typeof (payload.snapshot as any)?.generated_at === "string"
+              ? ((payload.snapshot as Record<string, any>).generated_at as string)
+              : null;
+          setRunNotice(generatedAt ? `Snapshot updated at ${generatedAt}.` : "Snapshot refreshed.");
+          setStandaloneSnapshotMeta({
+            id: payload?.meta?.id ?? null,
+            workspaceId: payload?.meta?.workspace_id ?? null,
+            projectId: payload?.meta?.project_id ?? null,
+            branch: payload?.meta?.branch ?? null,
+            createdAt: payload?.meta?.created_at ?? null,
+            generatedAt,
+          });
+        } else {
+          setRunNotice("Dashboard prerequisites committed.");
+        }
       } catch (err: any) {
         setRunError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -694,9 +763,6 @@ function RoadmapProvisionerInner() {
   );
 
   const handleRunRetry = useCallback(() => {
-    if (STANDALONE_MODE) {
-      return;
-    }
     if (!success) {
       return;
     }
@@ -723,6 +789,7 @@ function RoadmapProvisionerInner() {
     setRunArtifacts([]);
     setRunNotice(null);
     setRunError(null);
+    setStandaloneSnapshotMeta(null);
 
     try {
       const trimmedOwner = owner.trim();
@@ -804,14 +871,12 @@ function RoadmapProvisionerInner() {
         window.localStorage.setItem(ROADMAP_HANDOFF_KEY, JSON.stringify(storedPayload));
       }
 
-      if (!STANDALONE_MODE) {
-        void runRoadmapStatus({
-          owner: trimmedOwner,
-          repo: trimmedRepo,
-          branch: followupBranch,
-          project: projectPayload,
-        });
-      }
+      void runRoadmapStatus({
+        owner: trimmedOwner,
+        repo: trimmedRepo,
+        branch: followupBranch,
+        project: projectPayload,
+      });
     } catch (err: any) {
       setError({ title: "Request failed", detail: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -1098,60 +1163,122 @@ function RoadmapProvisionerInner() {
                 )}
               </div>
 
-              {!STANDALONE_MODE ? (
-                <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-900/70 tw-p-4">
-                  <div className="tw-space-y-1">
-                    <p className="tw-text-sm tw-font-semibold tw-text-slate-100">Status &amp; plan follow-up</p>
-                    <p className="tw-text-xs tw-text-slate-300">
-                      We automatically run <code className="tw-font-mono tw-text-[11px]">/api/run</code> against this branch to publish the dashboard prerequisites.
-                    </p>
-                  </div>
-                  {isRunningRun ? (
-                    <div className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400/40 tw-bg-emerald-500/10 tw-px-3 tw-py-1.5">
-                      <span className="tw-h-3 tw-w-3 tw-animate-spin tw-rounded-full tw-border-2 tw-border-emerald-300 tw-border-t-transparent" />
-                      <span className="tw-text-xs tw-font-semibold tw-text-emerald-100">Generating dashboard artifacts…</span>
-                    </div>
-                  ) : null}
-                  {runNotice ? (
-                    <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-px-3 tw-py-2">
-                      <p className="tw-text-xs tw-font-semibold tw-text-emerald-100">{runNotice}</p>
-                      <ul className="tw-space-y-1">
-                        <li className="tw-flex tw-items-center tw-gap-2">
-                          <span className="tw-text-xs">{hasStatusArtifact ? "✅" : "•"}</span>
-                          <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{statusPath}</code>
-                        </li>
-                        <li className="tw-flex tw-items-center tw-gap-2">
-                          <span className="tw-text-xs">{hasPlanArtifact ? "✅" : "•"}</span>
-                          <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{planPath}</code>
-                        </li>
-                      </ul>
-                      {distinctRunArtifacts.length > 2 ? (
-                        <p className="tw-text-[11px] tw-text-emerald-100/70">
-                          Additional artifacts: {distinctRunArtifacts.filter((artifact) => artifact !== statusPath && artifact !== planPath).join(", ")}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {runError ? (
-                    <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-rose-700 tw-bg-rose-900/30 tw-px-3 tw-py-2">
-                      <div>
-                        <p className="tw-text-xs tw-font-semibold tw-text-rose-200">Status refresh failed</p>
-                        <p className="tw-text-[11px] tw-text-rose-200/80">{runError}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleRunRetry}
-                        className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-rose-500 tw-bg-rose-500/10 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-rose-100 hover:tw-bg-rose-500/20"
-                      >
-                        Retry status run
-                      </button>
-                    </div>
-                  ) : null}
-                  {!isRunningRun && !runNotice && !runError ? (
-                    <p className="tw-text-xs tw-text-slate-400">Awaiting status refresh…</p>
-                  ) : null}
+              <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-900/70 tw-p-4">
+                <div className="tw-space-y-1">
+                  <p className="tw-text-sm tw-font-semibold tw-text-slate-100">
+                    {STANDALONE_MODE ? "Standalone snapshot follow-up" : "Status & plan follow-up"}
+                  </p>
+                  <p className="tw-text-xs tw-text-slate-300">
+                    {STANDALONE_MODE ? (
+                      <>
+                        We automatically run <code className="tw-font-mono tw-text-[11px]">/api/run</code> to capture a fresh status snapshot for this workspace.
+                      </>
+                    ) : (
+                      <>
+                        We automatically run <code className="tw-font-mono tw-text-[11px]">/api/run</code> against this branch to publish the dashboard prerequisites.
+                      </>
+                    )}
+                  </p>
                 </div>
-              ) : null}
+                {isRunningRun ? (
+                  <div className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400/40 tw-bg-emerald-500/10 tw-px-3 tw-py-1.5">
+                    <span className="tw-h-3 tw-w-3 tw-animate-spin tw-rounded-full tw-border-2 tw-border-emerald-300 tw-border-t-transparent" />
+                    <span className="tw-text-xs tw-font-semibold tw-text-emerald-100">
+                      {STANDALONE_MODE ? "Refreshing snapshot…" : "Generating dashboard artifacts…"}
+                    </span>
+                  </div>
+                ) : null}
+                {runNotice ? (
+                  <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-px-3 tw-py-2">
+                    <p className="tw-text-xs tw-font-semibold tw-text-emerald-100">{runNotice}</p>
+                    {STANDALONE_MODE ? (
+                      <div className="tw-space-y-1">
+                        {standaloneSnapshotSummary.length > 0 ? (
+                          <p className="tw-text-[11px] tw-text-emerald-100/80">
+                            {standaloneSnapshotSummary.join(" · ")}
+                          </p>
+                        ) : null}
+                        {standaloneSnapshotMeta ? (
+                          <ul className="tw-space-y-1">
+                            {standaloneSnapshotMeta.id ? (
+                              <li className="tw-flex tw-items-center tw-gap-2">
+                                <span className="tw-text-xs">•</span>
+                                <span className="tw-text-[11px] tw-text-emerald-100/90">
+                                  Snapshot <code className="tw-font-mono tw-text-[11px]">{standaloneSnapshotMeta.id}</code>
+                                </span>
+                              </li>
+                            ) : null}
+                            {standaloneSnapshotMeta.workspaceId ? (
+                              <li className="tw-flex tw-items-center tw-gap-2">
+                                <span className="tw-text-xs">•</span>
+                                <span className="tw-text-[11px] tw-text-emerald-100/90">
+                                  Workspace <code className="tw-font-mono tw-text-[11px]">{standaloneSnapshotMeta.workspaceId}</code>
+                                </span>
+                              </li>
+                            ) : null}
+                            {standaloneSnapshotMeta.branch ? (
+                              <li className="tw-flex tw-items-center tw-gap-2">
+                                <span className="tw-text-xs">•</span>
+                                <span className="tw-text-[11px] tw-text-emerald-100/90">
+                                  Branch <code className="tw-font-mono tw-text-[11px]">{standaloneSnapshotMeta.branch}</code>
+                                </span>
+                              </li>
+                            ) : null}
+                            {standaloneSnapshotMeta.projectId ? (
+                              <li className="tw-flex tw-items-center tw-gap-2">
+                                <span className="tw-text-xs">•</span>
+                                <span className="tw-text-[11px] tw-text-emerald-100/90">
+                                  Project <code className="tw-font-mono tw-text-[11px]">{standaloneSnapshotMeta.projectId}</code>
+                                </span>
+                              </li>
+                            ) : null}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <>
+                        <ul className="tw-space-y-1">
+                          <li className="tw-flex tw-items-center tw-gap-2">
+                            <span className="tw-text-xs">{hasStatusArtifact ? "✅" : "•"}</span>
+                            <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{statusPath}</code>
+                          </li>
+                          <li className="tw-flex tw-items-center tw-gap-2">
+                            <span className="tw-text-xs">{hasPlanArtifact ? "✅" : "•"}</span>
+                            <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{planPath}</code>
+                          </li>
+                        </ul>
+                        {distinctRunArtifacts.length > 2 ? (
+                          <p className="tw-text-[11px] tw-text-emerald-100/70">
+                            Additional artifacts: {distinctRunArtifacts.filter((artifact) => artifact !== statusPath && artifact !== planPath).join(", ")}
+                          </p>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                ) : null}
+                {runError ? (
+                  <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-rose-700 tw-bg-rose-900/30 tw-px-3 tw-py-2">
+                    <div>
+                      <p className="tw-text-xs tw-font-semibold tw-text-rose-200">
+                        {STANDALONE_MODE ? "Snapshot refresh failed" : "Status refresh failed"}
+                      </p>
+                      <p className="tw-text-[11px] tw-text-rose-200/80">{runError}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRunRetry}
+                      className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-rose-500 tw-bg-rose-500/10 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-rose-100 hover:tw-bg-rose-500/20"
+                    >
+                      {STANDALONE_MODE ? "Retry snapshot run" : "Retry status run"}
+                    </button>
+                  </div>
+                ) : null}
+                {!isRunningRun && !runNotice && !runError ? (
+                  <p className="tw-text-xs tw-text-slate-400">
+                    {STANDALONE_MODE ? "Awaiting snapshot refresh…" : "Awaiting status refresh…"}
+                  </p>
+                ) : null}
+              </div>
 
               {!STANDALONE_MODE && success.prUrl ? (
                 <a
