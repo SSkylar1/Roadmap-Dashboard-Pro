@@ -59,6 +59,8 @@ type HandoffHint = {
   project?: string | null;
   prUrl?: string;
   pullRequestNumber?: number;
+  standaloneRoadmapId?: string;
+  standaloneWorkspaceId?: string;
 };
 
 const ADD_NEW_REPO_OPTION = "__add_new_repo__";
@@ -523,6 +525,8 @@ function ConceptWizardPageInner() {
           project: hint.project ?? null,
           prUrl: hint.prUrl,
           pullRequestNumber: hint.pullRequestNumber,
+          standaloneRoadmapId: hint.standaloneRoadmapId,
+          standaloneWorkspaceId: hint.standaloneWorkspaceId,
         } satisfies HandoffHint;
       };
 

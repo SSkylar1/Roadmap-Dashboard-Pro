@@ -31,6 +31,8 @@ type SuccessState = {
   pullRequestNumber?: number;
   path?: string;
   project?: string;
+  standaloneRoadmapId?: string;
+  standaloneWorkspaceId?: string;
 } | null;
 
 type UploadState = {
@@ -49,6 +51,8 @@ type HandoffHint = {
   project?: string | null;
   prUrl?: string;
   pullRequestNumber?: number;
+  standaloneRoadmapId?: string;
+  standaloneWorkspaceId?: string;
 };
 
 const ADD_NEW_REPO_OPTION = "__add_new_repo__";
@@ -63,6 +67,8 @@ type ImportResponse = {
   pullRequestNumber?: number;
   error?: string;
   detail?: string;
+  standaloneRoadmapId?: string;
+  standaloneWorkspaceId?: string;
 };
 
 type RunResponse = {
@@ -172,6 +178,8 @@ function RoadmapProvisionerInner() {
           project: hint.project ?? null,
           prUrl: hint.prUrl,
           pullRequestNumber: hint.pullRequestNumber,
+          standaloneRoadmapId: hint.standaloneRoadmapId,
+          standaloneWorkspaceId: hint.standaloneWorkspaceId,
         } satisfies HandoffHint;
       };
 
@@ -642,6 +650,9 @@ function RoadmapProvisionerInner() {
       branch: string;
       project?: string;
     }) => {
+      if (STANDALONE_MODE) {
+        return;
+      }
       setIsRunningRun(true);
       setRunError(null);
       setRunNotice(null);
@@ -683,6 +694,9 @@ function RoadmapProvisionerInner() {
   );
 
   const handleRunRetry = useCallback(() => {
+    if (STANDALONE_MODE) {
+      return;
+    }
     if (!success) {
       return;
     }
@@ -718,11 +732,11 @@ function RoadmapProvisionerInner() {
       const projectPayload = trimmedProject ? trimmedProject : undefined;
 
       const headers: HeadersInit = { "Content-Type": "application/json" };
-      if (secrets.githubPat) {
+      if (!STANDALONE_MODE && secrets.githubPat) {
         headers["x-github-pat"] = secrets.githubPat;
       }
 
-      const endpoint = openAsPr ? "/api/roadmap/import?asPR=true" : "/api/roadmap/import";
+      const endpoint = !STANDALONE_MODE && openAsPr ? "/api/roadmap/import?asPR=true" : "/api/roadmap/import";
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
@@ -753,14 +767,51 @@ function RoadmapProvisionerInner() {
         prUrl: payload.prUrl,
         pullRequestNumber: payload.pullRequestNumber,
         project: projectPayload,
+        standaloneRoadmapId: payload.standaloneRoadmapId,
+        standaloneWorkspaceId: payload.standaloneWorkspaceId,
       });
 
-      void runRoadmapStatus({
-        owner: trimmedOwner,
-        repo: trimmedRepo,
-        branch: followupBranch,
-        project: projectPayload,
-      });
+      const nextHandoff: HandoffHint = {
+        ...(handoffHint ?? { path: roadmapPath }),
+        path: handoffHint?.path ?? roadmapPath,
+        label: handoffHint?.label ?? roadmapPath,
+        content: handoffHint?.content,
+        owner: trimmedOwner || undefined,
+        repo: trimmedRepo || undefined,
+        branch: followupBranch || undefined,
+        project: projectPayload ?? null,
+        prUrl: payload.prUrl ?? handoffHint?.prUrl,
+        pullRequestNumber: payload.pullRequestNumber ?? handoffHint?.pullRequestNumber,
+      };
+
+      if (STANDALONE_MODE) {
+        nextHandoff.standaloneRoadmapId = payload.standaloneRoadmapId ?? handoffHint?.standaloneRoadmapId;
+        nextHandoff.standaloneWorkspaceId = payload.standaloneWorkspaceId ?? handoffHint?.standaloneWorkspaceId ?? `${trimmedOwner}/${trimmedRepo}`;
+      } else {
+        if ("standaloneRoadmapId" in nextHandoff) {
+          delete nextHandoff.standaloneRoadmapId;
+        }
+        if ("standaloneWorkspaceId" in nextHandoff) {
+          delete nextHandoff.standaloneWorkspaceId;
+        }
+      }
+
+      setHandoffHint(nextHandoff);
+      setHasImportedHandoff(true);
+
+      if (typeof window !== "undefined") {
+        const storedPayload = { ...nextHandoff, createdAt: Date.now() };
+        window.localStorage.setItem(ROADMAP_HANDOFF_KEY, JSON.stringify(storedPayload));
+      }
+
+      if (!STANDALONE_MODE) {
+        void runRoadmapStatus({
+          owner: trimmedOwner,
+          repo: trimmedRepo,
+          branch: followupBranch,
+          project: projectPayload,
+        });
+      }
     } catch (err: any) {
       setError({ title: "Request failed", detail: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -986,7 +1037,8 @@ function RoadmapProvisionerInner() {
               </div>
             ) : (
               <p className="tw-text-xs tw-text-slate-400">
-                Accepts .yml or .yaml files up to 2MB. We validate the file with js-yaml before committing it to your repository.
+                Accepts .yml or .yaml files up to 2MB. We validate the file with js-yaml before
+                {STANDALONE_MODE ? " storing it in your standalone workspace." : " committing it to your repository."}
               </p>
             )}
           </div>
@@ -1014,74 +1066,94 @@ function RoadmapProvisionerInner() {
             <div className="tw-rounded-2xl tw-border tw-border-emerald-700 tw-bg-emerald-950/40 tw-p-4 tw-space-y-4">
               <div className="tw-space-y-1">
                 <h3 className="tw-text-sm tw-font-semibold tw-text-emerald-200">Roadmap imported successfully</h3>
-                <p className="tw-text-xs tw-text-emerald-100">
-                  Created {success.created.length} files
-                  {success.skipped.length ? `, skipped ${success.skipped.length} existing` : ""}.
-                </p>
-                {success.branch ? (
-                  <p className="tw-text-xs tw-text-emerald-200/80">
-                    Changes pushed to <code className="tw-font-mono tw-text-[11px]">{success.branch}</code>.
-                  </p>
-                ) : null}
-                <p className="tw-text-xs tw-text-emerald-100/80">
-                  The follow-up run commits <code className="tw-font-mono tw-text-[11px]">{statusPath}</code> and <code className="tw-font-mono tw-text-[11px]">{planPath}</code> so the dashboard loads immediately.
-                </p>
-              </div>
-
-              <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-900/70 tw-p-4">
-                <div className="tw-space-y-1">
-                  <p className="tw-text-sm tw-font-semibold tw-text-slate-100">Status &amp; plan follow-up</p>
-                  <p className="tw-text-xs tw-text-slate-300">
-                    We automatically run <code className="tw-font-mono tw-text-[11px]">/api/run</code> against this branch to publish the dashboard prerequisites.
-                  </p>
-                </div>
-                {isRunningRun ? (
-                  <div className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400/40 tw-bg-emerald-500/10 tw-px-3 tw-py-1.5">
-                    <span className="tw-h-3 tw-w-3 tw-animate-spin tw-rounded-full tw-border-2 tw-border-emerald-300 tw-border-t-transparent" />
-                    <span className="tw-text-xs tw-font-semibold tw-text-emerald-100">Generating dashboard artifacts…</span>
-                  </div>
-                ) : null}
-                {runNotice ? (
-                  <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-px-3 tw-py-2">
-                    <p className="tw-text-xs tw-font-semibold tw-text-emerald-100">{runNotice}</p>
-                    <ul className="tw-space-y-1">
-                      <li className="tw-flex tw-items-center tw-gap-2">
-                        <span className="tw-text-xs">{hasStatusArtifact ? "✅" : "•"}</span>
-                        <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{statusPath}</code>
-                      </li>
-                      <li className="tw-flex tw-items-center tw-gap-2">
-                        <span className="tw-text-xs">{hasPlanArtifact ? "✅" : "•"}</span>
-                        <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{planPath}</code>
-                      </li>
-                    </ul>
-                    {distinctRunArtifacts.length > 2 ? (
-                      <p className="tw-text-[11px] tw-text-emerald-100/70">
-                        Additional artifacts: {distinctRunArtifacts.filter((artifact) => artifact !== statusPath && artifact !== planPath).join(", ")}
+                {STANDALONE_MODE ? (
+                  <>
+                    <p className="tw-text-xs tw-text-emerald-100">
+                      Roadmap captured for the standalone workspace <code className="tw-font-mono tw-text-[11px]">{success.owner}/{success.repo}</code>.
+                    </p>
+                    {success.standaloneRoadmapId ? (
+                      <p className="tw-text-xs tw-text-emerald-100/80">
+                        Roadmap ID <code className="tw-font-mono tw-text-[11px]">{success.standaloneRoadmapId}</code> is saved for upcoming checks.
                       </p>
                     ) : null}
-                  </div>
-                ) : null}
-                {runError ? (
-                  <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-rose-700 tw-bg-rose-900/30 tw-px-3 tw-py-2">
-                    <div>
-                      <p className="tw-text-xs tw-font-semibold tw-text-rose-200">Status refresh failed</p>
-                      <p className="tw-text-[11px] tw-text-rose-200/80">{runError}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleRunRetry}
-                      className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-rose-500 tw-bg-rose-500/10 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-rose-100 hover:tw-bg-rose-500/20"
-                    >
-                      Retry status run
-                    </button>
-                  </div>
-                ) : null}
-                {!isRunningRun && !runNotice && !runError ? (
-                  <p className="tw-text-xs tw-text-slate-400">Awaiting status refresh…</p>
-                ) : null}
+                    <p className="tw-text-xs tw-text-emerald-100/80">
+                      Continue when you&apos;re ready to generate dashboard artifacts—no GitHub commits required in standalone mode.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="tw-text-xs tw-text-emerald-100">
+                      Created {success.created.length} files
+                      {success.skipped.length ? `, skipped ${success.skipped.length} existing` : ""}.
+                    </p>
+                    {success.branch ? (
+                      <p className="tw-text-xs tw-text-emerald-200/80">
+                        Changes pushed to <code className="tw-font-mono tw-text-[11px]">{success.branch}</code>.
+                      </p>
+                    ) : null}
+                    <p className="tw-text-xs tw-text-emerald-100/80">
+                      The follow-up run commits <code className="tw-font-mono tw-text-[11px]">{statusPath}</code> and <code className="tw-font-mono tw-text-[11px]">{planPath}</code> so the dashboard loads immediately.
+                    </p>
+                  </>
+                )}
               </div>
 
-              {success.prUrl ? (
+              {!STANDALONE_MODE ? (
+                <div className="tw-space-y-3 tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-900/70 tw-p-4">
+                  <div className="tw-space-y-1">
+                    <p className="tw-text-sm tw-font-semibold tw-text-slate-100">Status &amp; plan follow-up</p>
+                    <p className="tw-text-xs tw-text-slate-300">
+                      We automatically run <code className="tw-font-mono tw-text-[11px]">/api/run</code> against this branch to publish the dashboard prerequisites.
+                    </p>
+                  </div>
+                  {isRunningRun ? (
+                    <div className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-emerald-400/40 tw-bg-emerald-500/10 tw-px-3 tw-py-1.5">
+                      <span className="tw-h-3 tw-w-3 tw-animate-spin tw-rounded-full tw-border-2 tw-border-emerald-300 tw-border-t-transparent" />
+                      <span className="tw-text-xs tw-font-semibold tw-text-emerald-100">Generating dashboard artifacts…</span>
+                    </div>
+                  ) : null}
+                  {runNotice ? (
+                    <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-emerald-500/40 tw-bg-emerald-500/10 tw-px-3 tw-py-2">
+                      <p className="tw-text-xs tw-font-semibold tw-text-emerald-100">{runNotice}</p>
+                      <ul className="tw-space-y-1">
+                        <li className="tw-flex tw-items-center tw-gap-2">
+                          <span className="tw-text-xs">{hasStatusArtifact ? "✅" : "•"}</span>
+                          <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{statusPath}</code>
+                        </li>
+                        <li className="tw-flex tw-items-center tw-gap-2">
+                          <span className="tw-text-xs">{hasPlanArtifact ? "✅" : "•"}</span>
+                          <code className="tw-font-mono tw-text-[11px] tw-text-emerald-100/90">{planPath}</code>
+                        </li>
+                      </ul>
+                      {distinctRunArtifacts.length > 2 ? (
+                        <p className="tw-text-[11px] tw-text-emerald-100/70">
+                          Additional artifacts: {distinctRunArtifacts.filter((artifact) => artifact !== statusPath && artifact !== planPath).join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {runError ? (
+                    <div className="tw-space-y-2 tw-rounded-xl tw-border tw-border-rose-700 tw-bg-rose-900/30 tw-px-3 tw-py-2">
+                      <div>
+                        <p className="tw-text-xs tw-font-semibold tw-text-rose-200">Status refresh failed</p>
+                        <p className="tw-text-[11px] tw-text-rose-200/80">{runError}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRunRetry}
+                        className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-rose-500 tw-bg-rose-500/10 tw-px-3 tw-py-1.5 tw-text-xs tw-font-semibold tw-text-rose-100 hover:tw-bg-rose-500/20"
+                      >
+                        Retry status run
+                      </button>
+                    </div>
+                  ) : null}
+                  {!isRunningRun && !runNotice && !runError ? (
+                    <p className="tw-text-xs tw-text-slate-400">Awaiting status refresh…</p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {!STANDALONE_MODE && success.prUrl ? (
                 <a
                   href={success.prUrl}
                   target="_blank"
@@ -1112,19 +1184,23 @@ function RoadmapProvisionerInner() {
             >
               {isSubmitting ? "Importing…" : "Import & scaffold"}
             </button>
-            <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-px-3 tw-py-1.5 tw-text-xs tw-font-medium tw-text-slate-200">
-              <input
-                type="checkbox"
-                checked={openAsPr}
-                onChange={(event) => setOpenAsPr(event.target.checked)}
-                className="tw-h-3.5 tw-w-3.5 tw-rounded tw-border tw-border-slate-700 tw-bg-slate-900 tw-text-emerald-400 focus:tw-ring-emerald-400"
-              />
-              <span>Open as pull request</span>
-            </label>
+            {!STANDALONE_MODE ? (
+              <label className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950/60 tw-px-3 tw-py-1.5 tw-text-xs tw-font-medium tw-text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={openAsPr}
+                  onChange={(event) => setOpenAsPr(event.target.checked)}
+                  className="tw-h-3.5 tw-w-3.5 tw-rounded tw-border tw-border-slate-700 tw-bg-slate-900 tw-text-emerald-400 focus:tw-ring-emerald-400"
+                />
+                <span>Open as pull request</span>
+              </label>
+            ) : null}
             <p className="tw-text-xs tw-text-slate-400">
-              {openAsPr
-                ? "Creates a new branch and opens a PR with the roadmap scaffolding."
-                : `Commits docs/roadmap.yml, scaffolding, and status artifacts directly to ${success?.branch ?? branch}.`}
+              {STANDALONE_MODE
+                ? "Stores docs/roadmap.yml and supporting scaffolding in your standalone workspace."
+                : openAsPr
+                  ? "Creates a new branch and opens a PR with the roadmap scaffolding."
+                  : `Commits docs/roadmap.yml, scaffolding, and status artifacts directly to ${success?.branch ?? branch}.`}
             </p>
           </div>
         </section>

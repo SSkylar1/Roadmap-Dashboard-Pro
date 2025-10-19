@@ -85,6 +85,52 @@ export function insertStandaloneRoadmap(
   return cloneRecord(record);
 }
 
+export function upsertStandaloneWorkspaceRoadmap(
+  input: Omit<StandaloneRoadmapRecord, "id" | "created_at" | "updated_at"> & { id?: string },
+): StandaloneRoadmapRecord {
+  const store = getStore();
+  const now = new Date().toISOString();
+  const workspaceId = input.workspace_id;
+  const desiredIsCurrent = input.is_current ?? true;
+
+  let targetId: string | null = null;
+  let createdAt: string | null = null;
+
+  if (desiredIsCurrent) {
+    for (const record of store.roadmaps.values()) {
+      if (record.workspace_id === workspaceId && record.is_current) {
+        targetId = record.id;
+        createdAt = record.created_at;
+        break;
+      }
+    }
+  }
+
+  const id = targetId ?? input.id ?? randomUUID();
+  const record: StandaloneRoadmapRecord = {
+    ...input,
+    id,
+    is_current: desiredIsCurrent,
+    created_at: createdAt ?? now,
+    updated_at: now,
+  };
+
+  store.roadmaps.set(id, record);
+
+  if (desiredIsCurrent) {
+    for (const [entryId, existing] of store.roadmaps) {
+      if (entryId === id) {
+        continue;
+      }
+      if (existing.workspace_id === workspaceId && existing.is_current) {
+        store.roadmaps.set(entryId, { ...existing, is_current: false, updated_at: now });
+      }
+    }
+  }
+
+  return cloneRecord(record);
+}
+
 export function getStandaloneRoadmap(id: string): StandaloneRoadmapRecord | null {
   const store = getStore();
   const record = store.roadmaps.get(id);
