@@ -13,6 +13,9 @@ import {
 const TABLE_NAME = "dashboard_secrets";
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 
+type BufferEncodingLike = "base64" | "utf8";
+type BufferLike = Uint8Array & { toString(encoding: BufferEncodingLike): string };
+
 type DashboardSecretRow = {
   composite_id: string;
   owner: string | null;
@@ -52,11 +55,11 @@ function handleTableError(error: PostgrestErrorLike): never {
 }
 
 function encryptPayload(payload: unknown): string {
-  const iv = randomBytes(12);
+  const iv = randomBytes(12) as BufferLike;
   const cipher = createCipheriv(ENCRYPTION_ALGORITHM, getEncryptionKey(), iv);
   const serialized = Buffer.from(JSON.stringify(payload), "utf8");
-  const encrypted = Buffer.concat([cipher.update(serialized), cipher.final()]);
-  const authTag = cipher.getAuthTag();
+  const encrypted = Buffer.concat([cipher.update(serialized), cipher.final()]) as BufferLike;
+  const authTag = cipher.getAuthTag() as BufferLike;
   return `${iv.toString("base64")}.${encrypted.toString("base64")}.${authTag.toString("base64")}`;
 }
 
@@ -74,7 +77,7 @@ function decryptPayload(token: string): unknown {
   const decrypted = Buffer.concat([
     decipher.update(Buffer.from(payloadEncoded, "base64")),
     decipher.final(),
-  ]);
+  ]) as BufferLike;
   const text = decrypted.toString("utf8");
   return JSON.parse(text);
 }
