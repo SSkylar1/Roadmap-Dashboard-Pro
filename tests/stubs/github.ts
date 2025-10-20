@@ -19,6 +19,19 @@ let lastTreeCall: {
 let mockTreeResponse: string[] | null = [];
 let mockTreeError: Error | null = null;
 
+let putCalls: Array<{
+  owner: string;
+  repo: string;
+  path: string;
+  content: string;
+  branch: string;
+  message: string;
+  tokenOrOptions?: unknown;
+  maybeOptions?: unknown;
+}> = [];
+
+let mockPutError: Error | null = null;
+
 export function __setMockResponse(response: string | null) {
   mockResponse = response;
 }
@@ -34,6 +47,8 @@ export function __resetMockGithub() {
   lastTreeCall = null;
   mockTreeResponse = [];
   mockTreeError = null;
+  putCalls = [];
+  mockPutError = null;
 }
 
 export function __getLastCall() {
@@ -50,6 +65,14 @@ export function __setMockTreeResponse(response: string[] | null) {
 
 export function __setMockTreeError(error: Error | null) {
   mockTreeError = error;
+}
+
+export function __getPutCalls() {
+  return putCalls.slice();
+}
+
+export function __setMockPutError(error: Error | null) {
+  mockPutError = error;
 }
 
 export async function getFileRaw(
@@ -87,4 +110,23 @@ export async function listRepoTreePaths(
     throw new Error("No mock response configured for listRepoTreePaths");
   }
   return mockTreeResponse;
+}
+
+export async function putFile(
+  owner: string,
+  repo: string,
+  path: string,
+  content: string,
+  branch: string,
+  message: string,
+  tokenOrOptions?: unknown,
+  maybeOptions?: unknown,
+) {
+  putCalls.push({ owner, repo, path, content, branch, message, tokenOrOptions, maybeOptions });
+  if (mockPutError) {
+    const err = mockPutError;
+    mockPutError = null;
+    throw err;
+  }
+  return { path, branch, sha: "mock-sha" };
 }
