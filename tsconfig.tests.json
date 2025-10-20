@@ -16,6 +16,7 @@
     "lib/manual-state.ts",
     "lib/standalone/**/*.ts",
     "lib/roadmap/**/*.ts",
+    "app/api/projects/**/*.ts",
     "app/api/roadmaps/**/*.ts",
     "app/api/status/**/*.ts",
     "tests/**/*.ts"

@@ -1658,6 +1658,13 @@ function ProjectForm({
       return;
     }
 
+    if (STANDALONE_MODE) {
+      setSlugOptions([]);
+      setSlugError(null);
+      setSlugLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
     let cancelled = false;
     setSlugLoading(true);
@@ -1848,6 +1855,9 @@ function ProjectForm({
             </datalist>
           ) : null}
           {slugLoading ? <div className="project-hint">Loading project slugs…</div> : null}
+          {STANDALONE_MODE ? (
+            <div className="project-hint">Project discovery is unavailable in standalone mode.</div>
+          ) : null}
           {slugError ? <div className="project-hint">{slugError}</div> : null}
         </div>
       </div>
