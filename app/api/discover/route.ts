@@ -6,9 +6,15 @@ import { NextRequest, NextResponse } from "next/server";
 import micromatch from "micromatch";
 import yaml from "js-yaml";
 
+import { STANDALONE_MODE } from "@/lib/config";
 import { getFileRaw, listRepoTreePaths, putFile } from "@/lib/github";
 import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 import { probeReadOnlyCheck } from "@/lib/read-only-probe";
+import {
+  deriveStandaloneWorkspaceId,
+  getCurrentStandaloneWorkspaceRoadmap,
+} from "@/lib/standalone/roadmaps-store";
+import { getLatestStandaloneStatusSnapshot } from "@/lib/standalone/status-snapshots";
 
 const READ_ONLY_CHECKS_URL = process.env.READ_ONLY_CHECKS_URL || "";
 
@@ -202,6 +208,45 @@ export async function POST(req: NextRequest) {
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
+    }
+
+    if (STANDALONE_MODE) {
+      const workspaceId = deriveStandaloneWorkspaceId(owner, repo);
+      if (!workspaceId) {
+        return NextResponse.json({ error: "invalid_workspace" }, { status: 400 });
+      }
+
+      const roadmapRecord = getCurrentStandaloneWorkspaceRoadmap(workspaceId);
+      const snapshot = getLatestStandaloneStatusSnapshot(workspaceId, projectKey ?? null, branch ?? null);
+
+      const notes: string[] = [
+        `Standalone mode: discovery skips GitHub writes for ${owner}/${repo}.`,
+      ];
+      if (roadmapRecord) {
+        notes.push(`Workspace roadmap set to "${roadmapRecord.title}".`);
+      }
+      if (snapshot) {
+        notes.push(`Latest status snapshot captured ${snapshot.created_at}.`);
+      }
+
+      const config: DiscoverConfig = {
+        db_queries: [],
+        code_globs: [],
+        notes,
+      };
+
+      return NextResponse.json(
+        {
+          ok: true,
+          discovered: 0,
+          items: [],
+          wrote: [],
+          config,
+          db: [],
+          code_matches: [],
+        },
+        { status: 200, headers: { "cache-control": "no-store" } },
+      );
     }
 
     const wrote: string[] = [];
