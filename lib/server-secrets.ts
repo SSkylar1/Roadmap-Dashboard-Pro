@@ -13,6 +13,10 @@ import {
 const TABLE_NAME = "dashboard_secrets";
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 
+function encodeChunk(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
+}
+
 type DashboardSecretRow = {
   composite_id: string;
   owner: string | null;
@@ -57,7 +61,7 @@ function encryptPayload(payload: unknown): string {
   const serialized = Buffer.from(JSON.stringify(payload), "utf8");
   const encrypted = Buffer.concat([cipher.update(serialized), cipher.final()]);
   const authTag = cipher.getAuthTag();
-  return `${iv.toString("base64")}.${encrypted.toString("base64")}.${authTag.toString("base64")}`;
+  return `${encodeChunk(iv)}.${encodeChunk(encrypted)}.${encodeChunk(authTag)}`;
 }
 
 function decryptPayload(token: string): unknown {
