@@ -93,7 +93,15 @@ function MidProjectSyncWorkspaceInner() {
   const [backlog, setBacklog] = useState<BacklogItem[]>([]);
   const [runArtifacts, setRunArtifacts] = useState<string[]>([]);
   const [discoverArtifacts, setDiscoverArtifacts] = useState<string[]>([]);
-  const [discoverConfig, setDiscoverConfig] = useState<DiscoverConfig | null>(null);
+  const [discoverConfig, setDiscoverConfig] = useState<DiscoverConfig | null>(
+    STANDALONE_MODE
+      ? {
+          db_queries: [],
+          code_globs: [],
+          notes: ["Standalone mode keeps discovery results local to this browser session."],
+        }
+      : null,
+  );
   const [dbProbes, setDbProbes] = useState<ProbeResult[]>([]);
   const [codeMatches, setCodeMatches] = useState<string[]>([]);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
@@ -152,6 +160,27 @@ function MidProjectSyncWorkspaceInner() {
   const backlogPath = describeProjectFile("docs/backlog-discovered.yml", projectKey);
   const summaryPath = describeProjectFile("docs/summary.txt", projectKey);
 
+  useEffect(() => {
+    if (!STANDALONE_MODE) {
+      return;
+    }
+    const desiredNotes = [
+      "Standalone mode keeps discovery results in memory only.",
+      `Manually curate ${backlogPath} after each sync to capture completed work.`,
+    ];
+    setDiscoverConfig((current) => {
+      const currentNotes = current?.notes ?? [];
+      const sameNotes =
+        currentNotes.length === desiredNotes.length &&
+        currentNotes.every((note, index) => note === desiredNotes[index]);
+      const hasQueries = Boolean(current?.db_queries?.length || current?.code_globs?.length);
+      if (sameNotes && !hasQueries) {
+        return current;
+      }
+      return { db_queries: [], code_globs: [], notes: desiredNotes };
+    });
+  }, [backlogPath]);
+
   const describeSource = (source?: "project" | "repo" | "default") => {
     if (!source) return null;
     if (source === "project") return "project override";
@@ -170,7 +199,7 @@ function MidProjectSyncWorkspaceInner() {
     : null;
 
   const canSubmit = Boolean(!isSyncing && repoSlug);
-  const canDiscover = Boolean(!isDiscovering && !isSyncing && repoSlug);
+  const canDiscover = Boolean(!STANDALONE_MODE && !isDiscovering && !isSyncing && repoSlug);
   const branchParam = branch.trim() || "main";
 
   useEffect(() => {
@@ -621,6 +650,24 @@ function MidProjectSyncWorkspaceInner() {
 
   const runDiscovery = useCallback(
     async (payload: { owner: string; repo: string; branch: string; probeUrl?: string; project?: string }) => {
+      if (STANDALONE_MODE) {
+        const nowIso = new Date().toISOString();
+        setDiscoverArtifacts([]);
+        setBacklog([]);
+        setDbProbes([]);
+        setCodeMatches([]);
+        setLastDiscoveryAt(nowIso);
+        setDiscoverConfig({
+          db_queries: [],
+          code_globs: [],
+          notes: [
+            "Standalone mode skips GitHub discovery runs.",
+            `Capture completed work manually in ${backlogPath}.`,
+          ],
+        });
+        return;
+      }
+
       const discoverHeaders: HeadersInit = { "Content-Type": "application/json" };
       if (resolvedSecrets.githubPat) {
         discoverHeaders["x-github-pat"] = resolvedSecrets.githubPat;
@@ -642,7 +689,7 @@ function MidProjectSyncWorkspaceInner() {
         throw new Error(discoverJson?.detail || discoverJson?.error || "Discover run failed");
       }
     },
-    [resolvedSecrets.githubPat],
+    [backlogPath, resolvedSecrets.githubPat],
   );
 
   const handleDiscoverOnly = useCallback(async () => {
@@ -695,6 +742,15 @@ function MidProjectSyncWorkspaceInner() {
     const trimmedOwner = owner.trim();
     const trimmedRepo = repo.trim();
     const trimmedBranch = branchParam;
+
+    if (STANDALONE_MODE) {
+      setContextError({
+        title: "Unavailable in standalone mode",
+        detail:
+          "Context pack export is disabled while running without GitHub access. Copy the roadmap and status data directly from this workspace.",
+      });
+      return;
+    }
 
     setContextError(null);
     setContextPack(null);
@@ -776,6 +832,14 @@ function MidProjectSyncWorkspaceInner() {
               : "Optional: add a Supabase probe in Settings"}
           </span>
         </div>
+        {STANDALONE_MODE ? (
+          <div className="tw-rounded-2xl tw-border tw-border-amber-500/30 tw-bg-amber-500/10 tw-p-4 tw-text-sm tw-text-amber-100">
+            <div className="tw-font-semibold">Standalone mode active</div>
+            <p className="tw-mt-1 tw-text-amber-100/80">
+              Status runs stay in-memory while discovery scans and context pack exports are disabled until you reconnect GitHub.
+            </p>
+          </div>
+        ) : null}
       </header>
       <>
           <form onSubmit={handleSync} className="tw-grid tw-gap-8 lg:tw-grid-cols-[1.4fr,1fr]">
@@ -1030,14 +1094,20 @@ function MidProjectSyncWorkspaceInner() {
                   Discovery {discoveryGeneratedAt}
                 </span>
               ) : null}
-              <button
-                type="button"
-                onClick={handleDiscoverOnly}
-                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-xs tw-font-semibold tw-text-slate-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100 disabled:tw-cursor-not-allowed disabled:tw-border-slate-800 disabled:tw-text-slate-500"
-                disabled={!canDiscover}
-              >
-                {isDiscovering ? "Running…" : "Run discovery"}
-              </button>
+              {!STANDALONE_MODE ? (
+                <button
+                  type="button"
+                  onClick={handleDiscoverOnly}
+                  className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-slate-700 tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-xs tw-font-semibold tw-text-slate-200 tw-transition tw-duration-200 tw-ease-out hover:tw-border-slate-600 hover:tw-text-slate-100 disabled:tw-cursor-not-allowed disabled:tw-border-slate-800 disabled:tw-text-slate-500"
+                  disabled={!canDiscover}
+                >
+                  {isDiscovering ? "Running…" : "Run discovery"}
+                </button>
+              ) : (
+                <span className="tw-rounded-full tw-border tw-border-amber-500/40 tw-bg-amber-500/10 tw-px-3 tw-py-1 tw-text-xs tw-font-semibold tw-text-amber-100">
+                  Discovery disabled in standalone mode
+                </span>
+              )}
             </div>
           </div>
           {backlog.length ? (
@@ -1059,7 +1129,15 @@ function MidProjectSyncWorkspaceInner() {
             </ul>
           ) : (
             <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-8 tw-text-center tw-text-sm tw-text-slate-400">
-              Use <span className="tw-font-semibold tw-text-slate-200">Run discovery</span> to surface completed work that never landed on the roadmap.
+              {STANDALONE_MODE ? (
+                <span>
+                  Standalone mode does not auto-discover backlog items. Capture follow-ups manually after each status refresh.
+                </span>
+              ) : (
+                <span>
+                  Use <span className="tw-font-semibold tw-text-slate-200">Run discovery</span> to surface completed work that never landed on the roadmap.
+                </span>
+              )}
             </div>
           )}
           {seededDiscover ? (
@@ -1110,7 +1188,9 @@ function MidProjectSyncWorkspaceInner() {
             </ul>
           ) : (
             <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-8 tw-text-center tw-text-sm tw-text-slate-400">
-              Run discovery to execute Supabase probes defined in {discoverPath}.
+              {STANDALONE_MODE
+                ? "Standalone mode skips Supabase probes. Configure GitHub syncing to run database checks."
+                : `Run discovery to execute Supabase probes defined in ${discoverPath}.`}
             </div>
           )}
           {discoverConfig?.notes?.length ? (
@@ -1157,7 +1237,9 @@ function MidProjectSyncWorkspaceInner() {
             </ul>
           ) : (
             <div className="tw-rounded-2xl tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-4 tw-py-8 tw-text-center tw-text-sm tw-text-slate-400">
-              Run discovery to surface matched code paths from your repository.
+              {STANDALONE_MODE
+                ? "Standalone mode cannot scan repository trees. Enable GitHub syncing to view matched code paths."
+                : "Run discovery to surface matched code paths from your repository."}
             </div>
           )}
         </div>
@@ -1190,7 +1272,11 @@ function MidProjectSyncWorkspaceInner() {
                   ))}
                 </ul>
               ) : (
-                <p className="tw-text-sm tw-text-slate-400">Run discovery to surface backlog entries and summary docs.</p>
+                <p className="tw-text-sm tw-text-slate-400">
+                  {STANDALONE_MODE
+                    ? "Discovery artifacts are unavailable in standalone mode."
+                    : "Run discovery to surface backlog entries and summary docs."}
+                </p>
               )}
             </div>
           </div>
@@ -1207,14 +1293,20 @@ function MidProjectSyncWorkspaceInner() {
                 Bundle {roadmapPath}, {statusPath}, {backlogPath}, {summaryPath}, and the supporting stack docs into a single JSON payload for AI copilots.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={handleExportContext}
-              className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-bg-slate-100 tw-px-5 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out hover:tw-bg-slate-200 disabled:tw-cursor-not-allowed disabled:tw-bg-slate-700 disabled:tw-text-slate-400"
-              disabled={!repoSlug || isExporting}
-            >
-              {isExporting ? "Building context pack…" : "Generate context pack"}
-            </button>
+            {!STANDALONE_MODE ? (
+              <button
+                type="button"
+                onClick={handleExportContext}
+                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-bg-slate-100 tw-px-5 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out hover:tw-bg-slate-200 disabled:tw-cursor-not-allowed disabled:tw-bg-slate-700 disabled:tw-text-slate-400"
+                disabled={!repoSlug || isExporting}
+              >
+                {isExporting ? "Building context pack…" : "Generate context pack"}
+              </button>
+            ) : (
+              <span className="tw-rounded-full tw-border tw-border-amber-500/40 tw-bg-amber-500/10 tw-px-3 tw-py-1 tw-text-xs tw-font-semibold tw-text-amber-100">
+                Context pack export disabled in standalone mode
+              </span>
+            )}
           </div>
           {contextError ? (
             <div className="tw-rounded-2xl tw-border tw-border-red-500/40 tw-bg-red-500/10 tw-p-4 tw-text-sm tw-text-red-100">
@@ -1276,7 +1368,9 @@ function MidProjectSyncWorkspaceInner() {
             </div>
           ) : (
             <p className="tw-text-sm tw-text-slate-400">
-              Generate a context pack to bundle the refreshed roadmap files for AI assistants or teammates.
+              {STANDALONE_MODE
+                ? "Standalone mode keeps context in memory. Enable GitHub access to export a context pack."
+                : "Generate a context pack to bundle the refreshed roadmap files for AI assistants or teammates."}
             </p>
           )}
         </div>

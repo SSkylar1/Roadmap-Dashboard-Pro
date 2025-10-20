@@ -7,7 +7,6 @@
     "moduleResolution": "node",
     "target": "ES2022",
     "jsx": "react-jsx",
-    "types": ["node"],
     "skipLibCheck": true
   },
   "include": [
@@ -18,8 +17,11 @@
     "lib/roadmap/**/*.ts",
     "app/api/projects/**/*.ts",
     "app/api/roadmaps/**/*.ts",
+    "app/api/discover/**/*.ts",
+    "app/api/context/**/*.ts",
     "app/api/status/**/*.ts",
-    "tests/**/*.ts"
+    "tests/**/*.ts",
+    "tests/**/*.d.ts"
   ],
   "exclude": []
 }
