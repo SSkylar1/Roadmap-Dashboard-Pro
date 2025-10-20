@@ -181,6 +181,13 @@ function MidProjectSyncWorkspaceInner() {
       return;
     }
 
+    if (STANDALONE_MODE) {
+      setDiscoveredProjectSlugs([]);
+      setProjectSlugsError(null);
+      setProjectSlugsLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
     let cancelled = false;
     setProjectSlugsLoading(true);
@@ -861,6 +868,11 @@ function MidProjectSyncWorkspaceInner() {
               </select>
               {projectSlugsLoading ? (
                 <span className="tw-text-xs tw-text-slate-400">Loading project slugs…</span>
+              ) : null}
+              {STANDALONE_MODE ? (
+                <span className="tw-text-xs tw-text-slate-400">
+                  Project discovery is unavailable in standalone mode.
+                </span>
               ) : null}
               {projectSlugsError ? (
                 <span className="tw-text-xs tw-text-rose-300">{projectSlugsError}</span>
