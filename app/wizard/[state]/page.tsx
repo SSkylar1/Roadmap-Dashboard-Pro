@@ -292,8 +292,8 @@ const STAGES = {
             detail: "Use the discover API to surface off-roadmap work or regressions that need triage.",
           },
           {
-            title: "Regenerate context pack",
-            detail: "Publish a fresh bundle for your AI teammates so they jump in fully briefed.",
+            title: "Regenerate dashboard hand-off",
+            detail: "Publish the combined context + dashboard bundle so AI teammates jump in fully briefed.",
           },
         ],
       },
@@ -313,7 +313,7 @@ const STAGES = {
           },
           {
             title: "Loop in your AI partner",
-            detail: "Assign coding tasks or ask for implementation help backed by the refreshed context pack.",
+            detail: "Assign coding tasks or ask for implementation help backed by the refreshed dashboard hand-off bundle.",
           },
         ],
       },

@@ -1,7 +1,11 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import { NextRequest, NextResponse } from "next/server";
 
 import { STANDALONE_MODE } from "@/lib/config";
 import { getFileRaw } from "@/lib/github";
+import { loadManualState } from "@/lib/manual-store";
 import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 import {
   deriveStandaloneWorkspaceId,
@@ -19,6 +23,12 @@ type ContextPackFile = {
   optional?: boolean;
 };
 
+type DashboardFile = {
+  path: string;
+  optional?: boolean;
+  projectAware?: boolean;
+};
+
 const CONTEXT_FILES: ContextPackFile[] = [
   { path: "docs/roadmap.yml" },
   { path: "docs/roadmap-status.json" },
@@ -28,10 +38,72 @@ const CONTEXT_FILES: ContextPackFile[] = [
   { path: "docs/gtm-plan.md", optional: true },
 ];
 
+const DASHBOARD_FILES: DashboardFile[] = [
+  { path: "README.md", projectAware: false },
+  { path: "docs/supabase-setup.md", projectAware: false },
+  { path: "docs/supabase-read-only-checks.md", projectAware: false, optional: true },
+];
+
+function describeDashboardPath(path: string, _projectKey?: string | null): string {
+  const normalized = path.replace(/^\/+/, "");
+  return `dashboard/${normalized}`;
+}
+
 function normalizeBranch(value: string | null): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function parseBooleanFlag(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+async function readLocalFileCandidates(paths: string[]): Promise<string | null> {
+  for (const candidate of paths) {
+    const resolved = resolve(process.cwd(), candidate);
+    try {
+      const raw = await readFile(resolved, "utf-8");
+      return raw;
+    } catch (error) {
+      continue;
+    }
+  }
+  return null;
+}
+
+function buildLocalDashboardCandidates(path: string, projectKey?: string | null): string[] {
+  if (!path.startsWith("docs/")) {
+    return [path];
+  }
+  const candidates = [path];
+  const key = normalizeProjectKey(projectKey);
+  if (key) {
+    const remainder = path.slice("docs/".length);
+    candidates.unshift(`docs/projects/${key}/${remainder}`);
+  }
+  return candidates;
+}
+
+function formatStandaloneStatusSnapshot(snapshot: ReturnType<typeof getLatestStandaloneStatusSnapshot> | null) {
+  if (!snapshot) {
+    return {
+      message: "Standalone mode has not generated a roadmap status snapshot yet.",
+    };
+  }
+  return {
+    source: "standalone",
+    snapshot: snapshot.payload,
+    meta: {
+      id: snapshot.id,
+      workspace_id: snapshot.workspace_id,
+      project_id: snapshot.project_id,
+      branch: snapshot.branch,
+      created_at: snapshot.created_at,
+    },
+  };
 }
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
@@ -39,6 +111,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   const url = new URL(req.url);
   const branch = normalizeBranch(url.searchParams.get("branch"));
   const projectKey = normalizeProjectKey(url.searchParams.get("project"));
+  const includeDashboard = parseBooleanFlag(url.searchParams.get("includeDashboard"));
 
   try {
     if (STANDALONE_MODE) {
@@ -156,6 +229,81 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         "",
       ].join("\n");
 
+      if (includeDashboard) {
+        const dashboardFiles: Record<string, string> = {};
+
+        for (const entry of DASHBOARD_FILES) {
+          const candidates = buildLocalDashboardCandidates(entry.path, projectKey ?? null);
+          const content = await readLocalFileCandidates(candidates);
+          const dashboardPath = describeDashboardPath(entry.path, projectKey);
+          if (typeof content === "string") {
+            dashboardFiles[dashboardPath] = content;
+          } else if (!entry.optional) {
+            dashboardFiles[dashboardPath] = [
+              `# Missing ${entry.path}`,
+              "This file was not found in the local workspace during export.",
+              "",
+            ].join("\n");
+          }
+        }
+
+        const statusRecord = formatStandaloneStatusSnapshot(snapshot);
+        dashboardFiles[describeDashboardPath("status/latest.json", projectKey)] = JSON.stringify(
+          {
+            ...statusRecord,
+            project: projectKey ?? null,
+            branch: branch ?? null,
+            exported_at: new Date().toISOString(),
+          },
+          null,
+          2,
+        );
+
+        let manualPayload: string;
+        try {
+          const manualResult = await loadManualState(owner, repo, projectKey ?? null);
+          if (manualResult.available) {
+            manualPayload = JSON.stringify(
+              {
+                project: projectKey ?? null,
+                branch: branch ?? null,
+                updated_at: manualResult.updated_at,
+                state: manualResult.state,
+              },
+              null,
+              2,
+            );
+          } else {
+            manualPayload = JSON.stringify(
+              {
+                available: false,
+                project: projectKey ?? null,
+                branch: branch ?? null,
+                message: "Manual roadmap overrides store is not configured in standalone mode.",
+              },
+              null,
+              2,
+            );
+          }
+        } catch (manualError: any) {
+          manualPayload = JSON.stringify(
+            {
+              available: false,
+              project: projectKey ?? null,
+              branch: branch ?? null,
+              error: manualError?.message ?? "Failed to load manual roadmap overrides.",
+            },
+            null,
+            2,
+          );
+        }
+        dashboardFiles[describeDashboardPath("manual/latest.json", projectKey)] = manualPayload;
+
+        for (const [path, content] of Object.entries(dashboardFiles)) {
+          files[path] = content;
+        }
+      }
+
       const responsePayload = {
         generated_at: new Date().toISOString(),
         source: "standalone" as const,
@@ -199,6 +347,75 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     for (const entry of entries) {
       if (typeof entry.content === "string") {
         files[entry.path] = entry.content;
+      }
+    }
+
+    if (includeDashboard) {
+      const dashboardFiles: Record<string, string> = {};
+
+      for (const entry of DASHBOARD_FILES) {
+        const remotePath = entry.projectAware === false ? entry.path : projectAwarePath(entry.path, projectKey);
+        const dashboardPath = describeDashboardPath(entry.path, projectKey);
+        const content = await getFileRaw(owner, repo, remotePath, branch, token).catch(() => null);
+        if (typeof content === "string") {
+          dashboardFiles[dashboardPath] = content;
+        } else if (!entry.optional) {
+          dashboardFiles[dashboardPath] = [
+            `# Missing ${entry.path}`,
+            `This file was not found on ${branch ?? "HEAD"} when building the dashboard export.`,
+            "",
+          ].join("\n");
+        }
+      }
+
+      const statusPath = describeProjectFile("docs/roadmap-status.json", projectKey);
+      const statusContent = files[statusPath];
+      if (typeof statusContent === "string") {
+        dashboardFiles[describeDashboardPath("status/latest.json", projectKey)] = statusContent;
+      }
+
+      let manualPayload: string;
+      try {
+        const manualResult = await loadManualState(owner, repo, projectKey ?? null);
+        if (manualResult.available) {
+          manualPayload = JSON.stringify(
+            {
+              project: projectKey ?? null,
+              branch: branch ?? null,
+              updated_at: manualResult.updated_at,
+              state: manualResult.state,
+            },
+            null,
+            2,
+          );
+        } else {
+          manualPayload = JSON.stringify(
+            {
+              available: false,
+              project: projectKey ?? null,
+              branch: branch ?? null,
+              message: "Manual roadmap overrides store is not configured.",
+            },
+            null,
+            2,
+          );
+        }
+      } catch (manualError: any) {
+        manualPayload = JSON.stringify(
+          {
+            available: false,
+            project: projectKey ?? null,
+            branch: branch ?? null,
+            error: manualError?.message ?? "Failed to load manual roadmap overrides.",
+          },
+          null,
+          2,
+        );
+      }
+      dashboardFiles[describeDashboardPath("manual/latest.json", projectKey)] = manualPayload;
+
+      for (const [path, content] of Object.entries(dashboardFiles)) {
+        files[path] = content;
       }
     }
 

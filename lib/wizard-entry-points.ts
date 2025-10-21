@@ -57,7 +57,7 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
     label: "Launch",
     title: "Roadmap Ready, Pre-Build",
     description:
-      "Drop in an existing roadmap and let the wizard provision your repo, automations, and context packs automatically.",
+      "Drop in an existing roadmap and let the wizard provision your repo, automations, and dashboard hand-off bundles automatically.",
     bullets: [
       "Upload roadmap docs and sync the structure into docs/roadmap.yml.",
       "Generate GTM, tech stack, and infra snapshots that stay aligned with the plan.",
@@ -85,7 +85,7 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
     description:
       "Layer discovery mode on top of your active repo so AI copilots see progress, regressions, and the next best action.",
     bullets: [
-      "Ingest repo history, Supabase schema, and roadmap status into a unified context pack.",
+      "Ingest repo history, Supabase schema, and roadmap status into a unified dashboard hand-off bundle.",
       "Surface off-roadmap work automatically so nothing gets lost in the shuffle.",
       "Hand the full context to your AI teammate or keep coding with richer feedback.",
     ],
@@ -97,9 +97,9 @@ export const WIZARD_ENTRY_POINTS: readonly WizardEntryPoint[] = [
       },
       {
         href: "/wizard/midproject/workspace#context-pack",
-        label: "Export context pack",
+        label: "Export dashboard hand-off",
         description:
-          "Bundle roadmap, status, tech stack, backlog, and GTM artifacts into a single JSON for AI copilots.",
+          "Bundle roadmap, status, tech stack, backlog, and dashboard reference docs into a single JSON for AI copilots.",
       },
     ],
   },

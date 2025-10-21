@@ -23,10 +23,11 @@ export type ContextExportOptions = {
   branch: string;
   project?: string | null;
   githubPat?: string | null;
+  includeDashboard?: boolean | null;
 };
 
 export async function fetchContextPack(
-  { owner, repo, branch, project, githubPat }: ContextExportOptions,
+  { owner, repo, branch, project, githubPat, includeDashboard }: ContextExportOptions,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ContextPackResponse> {
   const contextHeaders: HeadersInit = { Accept: "application/json" };
@@ -35,7 +36,9 @@ export async function fetchContextPack(
   }
 
   const projectQuery = project ? `&project=${encodeURIComponent(project)}` : "";
-  const url = `/api/context/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}?branch=${encodeURIComponent(branch)}${projectQuery}`;
+  const includeDashboardFlag = includeDashboard !== false;
+  const dashboardQuery = includeDashboardFlag ? "&includeDashboard=1" : "";
+  const url = `/api/context/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}?branch=${encodeURIComponent(branch)}${projectQuery}${dashboardQuery}`;
 
   const response = await fetchImpl(url, { cache: "no-store", headers: contextHeaders });
   const json = (await response.json()) as ContextPackResponse;
