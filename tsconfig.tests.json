@@ -13,6 +13,7 @@
     "lib/project-options.ts",
     "lib/project-paths.ts",
     "lib/manual-state.ts",
+    "lib/context-pack.ts",
     "lib/standalone/**/*.ts",
     "lib/roadmap/**/*.ts",
     "app/api/projects/**/*.ts",
