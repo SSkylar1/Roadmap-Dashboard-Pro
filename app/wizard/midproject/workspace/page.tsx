@@ -65,7 +65,7 @@ const ADD_NEW_REPO_OPTION = "__add_new_repo__";
 const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
 
 const STANDALONE_CONTEXT_NOTICE =
-  "Standalone mode exports context from this browser's in-memory workspace without reaching GitHub.";
+  "Standalone mode exports the dashboard hand-off bundle from this browser's in-memory workspace without reaching GitHub.";
 
 function MidProjectSyncWorkspaceInner() {
   const [owner, setOwner] = useState("");
@@ -735,7 +735,7 @@ function MidProjectSyncWorkspaceInner() {
     if (!repoSlug) {
       setContextError({
         title: "Provide owner and repository",
-        detail: "Fill the owner, repository, and branch before exporting a context pack.",
+        detail: "Fill the owner, repository, and branch before exporting the dashboard hand-off bundle.",
       });
       return;
     }
@@ -834,7 +834,7 @@ function MidProjectSyncWorkspaceInner() {
           <div className="tw-rounded-2xl tw-border tw-border-amber-500/30 tw-bg-amber-500/10 tw-p-4 tw-text-sm tw-text-amber-100">
             <div className="tw-font-semibold">Standalone mode active</div>
             <p className="tw-mt-1 tw-text-amber-100/80">
-              Status runs stay in-memory. Discovery scans require GitHub, while context pack exports synthesize data from the standalone workspace.
+              Status runs stay in-memory. Discovery scans require GitHub, while dashboard exports synthesize the AI hand-off bundle from the standalone workspace.
             </p>
           </div>
         ) : null}
@@ -1297,7 +1297,7 @@ function MidProjectSyncWorkspaceInner() {
               className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-bg-slate-100 tw-px-5 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out hover:tw-bg-slate-200 disabled:tw-cursor-not-allowed disabled:tw-bg-slate-700 disabled:tw-text-slate-400"
               disabled={!repoSlug || isExporting}
             >
-              {isExporting ? "Building context pack…" : "Generate context pack"}
+              {isExporting ? "Building dashboard hand-off…" : "Export dashboard hand-off"}
             </button>
           </div>
           {contextWarning ? (
@@ -1373,7 +1373,7 @@ function MidProjectSyncWorkspaceInner() {
             <p className="tw-text-sm tw-text-slate-400">
               {STANDALONE_MODE
                 ? "Standalone mode generates this export from the in-memory workspace so you can share demo data without GitHub."
-                : "Generate a context pack to bundle the refreshed roadmap files for AI assistants or teammates."}
+                : "Export the dashboard hand-off bundle so AI teammates receive roadmap files plus the dashboard reference docs."}
             </p>
           )}
         </div>

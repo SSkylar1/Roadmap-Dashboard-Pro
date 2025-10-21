@@ -105,6 +105,7 @@ test("standalone context exports still fetch synthesized payloads", async () => 
     );
 
     assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0]?.includes("includeDashboard=1"));
     assert.equal(payload.source, "standalone");
     assert.equal(payload.repo?.owner, "acme");
     assert.equal(payload.repo?.name, "demo");
@@ -116,6 +117,10 @@ test("standalone context exports still fetch synthesized payloads", async () => 
     const statusParsed = JSON.parse(payload.files?.["docs/roadmap-status.json"] ?? "{}");
     assert.equal(statusParsed.generated_at, "2024-06-02T12:00:00Z");
     assert.ok(payload.files?.["docs/summary.txt"]?.includes("Standalone mode"));
+    assert.equal(typeof payload.files?.["dashboard/README.md"], "string");
+    assert.equal(typeof payload.files?.["dashboard/status/latest.json"], "string");
+    const manualExport = JSON.parse(payload.files?.["dashboard/manual/latest.json"] ?? "{}");
+    assert.equal(manualExport.available, false);
   } finally {
     __resetMockGithub();
     resetStandaloneRoadmapStore();
