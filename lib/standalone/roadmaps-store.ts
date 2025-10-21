@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { normalizeOwner, normalizeRepo } from "../manual-state";
+import { loadStandaloneStores, saveStandaloneStores } from "./persistence";
 
 export type StandaloneRoadmapStatus = {
   problems: string[];
@@ -40,8 +41,9 @@ function getStore(): RoadmapStore {
   const globalScope = globalThis as GlobalWithStore;
 
   if (!globalScope[STORE_KEY]) {
+    const { roadmaps } = loadStandaloneStores();
     globalScope[STORE_KEY] = {
-      roadmaps: new Map(),
+      roadmaps: new Map(roadmaps.map((record) => [record.id, record])),
     };
   }
 
@@ -84,6 +86,7 @@ export function insertStandaloneRoadmap(
     updated_at: now,
   };
   store.roadmaps.set(id, record);
+  saveStandaloneStores({ roadmaps: Array.from(store.roadmaps.values()) });
   return cloneRecord(record);
 }
 
@@ -139,6 +142,7 @@ export function upsertStandaloneWorkspaceRoadmap(
     }
   }
 
+  saveStandaloneStores({ roadmaps: Array.from(store.roadmaps.values()) });
   return cloneRecord(record);
 }
 
@@ -227,10 +231,12 @@ export function updateStandaloneRoadmapStatus(
   };
 
   store.roadmaps.set(id, updated);
+  saveStandaloneStores({ roadmaps: Array.from(store.roadmaps.values()) });
   return cloneRecord(updated);
 }
 
 export function resetStandaloneRoadmapStore() {
   const store = getStore();
   store.roadmaps.clear();
+  saveStandaloneStores({ roadmaps: [] });
 }

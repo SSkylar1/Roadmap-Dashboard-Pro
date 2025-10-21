@@ -56,8 +56,10 @@ Supabase or GitHub.
 
 ### Features and limitations
 
-- The roadmap wizard (`/wizard/roadmap/workspace`) and status API (`/api/roadmaps/*`, `/api/status/*`) store data in-memory
-  using the helpers in `lib/standalone/`. Restarting the dev server clears the snapshot history.
+- The roadmap wizard (`/wizard/roadmap/workspace`) and status API (`/api/roadmaps/*`, `/api/status/*`) now persist their
+  standalone stores to `.roadmap-dashboard/standalone-store.json` (relative to your project directory). Restarting the dev
+  server keeps the latest roadmap and status snapshots. Set `ROADMAP_DASHBOARD_STANDALONE_STORE_PATH` to override the file
+  location if you prefer a custom directory.
 - GitHub branch operations, Supabase persistence, webhook verification, and PAT inputs are intentionally disabled. The UI will
   show a "Standalone Mode" notice wherever these controls normally appear.
 - Brainstorm, concept, mid-project, and roadmap flows continue to accept uploads or pasted `.roadmap.yml` content so you can
