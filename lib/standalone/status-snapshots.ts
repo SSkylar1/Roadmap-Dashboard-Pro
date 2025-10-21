@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { loadStandaloneStores, saveStandaloneStores } from "./persistence";
+
 export type StandaloneStatusPayload = Record<string, any>;
 
 export type StandaloneStatusSnapshot = {
@@ -24,7 +26,8 @@ type GlobalWithStore = typeof globalThis & {
 function getStore(): SnapshotStore {
   const globalScope = globalThis as GlobalWithStore;
   if (!globalScope[STORE_KEY]) {
-    globalScope[STORE_KEY] = { snapshots: [] };
+    const { statusSnapshots } = loadStandaloneStores();
+    globalScope[STORE_KEY] = { snapshots: statusSnapshots.map((snapshot) => cloneSnapshot(snapshot)) };
   }
   return globalScope[STORE_KEY]!;
 }
@@ -69,6 +72,7 @@ export function insertStandaloneStatusSnapshot(
     payload: deepClone(input.payload),
   };
   store.snapshots.push(record);
+  saveStandaloneStores({ statusSnapshots: store.snapshots.map((snapshot) => cloneSnapshot(snapshot)) });
   return cloneSnapshot(record);
 }
 
@@ -107,4 +111,5 @@ export function getLatestStandaloneStatusSnapshot(
 export function resetStandaloneStatusSnapshotStore() {
   const store = getStore();
   store.snapshots = [];
+  saveStandaloneStores({ statusSnapshots: [] });
 }
