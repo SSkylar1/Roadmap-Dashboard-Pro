@@ -15,6 +15,7 @@ export async function GET(req: NextRequest, { params }: { params: { owner: strin
         available: result.available,
         state: result.state,
         updated_at: result.updated_at,
+        storage: result.storage,
       },
       { headers: { "cache-control": "no-store" } },
     );
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: { owner: stri
         available: result.available,
         state: result.state,
         updated_at: result.updated_at,
+        storage: result.storage,
       },
       { headers: { "cache-control": "no-store" } },
     );
