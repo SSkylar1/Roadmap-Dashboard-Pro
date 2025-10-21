@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 
 import StatusGrid from "@/components/StatusGrid";
 import { STANDALONE_MODE } from "@/lib/config";
+import { fetchContextPack, type ContextPackPayload } from "@/lib/context-pack";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
 import { mergeProjectOptions } from "@/lib/project-options";
 import { removeProjectFromStore, removeRepoFromStore } from "@/lib/secrets-actions";
@@ -60,14 +61,11 @@ type RoadmapStatus = {
   weeks?: any[];
 };
 
-type ContextPack = {
-  generated_at?: string;
-  repo?: { owner?: string; name?: string; branch?: string; project?: string };
-  files?: Record<string, string>;
-};
-
 const ADD_NEW_REPO_OPTION = "__add_new_repo__";
 const ADD_NEW_PROJECT_OPTION = "__add_new_project__";
+
+const STANDALONE_CONTEXT_NOTICE =
+  "Standalone mode exports context from this browser's in-memory workspace without reaching GitHub.";
 
 function MidProjectSyncWorkspaceInner() {
   const [owner, setOwner] = useState("");
@@ -113,7 +111,10 @@ function MidProjectSyncWorkspaceInner() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
-  const [contextPack, setContextPack] = useState<ContextPack | null>(null);
+  const [contextPack, setContextPack] = useState<ContextPackPayload | null>(null);
+  const [contextWarning, setContextWarning] = useState<string | null>(
+    STANDALONE_MODE ? STANDALONE_CONTEXT_NOTICE : null,
+  );
   const secretsStore = useLocalSecrets();
   const params = useSearchParams();
 
@@ -743,35 +744,32 @@ function MidProjectSyncWorkspaceInner() {
     const trimmedRepo = repo.trim();
     const trimmedBranch = branchParam;
 
-    if (STANDALONE_MODE) {
-      setContextError({
-        title: "Unavailable in standalone mode",
-        detail:
-          "Context pack export is disabled while running without GitHub access. Copy the roadmap and status data directly from this workspace.",
-      });
-      return;
-    }
-
     setContextError(null);
     setContextPack(null);
     setIsExporting(true);
+    if (STANDALONE_MODE) {
+      setContextWarning(STANDALONE_CONTEXT_NOTICE);
+    } else {
+      setContextWarning(null);
+    }
 
     try {
-      const contextHeaders: HeadersInit = { Accept: "application/json" };
-      if (resolvedSecrets.githubPat) {
-        contextHeaders["x-github-pat"] = resolvedSecrets.githubPat;
-      }
-      const projectQuery = projectKey ? `&project=${encodeURIComponent(projectKey)}` : "";
-      const response = await fetch(
-        `/api/context/${encodeURIComponent(trimmedOwner)}/${encodeURIComponent(trimmedRepo)}?branch=${encodeURIComponent(trimmedBranch)}${projectQuery}`,
-        { cache: "no-store", headers: contextHeaders },
+      const payload = await fetchContextPack(
+        {
+          owner: trimmedOwner,
+          repo: trimmedRepo,
+          branch: trimmedBranch,
+          project: projectKey || null,
+          githubPat: resolvedSecrets.githubPat ?? null,
+        },
+        fetch,
       );
-      const json = (await response.json()) as ContextPack & { error?: string; missing?: string[] };
-      if (!response.ok || json?.error) {
-        const missing = json?.missing?.length ? ` Missing files: ${json.missing.join(", ")}.` : "";
-        throw new Error(json?.error ? `${json.error}.${missing}` : `Failed to export context pack.${missing}`);
+      if (payload?.source === "standalone") {
+        setContextWarning(STANDALONE_CONTEXT_NOTICE);
+      } else if (!STANDALONE_MODE) {
+        setContextWarning(null);
       }
-      setContextPack(json);
+      setContextPack(payload);
     } catch (err: any) {
       setContextError({
         title: "Export failed",
@@ -836,7 +834,7 @@ function MidProjectSyncWorkspaceInner() {
           <div className="tw-rounded-2xl tw-border tw-border-amber-500/30 tw-bg-amber-500/10 tw-p-4 tw-text-sm tw-text-amber-100">
             <div className="tw-font-semibold">Standalone mode active</div>
             <p className="tw-mt-1 tw-text-amber-100/80">
-              Status runs stay in-memory while discovery scans and context pack exports are disabled until you reconnect GitHub.
+              Status runs stay in-memory. Discovery scans require GitHub, while context pack exports synthesize data from the standalone workspace.
             </p>
           </div>
         ) : null}
@@ -1293,21 +1291,21 @@ function MidProjectSyncWorkspaceInner() {
                 Bundle {roadmapPath}, {statusPath}, {backlogPath}, {summaryPath}, and the supporting stack docs into a single JSON payload for AI copilots.
               </p>
             </div>
-            {!STANDALONE_MODE ? (
-              <button
-                type="button"
-                onClick={handleExportContext}
-                className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-bg-slate-100 tw-px-5 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out hover:tw-bg-slate-200 disabled:tw-cursor-not-allowed disabled:tw-bg-slate-700 disabled:tw-text-slate-400"
-                disabled={!repoSlug || isExporting}
-              >
-                {isExporting ? "Building context pack…" : "Generate context pack"}
-              </button>
-            ) : (
-              <span className="tw-rounded-full tw-border tw-border-amber-500/40 tw-bg-amber-500/10 tw-px-3 tw-py-1 tw-text-xs tw-font-semibold tw-text-amber-100">
-                Context pack export disabled in standalone mode
-              </span>
-            )}
+            <button
+              type="button"
+              onClick={handleExportContext}
+              className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-bg-slate-100 tw-px-5 tw-py-2 tw-text-sm tw-font-semibold tw-text-slate-900 tw-transition tw-duration-200 tw-ease-out hover:tw-bg-slate-200 disabled:tw-cursor-not-allowed disabled:tw-bg-slate-700 disabled:tw-text-slate-400"
+              disabled={!repoSlug || isExporting}
+            >
+              {isExporting ? "Building context pack…" : "Generate context pack"}
+            </button>
           </div>
+          {contextWarning ? (
+            <div className="tw-rounded-2xl tw-border tw-border-amber-500/40 tw-bg-amber-500/10 tw-p-4 tw-text-sm tw-text-amber-100">
+              <div className="tw-font-semibold">Heads up</div>
+              <p className="tw-text-amber-100/80">{contextWarning}</p>
+            </div>
+          ) : null}
           {contextError ? (
             <div className="tw-rounded-2xl tw-border tw-border-red-500/40 tw-bg-red-500/10 tw-p-4 tw-text-sm tw-text-red-100">
               <div className="tw-font-semibold">{contextError.title}</div>
@@ -1330,6 +1328,11 @@ function MidProjectSyncWorkspaceInner() {
                 {contextPack.repo?.branch ? (
                   <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
                     Branch {contextPack.repo.branch}
+                  </span>
+                ) : null}
+                {contextPack.source ? (
+                  <span className="tw-rounded-full tw-border tw-border-slate-800 tw-bg-slate-950 tw-px-3 tw-py-1 tw-text-xs tw-font-medium tw-text-slate-400">
+                    Source {contextPack.source}
                   </span>
                 ) : null}
                 <button
@@ -1369,7 +1372,7 @@ function MidProjectSyncWorkspaceInner() {
           ) : (
             <p className="tw-text-sm tw-text-slate-400">
               {STANDALONE_MODE
-                ? "Standalone mode keeps context in memory. Enable GitHub access to export a context pack."
+                ? "Standalone mode generates this export from the in-memory workspace so you can share demo data without GitHub."
                 : "Generate a context pack to bundle the refreshed roadmap files for AI assistants or teammates."}
             </p>
           )}
