@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import yaml from "js-yaml";
 import { encodeGitHubPath } from "@/lib/github";
+import { parseProbeHeaders, probeReadOnlyCheck, type ProbeHeaders } from "@/lib/read-only-probe";
 import { enrichWeeks, type RunCheckResult } from "../../enrich-weeks";
 
 export const runtime = "nodejs";
@@ -186,19 +187,61 @@ async function runCheck(
       rc?.envs?.prod?.READ_ONLY_CHECKS_URL;
     if (!envUrl) return { status: "skip", note: "READ_ONLY_CHECKS_URL not configured" };
     if (!q) return { status: "skip", note: "no query" };
+    const headers: ProbeHeaders = {
+      ...parseProbeHeaders(process.env.READ_ONLY_CHECKS_HEADERS),
+      ...parseProbeHeaders(rc?.envs?.dev?.READ_ONLY_CHECKS_HEADERS),
+      ...parseProbeHeaders(rc?.envs?.prod?.READ_ONLY_CHECKS_HEADERS),
+    };
+
+    let fallbackStatus: number | undefined;
+    let fallbackWhy: string | undefined;
+
+    const outcome = await probeReadOnlyCheck(envUrl, q, headers);
+    if (outcome.ok) {
+      return { status: "pass", note: "ok" };
+    }
+
     try {
-      const r = await fetchWithNext(envUrl, {
+      const response = await fetchWithNext(envUrl, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...headers },
         body: JSON.stringify({ query: q }),
         next: { revalidate: 0 },
       });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok && (j.ok === true || j.exists === true)) return { status: "pass", note: "ok" };
-      return { status: "fail", note: `edge returned ${r.status}${j?.error ? `: ${j.error}` : ""}` };
-    } catch (e: any) {
-      return { status: "fail", note: e?.message || "edge call failed" };
+      const text = await response.text();
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = {};
+      }
+
+      if (response.ok && (parsed?.ok === true || parsed?.exists === true)) {
+        return { status: "pass", note: "ok" };
+      }
+
+      fallbackStatus = response.status;
+      const detail =
+        (parsed?.error && String(parsed.error)) ||
+        (parsed?.message && String(parsed.message)) ||
+        text.trim();
+      fallbackWhy = detail ? detail.slice(0, 200) : undefined;
+    } catch (error: any) {
+      fallbackWhy = error?.message || "edge call failed";
     }
+
+    const finalStatus = typeof fallbackStatus === "number" ? fallbackStatus : outcome.status;
+    const finalWhy = fallbackWhy || outcome.why || "edge call failed";
+    const parts: string[] = [];
+    if (typeof finalStatus === "number") {
+      parts.push(`HTTP ${finalStatus}`);
+    }
+    if (finalWhy && (!parts.length || finalWhy !== parts[0])) {
+      parts.push(finalWhy);
+    }
+    const note = parts.join(" — ") || "edge call failed";
+
+    return { status: "fail", note };
   }
 
   return { status: "skip", note: `unknown type: ${type}` };
