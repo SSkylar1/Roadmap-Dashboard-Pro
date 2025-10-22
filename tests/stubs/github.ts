@@ -6,7 +6,8 @@ let lastCall: {
   token?: string;
 } | null = null;
 
-let mockResponse: string | null = null;
+let mockResponse: unknown = null;
+let mockResponseConfigured = false;
 let mockError: Error | null = null;
 
 let lastTreeCall: {
@@ -32,8 +33,9 @@ let putCalls: Array<{
 
 let mockPutError: Error | null = null;
 
-export function __setMockResponse(response: string | null) {
+export function __setMockResponse(response: unknown) {
   mockResponse = response;
+  mockResponseConfigured = true;
 }
 
 export function __setMockError(error: Error | null) {
@@ -43,6 +45,7 @@ export function __setMockError(error: Error | null) {
 export function __resetMockGithub() {
   lastCall = null;
   mockResponse = null;
+  mockResponseConfigured = false;
   mockError = null;
   lastTreeCall = null;
   mockTreeResponse = [];
@@ -88,8 +91,35 @@ export async function getFileRaw(
     mockError = null;
     throw err;
   }
-  if (mockResponse === null) {
+  if (!mockResponseConfigured) {
     throw new Error("No mock response configured for getFileRaw");
+  }
+  if (typeof mockResponse === "function") {
+    return (mockResponse as Function)({ owner, repo, path, branch, token });
+  }
+  if (Array.isArray(mockResponse)) {
+    if (mockResponse.length === 0) {
+      throw new Error("No mock response configured for getFileRaw");
+    }
+    return mockResponse.shift();
+  }
+  if (
+    mockResponse &&
+    typeof mockResponse === "object" &&
+    !(mockResponse instanceof String) &&
+    !(mockResponse instanceof Buffer)
+  ) {
+    const record = mockResponse as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(record, path)) {
+      return record[path as keyof typeof record];
+    }
+    if (Object.prototype.hasOwnProperty.call(record, "default")) {
+      return record.default;
+    }
+    if (Object.prototype.hasOwnProperty.call(record, "__default")) {
+      return (record as Record<string, unknown>)["__default"];
+    }
+    return null;
   }
   return mockResponse;
 }

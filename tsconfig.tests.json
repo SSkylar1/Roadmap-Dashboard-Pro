@@ -19,6 +19,7 @@
     "app/api/projects/**/*.ts",
     "app/api/roadmaps/**/*.ts",
     "app/api/discover/**/*.ts",
+    "app/api/concept/**/*.ts",
     "app/api/context/**/*.ts",
     "app/api/status/**/*.ts",
     "tests/**/*.ts",

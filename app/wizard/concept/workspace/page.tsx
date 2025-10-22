@@ -23,7 +23,12 @@ import { removeProjectFromStore, removeRepoFromStore } from "@/lib/secrets-actio
 import { CONCEPT_HANDOFF_KEY, ROADMAP_HANDOFF_KEY } from "@/lib/wizard-handoff";
 import { useLocalSecrets, useResolvedSecrets } from "@/lib/use-local-secrets";
 
-type ErrorState = { title: string; detail?: string } | null;
+type ErrorState = {
+  title: string;
+  detail?: string;
+  actionHref?: string;
+  actionLabel?: string;
+} | null;
 type SuccessState = {
   message: string;
   prUrl?: string;
@@ -41,6 +46,9 @@ type CommitResponse = {
   pullRequestNumber?: number;
   error?: string;
   detail?: string;
+  code?: string;
+  setupUrl?: string;
+  missing?: string[];
 };
 
 type UploadState = {
@@ -863,7 +871,19 @@ function ConceptWizardPageInner() {
       if (!response.ok) {
         const title = typeof detail?.error === "string" ? detail.error : "Commit failed";
         const info = typeof detail?.detail === "string" ? detail.detail : undefined;
-        setError({ title, detail: info });
+        const missing = Array.isArray(detail?.missing)
+          ? detail.missing.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          : [];
+        const missingSummary = missing.length ? `Missing files: ${missing.join(", ")}.` : undefined;
+        const detailMessage = [info, missingSummary].filter(Boolean).join(" ");
+        const requiresSetup = detail?.code === "missing_roadmap_setup";
+        const actionHref = requiresSetup && typeof detail?.setupUrl === "string" ? detail.setupUrl : "/new";
+        setError({
+          title,
+          detail: detailMessage || undefined,
+          actionHref: requiresSetup ? actionHref : undefined,
+          actionLabel: requiresSetup ? "Run roadmap setup" : undefined,
+        });
         return;
       }
 
@@ -1033,6 +1053,15 @@ function ConceptWizardPageInner() {
             <div className="tw-rounded-2xl tw-border tw-border-red-500/40 tw-bg-red-500/10 tw-p-4 tw-text-sm tw-text-red-200">
               <p className="tw-font-semibold">{error.title}</p>
               {error.detail && <p className="tw-mt-1 tw-text-xs tw-text-red-200/80">{error.detail}</p>}
+              {error.actionHref && (
+                <Link
+                  href={error.actionHref}
+                  className="tw-mt-3 tw-inline-flex tw-items-center tw-gap-2 tw-rounded-full tw-border tw-border-red-400/50 tw-bg-red-500/20 tw-px-3 tw-py-1.5 tw-text-[11px] tw-font-semibold tw-uppercase tw-tracking-wide tw-text-red-100 hover:tw-border-red-300 hover:tw-text-white"
+                >
+                  {error.actionLabel ?? "Open link"}
+                  <span aria-hidden="true">→</span>
+                </Link>
+              )}
             </div>
           )}
           {success && !error && (
