@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { putFile } from "@/lib/github";
+import { getFileRaw, putFile } from "@/lib/github";
 import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 export const runtime = "nodejs";
@@ -28,6 +28,45 @@ export async function POST(req: Request) {
     }
 
     const targetPath = projectAwarePath("docs/roadmap.yml", projectKey);
+
+    const requiredBootstrapFiles: Array<{ raw: string; resolved: string }> = [
+      { raw: ".roadmaprc.json", resolved: ".roadmaprc.json" },
+      {
+        raw: ".github/workflows/roadmap.yml",
+        resolved: projectAwarePath(".github/workflows/roadmap.yml", projectKey),
+      },
+      { raw: "scripts/roadmap-check.mjs", resolved: "scripts/roadmap-check.mjs" },
+    ];
+
+    const missingBootstrapFiles: string[] = [];
+    await Promise.all(
+      requiredBootstrapFiles.map(async ({ raw, resolved }) => {
+        const existing = await getFileRaw(owner, repo, resolved, branch, token);
+        if (existing === null) {
+          missingBootstrapFiles.push(describeProjectFile(raw, projectKey));
+        }
+      }),
+    );
+
+    if (missingBootstrapFiles.length > 0) {
+      missingBootstrapFiles.sort((a, b) => a.localeCompare(b));
+      const missingList = missingBootstrapFiles.join(", ");
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Complete roadmap setup",
+          detail:
+            "Run the roadmap setup wizard to add " +
+            missingList +
+            " before committing from the concept workspace.",
+          missing: missingBootstrapFiles,
+          setupUrl: "/new",
+          code: "missing_roadmap_setup",
+        },
+        { status: 400 },
+      );
+    }
+
     const message = projectKey
       ? `feat(${projectKey}): add generated ${describeProjectFile("docs/roadmap.yml", projectKey)}`
       : "feat(roadmap): add generated docs/roadmap.yml";
