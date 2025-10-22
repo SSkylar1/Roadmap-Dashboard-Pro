@@ -120,7 +120,9 @@ test("standalone context exports still fetch synthesized payloads", async () => 
     assert.equal(typeof payload.files?.["dashboard/README.md"], "string");
     assert.equal(typeof payload.files?.["dashboard/status/latest.json"], "string");
     const manualExport = JSON.parse(payload.files?.["dashboard/manual/latest.json"] ?? "{}");
-    assert.equal(manualExport.available, false);
+    assert.equal(manualExport.available, true);
+    assert.equal(manualExport.project, null);
+    assert.equal(manualExport.branch, "main");
   } finally {
     __resetMockGithub();
     resetStandaloneRoadmapStore();
