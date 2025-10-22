@@ -31,11 +31,10 @@ function restoreModules() {
   (Module as any)._resolveFilename = originalResolveFilename;
 }
 
-test("concept commit route requires roadmap setup", async () => {
+test("concept commit route bootstraps missing roadmap files", async () => {
   const routeSpecifier = "../app/api/concept/commit/route.js";
   __resetMockGithub();
   __setMockResponse({
-    default: null,
     ".roadmaprc.json": null,
     ".github/workflows/roadmap.yml": null,
     "scripts/roadmap-check.mjs": null,
@@ -59,16 +58,23 @@ test("concept commit route requires roadmap setup", async () => {
     } as any;
 
     const response = await routeModule.POST(request);
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 200);
     const body = await response.json();
-    assert.equal(body.code, "missing_roadmap_setup");
-    assert.equal(body.setupUrl, "/new");
-    assert.ok(Array.isArray(body.missing));
+    assert.equal(body.ok, true);
+    assert.ok(Array.isArray(body.bootstrapped));
     assert.deepEqual(
-      body.missing.sort(),
+      body.bootstrapped.slice().sort(),
       [".github/workflows/roadmap.yml", ".roadmaprc.json", "scripts/roadmap-check.mjs"].sort(),
     );
-    assert.equal(__getPutCalls().length, 0);
+    const puts = __getPutCalls();
+    assert.equal(puts.length, 4);
+    assert.equal(puts[0].path, ".roadmaprc.json");
+    assert.ok(puts[0].content.includes("READ_ONLY_CHECKS_URL"));
+    assert.equal(puts[1].path, ".github/workflows/roadmap.yml");
+    assert.ok(puts[1].content.includes("Roadmap Sync"));
+    assert.equal(puts[2].path, "scripts/roadmap-check.mjs");
+    assert.ok(puts[2].content.includes("#!/usr/bin/env node"));
+    assert.equal(puts[3].path, "docs/roadmap.yml");
   } finally {
     __resetMockGithub();
     restoreModules();
@@ -106,6 +112,8 @@ test("concept commit route succeeds when setup files exist", async () => {
     const body = await response.json();
     assert.equal(body.ok, true);
     assert.equal(body.path, "docs/roadmap.yml");
+    assert.ok(Array.isArray(body.bootstrapped));
+    assert.equal(body.bootstrapped.length, 0);
     const puts = __getPutCalls();
     assert.equal(puts.length, 1);
     assert.equal(puts[0].path, "docs/roadmap.yml");

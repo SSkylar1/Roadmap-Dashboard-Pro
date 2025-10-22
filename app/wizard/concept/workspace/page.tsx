@@ -49,6 +49,7 @@ type CommitResponse = {
   code?: string;
   setupUrl?: string;
   missing?: string[];
+  bootstrapped?: string[];
 };
 
 type UploadState = {
@@ -871,19 +872,8 @@ function ConceptWizardPageInner() {
       if (!response.ok) {
         const title = typeof detail?.error === "string" ? detail.error : "Commit failed";
         const info = typeof detail?.detail === "string" ? detail.detail : undefined;
-        const missing = Array.isArray(detail?.missing)
-          ? detail.missing.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-          : [];
-        const missingSummary = missing.length ? `Missing files: ${missing.join(", ")}.` : undefined;
-        const detailMessage = [info, missingSummary].filter(Boolean).join(" ");
-        const requiresSetup = detail?.code === "missing_roadmap_setup";
-        const actionHref = requiresSetup && typeof detail?.setupUrl === "string" ? detail.setupUrl : "/new";
-        setError({
-          title,
-          detail: detailMessage || undefined,
-          actionHref: requiresSetup ? actionHref : undefined,
-          actionLabel: requiresSetup ? "Run roadmap setup" : undefined,
-        });
+        const detailMessage = info?.trim() ? info.trim() : undefined;
+        setError({ title, detail: detailMessage });
         return;
       }
 
@@ -892,26 +882,32 @@ function ConceptWizardPageInner() {
         const fallbackBranch = branch.trim() || "main";
         const resolvedBranch =
           (typeof detail.branch === "string" && detail.branch.trim()) || fallbackBranch;
+        const bootstrapped = Array.isArray(detail.bootstrapped)
+          ? detail.bootstrapped.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          : [];
+        const bootstrapNote = bootstrapped.length
+          ? ` Added ${bootstrapped.join(", ")} to complete roadmap setup.`
+          : "";
         setPromotedBranch(resolvedBranch);
         if (openAsPr) {
           if (detail.prUrl) {
             const label = detail.pullRequestNumber ? `PR #${detail.pullRequestNumber}` : "Pull request";
             setSuccess({
-              message: `${label} opened for ${committedPath}.`,
+              message: `${label} opened for ${committedPath}.${bootstrapNote}`,
               prUrl: detail.prUrl,
               handoffPath: committedPath,
               promotedBranch: resolvedBranch,
             });
           } else {
             setSuccess({
-              message: `Pull request opened for ${committedPath}. Check GitHub to review and merge.`,
+              message: `Pull request opened for ${committedPath}. Check GitHub to review and merge.${bootstrapNote}`,
               handoffPath: committedPath,
               promotedBranch: resolvedBranch,
             });
           }
         } else {
           setSuccess({
-            message: `${committedPath} committed to ${resolvedBranch}.`,
+            message: `${committedPath} committed to ${resolvedBranch}.${bootstrapNote}`,
             handoffPath: committedPath,
             promotedBranch: resolvedBranch,
           });
