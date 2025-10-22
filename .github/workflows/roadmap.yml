@@ -11,4 +11,47 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: echo "Roadmap checks placeholder ✅"
+      - name: Install dependencies
+        run: npm ci
+      - name: Run roadmap checks
+        env:
+          READ_ONLY_CHECKS_URL: ${{ secrets.READ_ONLY_CHECKS_URL }}
+          READ_ONLY_CHECKS_HEADERS: ${{ secrets.READ_ONLY_CHECKS_HEADERS }}
+        run: npm run roadmap:check
+      - name: Generate project plan snapshot
+        run: |
+          node <<'NODE'
+          import fs from 'node:fs';
+          const statusPath = 'docs/roadmap-status.json';
+          if (!fs.existsSync(statusPath)) {
+            console.warn('Skipping plan generation; docs/roadmap-status.json not found');
+            process.exit(0);
+          }
+          const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+          const generatedAt = status.generated_at ?? new Date().toISOString();
+          let plan = `# Project Plan\nGenerated: ${generatedAt}\n\n`;
+          const weeks = Array.isArray(status.weeks) ? status.weeks : [];
+          for (const week of weeks) {
+            const title = week?.title || week?.id || 'Untitled Week';
+            plan += `## ${title}\n\n`;
+            const items = Array.isArray(week?.items) ? week.items : [];
+            for (const item of items) {
+              const icon = item?.done ? '✅' : '❌';
+              const name = item?.name || item?.id || 'Item';
+              const id = item?.id ? ` (${item.id})` : '';
+              plan += `${icon} **${name}**${id}\n`;
+            }
+            plan += `\n`;
+          }
+          fs.writeFileSync('docs/project-plan.md', `${plan}`);
+          console.log('Wrote docs/project-plan.md');
+          NODE
+      - name: Upload roadmap artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roadmap-artifacts
+          if-no-files-found: warn
+          path: |
+            docs/roadmap-status.json
+            docs/project-plan.md
