@@ -37,7 +37,7 @@ export async function fetchContextPack(
 
   const projectQuery = project ? `&project=${encodeURIComponent(project)}` : "";
   const includeDashboardFlag = includeDashboard !== false;
-  const dashboardQuery = includeDashboardFlag ? "&includeDashboard=1" : "";
+  const dashboardQuery = includeDashboardFlag ? "&includeDashboard=1" : "&includeDashboard=0";
   const url = `/api/context/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}?branch=${encodeURIComponent(branch)}${projectQuery}${dashboardQuery}`;
 
   const response = await fetchImpl(url, { cache: "no-store", headers: contextHeaders });

@@ -55,10 +55,13 @@ function normalizeBranch(value: string | null): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function parseBooleanFlag(value: string | null): boolean {
-  if (!value) return false;
+function parseOptionalBoolean(value: string | null): boolean | null {
+  if (value === null || value === undefined) return null;
   const normalized = value.trim().toLowerCase();
-  return ["1", "true", "yes", "on"].includes(normalized);
+  if (!normalized) return null;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
 }
 
 async function readLocalFileCandidates(paths: string[]): Promise<string | null> {
@@ -111,7 +114,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   const url = new URL(req.url);
   const branch = normalizeBranch(url.searchParams.get("branch"));
   const projectKey = normalizeProjectKey(url.searchParams.get("project"));
-  const includeDashboard = parseBooleanFlag(url.searchParams.get("includeDashboard"));
+  const includeDashboard = parseOptionalBoolean(url.searchParams.get("includeDashboard")) ?? true;
 
   try {
     if (STANDALONE_MODE) {
@@ -265,6 +268,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           if (manualResult.available) {
             manualPayload = JSON.stringify(
               {
+                available: true,
                 project: projectKey ?? null,
                 branch: branch ?? null,
                 updated_at: manualResult.updated_at,
@@ -380,6 +384,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         if (manualResult.available) {
           manualPayload = JSON.stringify(
             {
+              available: true,
               project: projectKey ?? null,
               branch: branch ?? null,
               updated_at: manualResult.updated_at,

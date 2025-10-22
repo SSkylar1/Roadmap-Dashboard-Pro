@@ -1288,7 +1288,7 @@ function MidProjectSyncWorkspaceInner() {
             <div className="tw-space-y-1">
               <h2 className="tw-text-xl tw-font-semibold tw-text-slate-100">Context pack export</h2>
               <p className="tw-text-sm tw-text-slate-300">
-                Bundle {roadmapPath}, {statusPath}, {backlogPath}, {summaryPath}, and the supporting stack docs into a single JSON payload for AI copilots.
+                Bundle {roadmapPath}, {statusPath}, {backlogPath}, {summaryPath}, the stack references, <code className="tw-font-mono tw-text-[11px]">dashboard/README.md</code>, Supabase setup guides, and the latest status/manual snapshots into a single JSON payload for AI copilots.
               </p>
             </div>
             <button
@@ -1372,8 +1372,8 @@ function MidProjectSyncWorkspaceInner() {
           ) : (
             <p className="tw-text-sm tw-text-slate-400">
               {STANDALONE_MODE
-                ? "Standalone mode generates this export from the in-memory workspace so you can share demo data without GitHub."
-                : "Export the dashboard hand-off bundle so AI teammates receive roadmap files plus the dashboard reference docs."}
+                ? "Standalone mode generates this export from the in-memory workspace so you can share demo data without GitHub, including dashboard docs and the latest manual/status snapshots."
+                : "Export the dashboard hand-off bundle so AI teammates receive roadmap files, dashboard references, and the freshest manual/status snapshots."}
             </p>
           )}
         </div>
