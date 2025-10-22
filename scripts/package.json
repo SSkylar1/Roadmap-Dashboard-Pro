@@ -1,0 +1,5 @@
+{
+  "scripts": {
+    "roadmap:check": "node scripts/roadmap-check.mjs"
+  }
+}
