@@ -1,5 +1,16 @@
 import { supabaseDelete, supabaseSelect, supabaseUpsert } from "./supabase-server";
-import { ManualState, manualStateIsEmpty, normalizeOwner, normalizeProjectId, normalizeRepo, sanitizeManualState } from "./manual-state";
+import {
+  ManualState,
+  manualStateIsEmpty,
+  normalizeOwner,
+  normalizeProjectId,
+  normalizeRepo,
+  sanitizeManualState,
+} from "./manual-state";
+import {
+  loadManualStateLocal,
+  saveManualStateLocal,
+} from "./manual-local-store";
 
 const TABLE_NAME = "roadmap_manual_state";
 
@@ -15,6 +26,7 @@ export type ManualStateResult = {
   available: boolean;
   state: ManualState;
   updated_at: string | null;
+  storage: "supabase" | "local";
 };
 
 function supabaseConfigured(): boolean {
@@ -49,15 +61,27 @@ export async function loadManualState(
   repo: string | undefined,
   project?: string | null,
 ): Promise<ManualStateResult> {
-  if (!supabaseConfigured()) {
-    return { available: false, state: {}, updated_at: null };
-  }
-
+  const supabaseAvailable = supabaseConfigured();
   const ownerKey = normalizeOwner(owner);
   const repoKey = normalizeRepo(repo);
   const projectId = normalizeProjectId(project);
   if (!ownerKey || !repoKey) {
-    return { available: true, state: {}, updated_at: null };
+    return {
+      available: true,
+      state: {},
+      updated_at: null,
+      storage: supabaseAvailable ? "supabase" : "local",
+    };
+  }
+
+  if (!supabaseAvailable) {
+    const result = loadManualStateLocal(ownerKey, repoKey, projectId);
+    return {
+      available: true,
+      state: result.state,
+      updated_at: result.updated_at,
+      storage: "local",
+    };
   }
 
   const { data, error } = await supabaseSelect<ManualStateRow>(TABLE_NAME, "state,updated_at", {
@@ -75,13 +99,14 @@ export async function loadManualState(
 
   const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
   if (!row) {
-    return { available: true, state: {}, updated_at: null };
+    return { available: true, state: {}, updated_at: null, storage: "supabase" };
   }
 
   return {
     available: true,
     state: sanitizeManualState(row.state),
     updated_at: row.updated_at ?? null,
+    storage: "supabase",
   };
 }
 
@@ -91,15 +116,27 @@ export async function saveManualState(
   project: string | undefined | null,
   state: ManualState,
 ): Promise<ManualStateResult> {
-  if (!supabaseConfigured()) {
-    return { available: false, state: {}, updated_at: null };
-  }
-
+  const supabaseAvailable = supabaseConfigured();
   const ownerKey = normalizeOwner(owner);
   const repoKey = normalizeRepo(repo);
   const projectId = normalizeProjectId(project);
   if (!ownerKey || !repoKey) {
-    return { available: true, state: {}, updated_at: null };
+    return {
+      available: true,
+      state: {},
+      updated_at: null,
+      storage: supabaseAvailable ? "supabase" : "local",
+    };
+  }
+
+  if (!supabaseAvailable) {
+    const result = saveManualStateLocal(ownerKey, repoKey, projectId, state);
+    return {
+      available: true,
+      state: result.state,
+      updated_at: result.updated_at,
+      storage: "local",
+    };
   }
 
   const sanitized = sanitizeManualState(state);
@@ -115,7 +152,7 @@ export async function saveManualState(
       }
       throw new Error(error.message || "Unexpected Supabase error");
     }
-    return { available: true, state: {}, updated_at: null };
+    return { available: true, state: {}, updated_at: null, storage: "supabase" };
   }
 
   const now = new Date().toISOString();
@@ -139,5 +176,5 @@ export async function saveManualState(
     throw new Error(error.message || "Unexpected Supabase error");
   }
 
-  return { available: true, state: sanitized, updated_at: now };
+  return { available: true, state: sanitized, updated_at: now, storage: "supabase" };
 }
