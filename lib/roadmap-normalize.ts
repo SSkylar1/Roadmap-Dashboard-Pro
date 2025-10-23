@@ -33,13 +33,37 @@ export type NormalizedRoadmapDocument = {
 
 const KNOWN_CHECK_TYPES = new Set(["files_exist", "http_ok", "sql_exists"]);
 
+function computeHashSuffix(value: string, length = 6) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33 + value.charCodeAt(index)) >>> 0;
+  }
+  const base36 = hash.toString(36);
+  if (base36.length >= length) {
+    return base36.slice(-length);
+  }
+  return base36.padStart(length, "0");
+}
+
 function slugify(value: string, fallback: string) {
-  const slug = value
+  const normalized = value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+    .replace(/^-+|-+$/g, "");
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (normalized.length <= 64) {
+    return normalized;
+  }
+
+  const hash = computeHashSuffix(normalized);
+  const maxBaseLength = Math.max(0, 64 - hash.length - 1);
+  const trimmed = normalized.slice(0, maxBaseLength).replace(/-+$/g, "");
+  const slug = [trimmed, hash].filter(Boolean).join("-");
   return slug || fallback;
 }
 
