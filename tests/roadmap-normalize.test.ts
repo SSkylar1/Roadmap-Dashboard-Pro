@@ -84,3 +84,26 @@ test("normalizeRoadmapYaml normalizes shorthand checks", () => {
   assert.deepEqual(checks[1].must_match, ["OK"]);
 });
 
+test("normalizeRoadmapYaml keeps ids unique when truncating long slugs", () => {
+  const input = [
+    "roadmap:",
+    "  - phase: Phase 1",
+    "    milestones:",
+    "      - week: 11",
+    "        title: Visualization System",
+    "        tasks:",
+    "          - Design AI avatar generation flow for 'Your Spouse'",
+    "          - Create dynamic landscape for 'Your Marriage'",
+    "          - Implement self-growth map visualization ('You')",
+  ].join("\n");
+
+  const normalized = normalizeRoadmapYaml(input);
+  const doc = yaml.load(normalized) as any;
+  const ids = doc.weeks[0].items.map((item: any) => item.id);
+
+  assert.equal(new Set(ids).size, ids.length);
+  ids.forEach((id: string) => {
+    assert.ok(id.length <= 64, `id ${id} should be <= 64 characters`);
+  });
+});
+
