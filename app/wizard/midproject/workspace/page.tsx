@@ -142,6 +142,17 @@ function MidProjectSyncWorkspaceInner() {
     [matchedRepoEntry?.projects, discoveredProjectSlugs],
   );
 
+  const normalizedDiscoveredProjectKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const slug of discoveredProjectSlugs) {
+      const normalized = normalizeProjectKey(slug);
+      if (normalized) {
+        keys.add(normalized);
+      }
+    }
+    return keys;
+  }, [discoveredProjectSlugs]);
+
   const selectedProjectMeta = useMemo(
     () => projectOptions.find((project) => project.id === selectedProjectId) ?? null,
     [projectOptions, selectedProjectId],
@@ -154,7 +165,11 @@ function MidProjectSyncWorkspaceInner() {
 
   const normalizedOverrideKey = normalizeProjectKey(projectOverride);
   const normalizedSelectedId = normalizeProjectKey(selectedProjectId);
-  const projectKey = normalizedOverrideKey ?? selectedProjectMeta?.slug ?? normalizedSelectedId;
+  const selectedProjectSlug = selectedProjectMeta?.slug;
+  const slugConfirmed =
+    !!selectedProjectSlug &&
+    (selectedProjectMeta?.source === "repo" || normalizedDiscoveredProjectKeys.has(selectedProjectSlug));
+  const projectKey = normalizedOverrideKey ?? (slugConfirmed ? selectedProjectSlug : undefined) ?? normalizedSelectedId;
   const roadmapPath = describeProjectFile("docs/roadmap.yml", projectKey);
   const projectPlanPath = describeProjectFile("docs/project-plan.md", projectKey);
   const statusPath = describeProjectFile("docs/roadmap-status.json", projectKey);
