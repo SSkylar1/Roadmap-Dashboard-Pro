@@ -147,3 +147,47 @@ test("sql_exists surfaces unreachable probe failures", async () => {
 
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
+
+test("roadmap checker normalizes phase-based roadmaps", async () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "roadmap-check-"));
+  const docsDir = path.join(tmpRoot, "docs");
+  fs.mkdirSync(docsDir, { recursive: true });
+
+  fs.writeFileSync(path.join(tmpRoot, "exists.txt"), "ok", "utf8");
+
+  writeRoadmap(
+    tmpRoot,
+    [
+      "roadmap:",
+      "  - phase: Foundations",
+      "    milestones:",
+      "      - week: Week 1",
+      "        title: Bootstrap",
+      "        tasks:",
+      "          - Establish baseline",
+      "          - task: Configure CI",
+      "            checks:",
+      "              - type: files_exist",
+      "                files: [exists.txt]",
+    ].join("\n"),
+  );
+
+  const { runRoadmapChecks } = await loadScript();
+  const quietLogger = { log() {}, error() {} };
+
+  const { status, failures } = await runRoadmapChecks({
+    projectRoot: tmpRoot,
+    logger: quietLogger,
+  });
+
+  assert.equal(failures, 0);
+  assert.equal(status.weeks.length, 1);
+  const week = status.weeks[0];
+  assert.equal(week.items.length, 2);
+  assert.equal(week.items[0].checks.length, 0);
+  assert.equal(week.items[0].done, true);
+  assert.equal(week.items[1].checks.length, 1);
+  assert.equal(week.items[1].checks[0].status, "pass");
+
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
+});
