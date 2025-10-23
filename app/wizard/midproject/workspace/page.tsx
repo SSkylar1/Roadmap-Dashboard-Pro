@@ -194,10 +194,20 @@ function MidProjectSyncWorkspaceInner() {
   const githubSourceLabel = describeSource(resolvedSecrets.sources.githubPat);
   const supabaseSourceLabel = describeSource(resolvedSecrets.sources.supabaseReadOnlyUrl);
 
+  const projectSlug = selectedProjectMeta?.slug ?? projectKey ?? null;
   const repoSlug = trimmedOwner && trimmedRepo ? `${trimmedOwner}/${trimmedRepo}` : null;
-  const dashboardHref = repoSlug
-    ? `/dashboard?owner=${encodeURIComponent(trimmedOwner)}&repo=${encodeURIComponent(trimmedRepo)}`
-    : null;
+  const dashboardHref = useMemo(() => {
+    if (!trimmedOwner || !trimmedRepo) {
+      return null;
+    }
+    const params = new URLSearchParams();
+    params.set("owner", trimmedOwner);
+    params.set("repo", trimmedRepo);
+    if (projectSlug) {
+      params.set("project", projectSlug);
+    }
+    return `/dashboard?${params.toString()}`;
+  }, [trimmedOwner, trimmedRepo, projectSlug]);
 
   const canSubmit = Boolean(!isSyncing && repoSlug);
   const canDiscover = Boolean(!STANDALONE_MODE && !isDiscovering && !isSyncing && repoSlug);
