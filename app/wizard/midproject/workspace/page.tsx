@@ -152,8 +152,9 @@ function MidProjectSyncWorkspaceInner() {
     [secretsStore, trimmedOwner, trimmedRepo, selectedProjectId],
   );
 
-  const rawProjectInput = projectOverride.trim() || selectedProjectId;
-  const projectKey = normalizeProjectKey(rawProjectInput);
+  const normalizedOverrideKey = normalizeProjectKey(projectOverride);
+  const normalizedSelectedId = normalizeProjectKey(selectedProjectId);
+  const projectKey = normalizedOverrideKey ?? selectedProjectMeta?.slug ?? normalizedSelectedId;
   const roadmapPath = describeProjectFile("docs/roadmap.yml", projectKey);
   const projectPlanPath = describeProjectFile("docs/project-plan.md", projectKey);
   const statusPath = describeProjectFile("docs/roadmap-status.json", projectKey);
@@ -194,7 +195,7 @@ function MidProjectSyncWorkspaceInner() {
   const githubSourceLabel = describeSource(resolvedSecrets.sources.githubPat);
   const supabaseSourceLabel = describeSource(resolvedSecrets.sources.supabaseReadOnlyUrl);
 
-  const projectSlug = selectedProjectMeta?.slug ?? projectKey ?? null;
+  const projectSlug = projectKey ?? null;
   const repoSlug = trimmedOwner && trimmedRepo ? `${trimmedOwner}/${trimmedRepo}` : null;
   const dashboardHref = useMemo(() => {
     if (!trimmedOwner || !trimmedRepo) {
