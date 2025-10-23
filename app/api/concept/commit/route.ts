@@ -30,8 +30,9 @@ const DEFAULT_ROADMAPRC_CONTENT =
     2,
   ) + "\n";
 
-const DEFAULT_ROADMAP_WORKFLOW =
-  [
+const buildRoadmapWorkflow = (projectKey?: string | null) => {
+  const slug = normalizeProjectKey(projectKey);
+  return [
     "name: Roadmap Sync",
     "on:",
     "  push: { branches: [main] }",
@@ -43,6 +44,7 @@ const DEFAULT_ROADMAP_WORKFLOW =
     "    permissions: { contents: write }",
     "    env:",
     "      ROADMAP_ENV: dev",
+    ...(slug ? [`      ROADMAP_PROJECT: ${slug}`] : []),
     "    steps:",
     "      - uses: actions/checkout@v4",
     "      - uses: actions/setup-node@v4",
@@ -52,9 +54,11 @@ const DEFAULT_ROADMAP_WORKFLOW =
     "      - name: Run roadmap checks",
     "        env:",
     "          READ_ONLY_CHECKS_URL: ${{ secrets.READ_ONLY_CHECKS_URL }}",
+    ...(slug ? [`          ROADMAP_PROJECT: ${slug}`] : []),
     "        run: npm run roadmap:check",
     "",
   ].join("\n");
+};
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,7 +101,7 @@ export async function POST(req: Request) {
       {
         raw: ".github/workflows/roadmap.yml",
         resolved: projectAwarePath(".github/workflows/roadmap.yml", projectKey),
-        content: `${DEFAULT_ROADMAP_WORKFLOW}`,
+        content: `${buildRoadmapWorkflow(projectKey)}`,
         message: `chore(roadmap): add ${describeProjectFile(".github/workflows/roadmap.yml", projectKey)}`,
       },
       {

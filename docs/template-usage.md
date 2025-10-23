@@ -36,6 +36,7 @@ spin up a repo with everything in place for the dashboard, automation, and docs.
    ```bash
    npm run roadmap:check
    ```
+   - If your roadmap files live under `docs/projects/<slug>/`, set `ROADMAP_PROJECT=<slug>` before running the command. The generated GitHub Actions workflow now exports this variable automatically when a project key is provided.
 5. Push the initial commit to GitHub and ensure the **Roadmap Sync** workflow passes.
 
 ## Customizing for your team
