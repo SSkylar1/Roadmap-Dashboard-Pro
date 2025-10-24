@@ -443,7 +443,7 @@ function getItemKey(item: Item, index: number) {
   return item.id || item.name || `item-${index + 1}`;
 }
 
-function useStatus(owner: string, repo: string, project?: string | null) {
+function useStatus(owner: string, repo: string, project?: string | null, token?: string | null) {
   const [data, setData] = useState<StatusResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -468,7 +468,11 @@ function useStatus(owner: string, repo: string, project?: string | null) {
     const url = query ? `/api/status/${owner}/${repo}?${query}` : `/api/status/${owner}/${repo}`;
 
     setLoading(true);
-    fetch(url, { cache: "no-store" })
+    const init: RequestInit = { cache: "no-store" };
+    if (token) {
+      init.headers = { "x-github-pat": token };
+    }
+    fetch(url, init)
       .then(async (r) => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
@@ -526,7 +530,7 @@ function useStatus(owner: string, repo: string, project?: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [owner, repo, project]);
+  }, [owner, repo, project, token]);
 
   return { data, err, loading, meta };
 }
@@ -3297,6 +3301,7 @@ function DashboardPage() {
   const pathname = usePathname();
 
   const { repos, initialized, addRepo, removeRepo } = useStoredRepos();
+  const secretsStore = useLocalSecrets();
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const initialTab: TabKey = normalizeTab(searchTab);
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
@@ -3368,6 +3373,10 @@ function DashboardPage() {
     if (!activeKey) return null;
     return repos.find((repo) => repoKey(repo.owner, repo.repo, repo.project) === activeKey) ?? null;
   }, [repos, activeKey]);
+  const resolvedSecrets = useMemo(() => {
+    if (!activeRepo) return null;
+    return resolveSecrets(secretsStore, activeRepo.owner, activeRepo.repo, activeRepo.project);
+  }, [secretsStore, activeRepo]);
   const wizardHref = useMemo(() => {
     if (!activeRepo) return "/new";
     const params = new URLSearchParams();
@@ -3428,7 +3437,12 @@ function DashboardPage() {
     err,
     loading,
     meta: statusMeta,
-  } = useStatus(activeRepo?.owner ?? "", activeRepo?.repo ?? "", activeRepo?.project);
+  } = useStatus(
+    activeRepo?.owner ?? "",
+    activeRepo?.repo ?? "",
+    activeRepo?.project,
+    resolvedSecrets?.githubPat ?? null,
+  );
   const {
     state: manualState,
     ready: manualReady,

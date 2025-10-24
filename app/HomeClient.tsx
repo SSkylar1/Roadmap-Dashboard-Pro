@@ -1,12 +1,14 @@
-// app/HomeClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { normalizeProjectKey } from "@/lib/project-paths";
+import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
+
 type Week = { id?: string; title?: string; items?: any[] };
 
-function useStatus(owner: string, repo: string, project?: string | null) {
+function useStatus(owner: string, repo: string, project?: string | null, token?: string | null) {
   const [data, setData] = useState<{ weeks: Week[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -18,7 +20,11 @@ function useStatus(owner: string, repo: string, project?: string | null) {
     const url = params.toString()
       ? `/api/status/${owner}/${repo}?${params.toString()}`
       : `/api/status/${owner}/${repo}`;
-    fetch(url, { cache: "no-store" })
+    const init: RequestInit = { cache: "no-store" };
+    if (token) {
+      init.headers = { "x-github-pat": token };
+    }
+    fetch(url, init)
       .then(r => (r.ok ? r.json() : r.json().then(x => Promise.reject(x))))
       .then(json => {
         if (json && typeof json === "object" && "snapshot" in json) {
@@ -28,7 +34,7 @@ function useStatus(owner: string, repo: string, project?: string | null) {
         }
       })
       .catch(e => setErr(e?.message || e?.error || "Failed to load status"));
-  }, [owner, repo, project]);
+  }, [owner, repo, project, token]);
 
   return { data, err };
 }
@@ -37,9 +43,14 @@ export default function HomeClient() {
   const sp = useSearchParams();
   const owner = sp.get("owner") || "SSkylar1";
   const repo = sp.get("repo") || "Roadmap-Kit-Starter";
-  const project = sp.get("project");
+  const project = normalizeProjectKey(sp.get("project") ?? undefined) ?? null;
+  const secretsStore = useLocalSecrets();
+  const resolvedSecrets = useMemo(
+    () => resolveSecrets(secretsStore, owner, repo, project ?? undefined),
+    [secretsStore, owner, repo, project],
+  );
 
-  const { data, err } = useStatus(owner, repo, project);
+  const { data, err } = useStatus(owner, repo, project, resolvedSecrets.githubPat ?? null);
   const weeks = useMemo(() => data?.weeks ?? [], [data]);
 
   return (
