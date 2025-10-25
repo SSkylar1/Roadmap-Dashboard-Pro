@@ -164,7 +164,8 @@ textarea{ min-height:180px; font-family: ui-monospace, SFMono-Regular, Menlo, Mo
 .item-card.item-pending{ border-color:rgba(251,191,36,0.3) }
 .item-card.item-neutral{ border-color:rgba(148,163,184,0.28) }
 .item-header{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; justify-content:space-between }
-.item-toggle{ background:transparent; border:none; padding:0; margin:0; display:flex; align-items:flex-start; gap:10px; cursor:pointer; text-align:left; color:inherit; font:inherit; flex:1; min-width:0 }
+.item-toggle{ background:transparent; border:none; padding:0; margin:0; display:flex; align-items:flex-start; gap:10px; cursor:pointer; text-align:left; color:inherit; font:inherit; flex:1; min-width:0; user-select:none; -webkit-user-select:none }
+.item-toggle *{ user-select:none; -webkit-user-select:none }
 .item-toggle:hover .item-title{ color:#fff }
 .item-toggle:disabled{ cursor:default }
 .item-toggle-icon{ display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; font-size:14px; color:var(--muted); margin-top:2px; transition:transform 0.2s ease, color 0.2s ease }
