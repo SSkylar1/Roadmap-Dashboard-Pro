@@ -1091,13 +1091,14 @@ function summarizeChecks(checks?: Check[]): StatusCounts {
 
 function formatStatusSummary({ total, passed, failed, pending }: StatusCounts) {
   if (total === 0) return null;
-  const parts: string[] = [];
-  if (passed > 0) parts.push(`✅ ${passed}`);
-  if (failed > 0) parts.push(`❌ ${failed}`);
-  if (pending > 0) parts.push(`⏳ ${pending}`);
 
-  if (parts.length === 0) return null;
-  return `${parts.join(" • ")}${total > 0 ? ` (of ${total})` : ""}`;
+  const completionPercent = Math.round((passed / total) * 100);
+  const parts: string[] = [];
+  parts.push(`${completionPercent}% — ${passed}/${total} checks complete`);
+  if (failed > 0) parts.push(`❌ ${failed} failed`);
+  if (pending > 0) parts.push(`⏳ ${pending} pending`);
+
+  return parts.join(" · ");
 }
 
 function checksStatus(checks?: Check[]): boolean | undefined {
