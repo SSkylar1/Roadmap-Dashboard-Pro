@@ -1544,26 +1544,31 @@ function WeekCard({
 
       {items.length > 0 ? (
         <div className="week-items">
-          {items.map((it, i) => (
-            <ItemCard
-              key={`${it.manualKey ?? it.id ?? it.name ?? i}`}
-              item={it}
-              week={week}
-              allowDelete={manualReady}
-              onDelete={it.manualKey ? () => onDeleteItem(week.manualKey, it) : undefined}
-              manualReady={manualReady}
-              onManualOverride={
-                manualReady && it.manualKey
-                  ? (override) => onOverrideItem(week.manualKey, it.manualKey!, override)
-                  : undefined
-              }
-              onClearManualOverride={
-                manualReady && it.manualKey
-                  ? () => onClearOverride(week.manualKey, it.manualKey!)
-                  : undefined
-              }
-            />
-          ))}
+          {items.map((it, i) => {
+            const baseKey = it.manualKey ?? it.id;
+            const reactKey = baseKey ?? `${(it.name ?? "item").trim() || "item"}-${i}`;
+
+            return (
+              <ItemCard
+                key={reactKey}
+                item={it}
+                week={week}
+                allowDelete={manualReady}
+                onDelete={it.manualKey ? () => onDeleteItem(week.manualKey, it) : undefined}
+                manualReady={manualReady}
+                onManualOverride={
+                  manualReady && it.manualKey
+                    ? (override) => onOverrideItem(week.manualKey, it.manualKey!, override)
+                    : undefined
+                }
+                onClearManualOverride={
+                  manualReady && it.manualKey
+                    ? () => onClearOverride(week.manualKey, it.manualKey!)
+                    : undefined
+                }
+              />
+            );
+          })}
         </div>
       ) : (
         <div className="empty-subtasks">No tasks tracked for this week yet.</div>
