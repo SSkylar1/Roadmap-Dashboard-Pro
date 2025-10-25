@@ -968,6 +968,13 @@ function buildCheckSummary(check: Check) {
   return `${label}${parts.length ? ` — ${parts.join(" • ")}` : ""}`;
 }
 
+function manualOverrideStatusLabel(manualOverride?: ManualOverride) {
+  if (!manualOverride) return "No manual override yet";
+  if (manualOverride.done === true) return "Marked complete manually";
+  if (manualOverride.done === false) return "Marked incomplete manually";
+  return "Manual override saved";
+}
+
 function buildItemCopyText(item: Item, week?: Week) {
   const { title: itemHeading, meta: itemMeta } = itemTitle(item);
   const { title: weekHeading, meta: weekMeta } = weekTitle(week);
@@ -980,25 +987,28 @@ function buildItemCopyText(item: Item, week?: Week) {
   const status = itemStatus(item);
   lines.push(`Status: ${statusText(status, hasChecks)}`);
 
+  if (item.note?.trim()) {
+    lines.push(`Note: ${item.note.trim()}`);
+  }
+
   const blockers = incompleteChecks(checks);
-  if (hasChecks && blockers.length > 0) {
-    lines.push("Blocked by:");
+  lines.push("Next steps:");
+  if (!hasChecks) {
+    lines.push("- No checks configured yet.");
+  } else if (blockers.length > 0) {
     blockers.forEach((chk) => {
       lines.push(`- ${buildCheckSummary(chk)}`);
     });
-  } else if (!hasChecks) {
-    lines.push("Blocked by: No checks configured yet.");
   } else {
-    lines.push("Blocked by: None");
+    lines.push("- All checks complete.");
   }
 
-  if (item.manualOverride?.note) {
-    lines.push(`Manual note: ${item.manualOverride.note}`);
-  }
-  if (item.manualOverride?.done !== undefined) {
-    lines.push(
-      `Manual override status: ${item.manualOverride.done ? "Marked complete" : "Marked incomplete"}`,
-    );
+  if (item.manualOverride) {
+    const statusLabel = manualOverrideStatusLabel(item.manualOverride);
+    lines.push(`Manual override: ${statusLabel}`);
+    if (item.manualOverride.note) {
+      lines.push(`Manual override note: ${item.manualOverride.note}`);
+    }
   }
 
   return lines.join("\n");
@@ -1227,13 +1237,7 @@ function ManualOverrideControls({
 }) {
   if (!onManualOverride && !onClearManualOverride) return null;
 
-  const statusLabel = manualOverride
-    ? manualOverride.done === true
-      ? "Marked complete manually"
-      : manualOverride.done === false
-        ? "Marked incomplete manually"
-        : "Manual override saved"
-    : "No manual override yet";
+  const statusLabel = manualOverrideStatusLabel(manualOverride);
 
   const note = manualOverride?.note;
 
@@ -1319,20 +1323,42 @@ function ItemCard({
   const isManual = item.manual === true;
   const canDelete = allowDelete && Boolean(onDelete) && Boolean(item.manualKey);
   const hasIncomplete = ok !== true;
+  const hasChecks = sum.total > 0;
+  const blockers = useMemo(
+    () => incompleteChecks(item.checks).map((chk) => buildCheckSummary(chk)),
+    [item.checks],
+  );
+  const nextStepItems = useMemo(() => {
+    if (!hasChecks) return ["No checks configured yet."];
+    return blockers.length > 0 ? blockers : ["All checks complete."];
+  }, [blockers, hasChecks]);
   const copyText = useMemo(() => buildItemCopyText(item, week), [item, week]);
   const manualOverride = item.manualOverride;
   const allowManualOverride = manualReady && !isManual && Boolean(onManualOverride || onClearManualOverride);
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = useId();
 
   return (
-    <div className={`item-card item-${tone}`}>
+    <div className={`item-card item-${tone} ${expanded ? "item-expanded" : "item-collapsed"}`}>
       <div className="item-header">
-        <div className="item-heading">
-          <div className="item-title-row">
-            <div className="item-title">{title}</div>
-            {isManual ? <span className="manual-pill">Manual</span> : null}
+        <button
+          type="button"
+          className={`item-toggle ${expanded ? "expanded" : ""}`}
+          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+        >
+          <span className="item-toggle-icon" aria-hidden="true">
+            ▸
+          </span>
+          <div className="item-heading">
+            <div className="item-title-row">
+              <div className="item-title">{title}</div>
+              {isManual ? <span className="manual-pill">Manual</span> : null}
+            </div>
+            {subtitle ? <div className="item-meta">{subtitle}</div> : null}
           </div>
-          {subtitle ? <div className="item-meta">{subtitle}</div> : null}
-        </div>
+        </button>
         <div className="item-actions">
           <StatusBadge ok={ok} total={sum.total} summary={summary} />
           {hasIncomplete ? (
@@ -1345,30 +1371,40 @@ function ItemCard({
           ) : null}
         </div>
       </div>
+      <div id={bodyId} className="item-body" hidden={!expanded}>
+        {note ? <div className="item-note">{note}</div> : null}
 
-      {note ? <div className="item-note">{note}</div> : null}
-
-      {sum.total > 0 ? (
-        <ul className="subtask-list">
-          {(item.checks ?? []).map((c, i) => {
-            const key = c.id || c.name || c.type || `check-${i}`;
-            return <CheckRow key={key} c={c} />;
-          })}
-        </ul>
-      ) : (
-        <div className="empty-subtasks">
-          {isManual ? "No linked checks yet for this manual item." : "No sub tasks yet."}
+        <div className="item-section">
+          <div className="item-section-title">Next steps</div>
+          <ul className="item-next-steps">
+            {nextStepItems.map((entry, index) => (
+              <li key={`next-step-${index}`}>{entry}</li>
+            ))}
+          </ul>
         </div>
-      )}
 
-      {allowManualOverride ? (
-        <ManualOverrideControls
-          manualOverride={manualOverride}
-          disabled={!manualReady}
-          onManualOverride={onManualOverride}
-          onClearManualOverride={onClearManualOverride}
-        />
-      ) : null}
+        {sum.total > 0 ? (
+          <ul className="subtask-list">
+            {(item.checks ?? []).map((c, i) => {
+              const key = c.id || c.name || c.type || `check-${i}`;
+              return <CheckRow key={key} c={c} />;
+            })}
+          </ul>
+        ) : (
+          <div className="empty-subtasks">
+            {isManual ? "No linked checks yet for this manual item." : "No sub tasks yet."}
+          </div>
+        )}
+
+        {allowManualOverride ? (
+          <ManualOverrideControls
+            manualOverride={manualOverride}
+            disabled={!manualReady}
+            onManualOverride={onManualOverride}
+            onClearManualOverride={onClearManualOverride}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
