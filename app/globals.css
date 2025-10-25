@@ -206,16 +206,20 @@ textarea{ min-height:180px; font-family: ui-monospace, SFMono-Regular, Menlo, Mo
 .incomplete-blockers{ margin:0; padding-left:18px; display:grid; gap:6px; font-size:13px; color:var(--muted) }
 
 .dashboard-shell{ display:grid; gap:24px; grid-template-columns:minmax(0,280px) minmax(0,1fr); align-items:flex-start }
-.project-panel{ background:var(--card); border:1px solid #1f2732; border-radius:20px; padding:20px; display:flex; flex-direction:column; gap:16px; position:sticky; top:24px; min-width:0; max-height:calc(100vh - 48px); }
+.project-panel{ background:var(--card); border:1px solid #1f2732; border-radius:20px; padding:20px; display:flex; flex-direction:column; gap:16px; position:sticky; top:24px; min-width:0; max-height:calc(100vh - 48px); overflow:hidden; contain:paint; }
 .project-header{ display:flex; align-items:center; justify-content:space-between; gap:12px }
 .project-header h2{ margin:0; font-size:18px; color:#cfe2f3 }
 .project-wizard{ font-size:13px; color:var(--accent) }
 .project-wizard:hover{ text-decoration:underline }
 .project-hint{ font-size:12px; color:var(--muted) }
 .project-empty{ font-size:13px; color:var(--muted); background:rgba(11,17,25,0.65); border:1px dashed rgba(148,163,184,0.35); padding:12px 14px; border-radius:12px }
-.project-panel-body{ display:grid; gap:16px; flex:1; min-height:0; overflow:auto; padding-right:12px; -webkit-overflow-scrolling:touch; background-clip:padding-box }
+.project-panel-body{ display:grid; gap:16px; flex:1; min-height:0; overflow:auto; padding-right:12px; -webkit-overflow-scrolling:touch }
 @supports (scrollbar-gutter:stable){
   .project-panel-body{ padding-right:6px; scrollbar-gutter:stable both-edges }
+}
+@supports (-webkit-hyphenate-character:auto){
+  .project-panel{ overflow:visible; contain:none }
+  .project-panel-body{ background-clip:padding-box }
 }
 .project-list{ list-style:none; margin:0; padding:0; display:grid; gap:10px }
 .project-item{ display:flex; align-items:center; gap:10px }
