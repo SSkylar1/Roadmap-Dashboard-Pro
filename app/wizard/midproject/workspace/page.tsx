@@ -610,6 +610,9 @@ function MidProjectSyncWorkspaceInner() {
       if (resolvedSecrets.githubPat) {
         runHeaders["x-github-pat"] = resolvedSecrets.githubPat;
       }
+      if (resolvedSecrets.openaiKey) {
+        runHeaders["x-openai-key"] = resolvedSecrets.openaiKey;
+      }
 
       const runResponse = await fetch("/api/run", {
         method: "POST",

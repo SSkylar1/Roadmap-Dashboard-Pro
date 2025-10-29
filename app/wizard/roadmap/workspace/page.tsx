@@ -706,6 +706,9 @@ function RoadmapProvisionerInner() {
         if (!STANDALONE_MODE && secrets.githubPat) {
           headers["x-github-pat"] = secrets.githubPat;
         }
+        if (secrets.openaiKey) {
+          headers["x-openai-key"] = secrets.openaiKey;
+        }
         const body: Record<string, string> = {
           owner: runOwner,
           repo: runRepo,
@@ -766,7 +769,7 @@ function RoadmapProvisionerInner() {
         setIsRunningRun(false);
       }
     },
-    [secrets.githubPat],
+    [secrets.githubPat, secrets.openaiKey],
   );
 
   const handleRunRetry = useCallback(() => {

@@ -55,6 +55,10 @@ type Item = {
   manual?: boolean;
   manualKey?: string;
   manualOverride?: { done?: boolean; note?: string };
+  clarityScore?: number;
+  clarityMissingDetails?: string[];
+  clarityFollowUps?: string[];
+  clarityExplanation?: string;
 };
 
 type Week = {
@@ -90,6 +94,21 @@ type RepoRef = {
 type ManualOverrideLike = { done?: boolean | null; note?: string | null };
 
 type DecoratedItem = Item & { manualKey?: string; manual?: boolean; manualOverride?: ManualOverride };
+
+type ClarifyTaskPayload = {
+  item: DecoratedItem;
+  week: DecoratedWeek;
+  answers: string[];
+  questions: string[];
+  extraContext?: string;
+};
+
+type ClarifyTaskResult = {
+  clarityScore?: number;
+  missingDetails: string[];
+  followUpQuestions: string[];
+  summary?: string;
+};
 type DecoratedWeek = Omit<Week, "items"> & {
   manualKey: string;
   manualState: ManualWeekState;
@@ -1306,6 +1325,8 @@ function ItemCard({
   manualReady,
   onManualOverride,
   onClearManualOverride,
+  clarifyEnabled,
+  onClarify,
 }: {
   item: DecoratedItem;
   week: DecoratedWeek;
@@ -1314,6 +1335,8 @@ function ItemCard({
   manualReady: boolean;
   onManualOverride?: (override: { done?: boolean; note?: string | null }) => void;
   onClearManualOverride?: () => void;
+  clarifyEnabled: boolean;
+  onClarify?: (payload: ClarifyTaskPayload) => Promise<ClarifyTaskResult>;
 }) {
   const sum = summarizeChecks(item.checks);
   const summary = formatStatusSummary(sum);
@@ -1339,6 +1362,102 @@ function ItemCard({
   const allowManualOverride = manualReady && !isManual && Boolean(onManualOverride || onClearManualOverride);
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
+  const baseClarityScore = typeof item.clarityScore === "number" ? item.clarityScore : null;
+  const [clarifyResult, setClarifyResult] = useState<ClarifyTaskResult | null>(null);
+  const [clarifyAnswers, setClarifyAnswers] = useState<string[]>([]);
+  const [clarifyExtra, setClarifyExtra] = useState("");
+  const [clarifyError, setClarifyError] = useState<string | null>(null);
+  const [clarifyLoading, setClarifyLoading] = useState(false);
+
+  const baselineFollowUps = useMemo(
+    () => (Array.isArray(item.clarityFollowUps) ? item.clarityFollowUps.filter((entry) => typeof entry === "string" && entry.trim()) : []),
+    [item.clarityFollowUps],
+  );
+  const baselineMissing = useMemo(
+    () => (Array.isArray(item.clarityMissingDetails) ? item.clarityMissingDetails.filter((entry) => typeof entry === "string" && entry.trim()) : []),
+    [item.clarityMissingDetails],
+  );
+  const displayFollowUps = useMemo(() => {
+    if (clarifyResult?.followUpQuestions?.length) {
+      return clarifyResult.followUpQuestions;
+    }
+    return baselineFollowUps;
+  }, [baselineFollowUps, clarifyResult?.followUpQuestions]);
+  const displayMissing = useMemo(() => {
+    if (clarifyResult?.missingDetails?.length) {
+      return clarifyResult.missingDetails;
+    }
+    return baselineMissing;
+  }, [baselineMissing, clarifyResult?.missingDetails]);
+  const displayScore = typeof clarifyResult?.clarityScore === "number" ? clarifyResult.clarityScore : baseClarityScore;
+  const claritySummary = clarifyResult?.summary || item.clarityExplanation;
+  const followUpKey = useMemo(() => displayFollowUps.join("||"), [displayFollowUps]);
+
+  useEffect(() => {
+    setClarifyAnswers(displayFollowUps.map(() => ""));
+  }, [followUpKey, displayFollowUps]);
+
+  useEffect(() => {
+    setClarifyResult(null);
+    setClarifyError(null);
+    setClarifyExtra("");
+  }, [item.id, item.name, baselineFollowUps, baselineMissing]);
+
+  const clarityFlagged = (displayScore !== null && displayScore !== undefined && displayScore < 0.7) || displayMissing.length > 0;
+  const showClarity =
+    displayScore !== null || displayMissing.length > 0 || displayFollowUps.length > 0 || typeof claritySummary === "string";
+
+  const handleClarifySubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!onClarify || displayFollowUps.length === 0) return;
+      if (!clarifyEnabled) {
+        setClarifyError("Add an OpenAI API key in Settings to answer follow-up questions.");
+        return;
+      }
+      const trimmedAnswers = clarifyAnswers.map((answer) => answer.trim());
+      const hasAnswer = trimmedAnswers.some(Boolean);
+      if (!hasAnswer && !clarifyExtra.trim()) {
+        setClarifyError("Provide at least one answer or some extra context before submitting.");
+        return;
+      }
+      setClarifyLoading(true);
+      setClarifyError(null);
+      try {
+        const result = await onClarify({
+          item,
+          week,
+          answers: trimmedAnswers,
+          questions: displayFollowUps,
+          extraContext: clarifyExtra.trim() || undefined,
+        });
+        setClarifyResult({
+          clarityScore: result.clarityScore,
+          missingDetails: result.missingDetails ?? [],
+          followUpQuestions: result.followUpQuestions ?? [],
+          summary: result.summary,
+        });
+        setClarifyAnswers([]);
+        setClarifyExtra("");
+      } catch (error) {
+        setClarifyError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setClarifyLoading(false);
+      }
+    },
+    [clarifyAnswers, clarifyEnabled, clarifyExtra, item, onClarify, week, displayFollowUps],
+  );
+
+  const handleAnswerChange = useCallback(
+    (index: number, value: string) => {
+      setClarifyAnswers((prev) => {
+        const next = [...prev];
+        next[index] = value;
+        return next;
+      });
+    },
+    [],
+  );
 
   return (
     <div className={`item-card item-${tone} ${expanded ? "item-expanded" : "item-collapsed"}`}>
@@ -1375,6 +1494,71 @@ function ItemCard({
       </div>
       <div id={bodyId} className="item-body" hidden={!expanded}>
         {note ? <div className="item-note">{note}</div> : null}
+
+        {showClarity ? (
+          <div className={`item-section item-clarity ${clarityFlagged ? "item-clarity-flagged" : ""}`}>
+            <div className="item-section-title">Clarity check</div>
+            {displayScore !== null && displayScore !== undefined ? (
+              <div className="item-clarity-score">Score: {Math.round(displayScore * 100)}%</div>
+            ) : null}
+            {claritySummary ? <div className="item-clarity-summary">{claritySummary}</div> : null}
+            {displayMissing.length > 0 ? (
+              <ul className="item-clarity-list">
+                {displayMissing.map((entry, idx) => (
+                  <li key={`clarity-missing-${idx}`}>{entry}</li>
+                ))}
+              </ul>
+            ) : null}
+            {displayFollowUps.length > 0 ? (
+              onClarify ? (
+                <form className="clarify-form" onSubmit={handleClarifySubmit}>
+                  <div className="clarify-hint">Answer follow-up questions to tighten this item.</div>
+                  {displayFollowUps.map((question, idx) => (
+                    <label key={`clarify-question-${idx}`} className="clarify-question">
+                      <span>{question}</span>
+                      <textarea
+                        value={clarifyAnswers[idx] ?? ""}
+                        onChange={(event) => handleAnswerChange(idx, event.target.value)}
+                        disabled={clarifyLoading}
+                        placeholder="Add your answer"
+                        rows={2}
+                      />
+                    </label>
+                  ))}
+                  <label className="clarify-extra">
+                    Additional context (optional)
+                    <textarea
+                      value={clarifyExtra}
+                      onChange={(event) => setClarifyExtra(event.target.value)}
+                      disabled={clarifyLoading}
+                      rows={2}
+                    />
+                  </label>
+                  {clarifyError ? <div className="clarify-error">{clarifyError}</div> : null}
+                  {clarifyResult?.summary && !clarifyError ? (
+                    <div className="clarify-success">{clarifyResult.summary}</div>
+                  ) : null}
+                  <div className="clarify-actions">
+                    <button
+                      type="submit"
+                      className="primary-button compact"
+                      disabled={clarifyLoading || !clarifyEnabled}
+                    >
+                      {clarifyLoading ? "Submitting…" : "Submit answers"}
+                    </button>
+                    {!clarifyEnabled ? (
+                      <span className="clarify-disabled">
+                        Add an OpenAI API key in Settings to submit clarifications.
+                      </span>
+                    ) : null}
+                  </div>
+                </form>
+              ) : (
+                <div className="clarify-disabled">Clarity follow-ups available after enabling AI tools.</div>
+              )
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="item-section">
           <div className="item-section-title">Next steps</div>
@@ -1480,6 +1664,8 @@ function WeekCard({
   onResetManual,
   onOverrideItem,
   onClearOverride,
+  clarifyEnabled,
+  onClarifyItem,
 }: {
   week: DecoratedWeek;
   manualReady: boolean;
@@ -1488,6 +1674,8 @@ function WeekCard({
   onResetManual: (weekKey: string) => void;
   onOverrideItem: (weekKey: string, itemKey: string, override: { done?: boolean; note?: string | null }) => void;
   onClearOverride: (weekKey: string, itemKey: string) => void;
+  clarifyEnabled: boolean;
+  onClarifyItem?: (payload: ClarifyTaskPayload) => Promise<ClarifyTaskResult>;
 }) {
   const rollup = useMemo(() => {
     let total = 0,
@@ -1566,6 +1754,8 @@ function WeekCard({
                     ? () => onClearOverride(week.manualKey, it.manualKey!)
                     : undefined
                 }
+                clarifyEnabled={clarifyEnabled}
+                onClarify={onClarifyItem}
               />
             );
           })}
@@ -3666,6 +3856,63 @@ function DashboardPage() {
     [clearManualOverride]
   );
 
+  const handleClarify = useCallback(
+    async ({ item, week, answers, questions, extraContext }: ClarifyTaskPayload): Promise<ClarifyTaskResult> => {
+      if (!resolvedSecrets?.openaiKey) {
+        throw new Error("Add an OpenAI API key in Settings to clarify tasks.");
+      }
+
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (resolvedSecrets.openaiKey) {
+        headers["x-openai-key"] = resolvedSecrets.openaiKey;
+      }
+
+      const payload = {
+        itemName: item.name ?? item.id ?? "Unnamed item",
+        description: item.note ?? "",
+        weekTitle: week.title ?? week.id ?? undefined,
+        followUpQuestions: questions,
+        answers,
+        extraContext,
+      };
+
+      const response = await fetch("/api/tasks/clarify", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        clarityScore?: number;
+        missingDetails?: unknown;
+        followUpQuestions?: unknown;
+        summary?: unknown;
+        error?: string;
+        detail?: string;
+      };
+
+      if (!response.ok || data?.error) {
+        const detail = typeof data?.detail === "string" ? data.detail : null;
+        const message = data?.error || "Failed to clarify task";
+        throw new Error(detail ? `${message}: ${detail}` : message);
+      }
+
+      const missingDetails = Array.isArray(data?.missingDetails)
+        ? (data.missingDetails.filter((entry) => typeof entry === "string" && entry.trim()) as string[])
+        : [];
+      const followUpQuestions = Array.isArray(data?.followUpQuestions)
+        ? (data.followUpQuestions.filter((entry) => typeof entry === "string" && entry.trim()) as string[])
+        : [];
+
+      return {
+        clarityScore: typeof data?.clarityScore === "number" ? data.clarityScore : undefined,
+        missingDetails,
+        followUpQuestions,
+        summary: typeof data?.summary === "string" ? (data.summary as string) : undefined,
+      };
+    },
+    [resolvedSecrets?.openaiKey],
+  );
+
   return (
     <main className="dashboard-shell">
       <ProjectSidebar
@@ -3767,6 +4014,8 @@ function DashboardPage() {
                         onResetManual={resetWeek}
                         onOverrideItem={handleManualOverride}
                         onClearOverride={handleClearManualOverride}
+                        clarifyEnabled={Boolean(resolvedSecrets?.openaiKey)}
+                        onClarifyItem={handleClarify}
                       />
                     ))}
                   </div>
