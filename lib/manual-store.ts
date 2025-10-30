@@ -1,4 +1,5 @@
 import { supabaseDelete, supabaseSelect, supabaseUpsert } from "./supabase-server";
+import { markManualStateUpdated } from "./ingestion-state";
 import {
   ManualState,
   manualStateIsEmpty,
@@ -129,8 +130,17 @@ export async function saveManualState(
     };
   }
 
+  async function touchIngestion(timestamp: string | null) {
+    try {
+      await markManualStateUpdated(ownerKey, repoKey, projectId, timestamp);
+    } catch (error) {
+      console.error("Failed to mark manual state timestamp", error);
+    }
+  }
+
   if (!supabaseAvailable) {
     const result = saveManualStateLocal(ownerKey, repoKey, projectId, state);
+    await touchIngestion(result.updated_at ?? null);
     return {
       available: true,
       state: result.state,
@@ -152,6 +162,8 @@ export async function saveManualState(
       }
       throw new Error(error.message || "Unexpected Supabase error");
     }
+    const timestamp = new Date().toISOString();
+    await touchIngestion(timestamp);
     return { available: true, state: {}, updated_at: null, storage: "supabase" };
   }
 
@@ -176,5 +188,6 @@ export async function saveManualState(
     throw new Error(error.message || "Unexpected Supabase error");
   }
 
+  await touchIngestion(now);
   return { available: true, state: sanitized, updated_at: now, storage: "supabase" };
 }
