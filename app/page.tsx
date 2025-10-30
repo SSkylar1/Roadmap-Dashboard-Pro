@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   useCallback,
   useId,
   useEffect,
@@ -46,6 +47,14 @@ type Check = {
   query?: string;
 };
 
+type ProgressSnapshot = {
+  passed?: number;
+  failed?: number;
+  pending?: number;
+  total?: number;
+  progressPercent?: number;
+};
+
 type Item = {
   id?: string;
   name?: string;
@@ -59,12 +68,16 @@ type Item = {
   clarityMissingDetails?: string[];
   clarityFollowUps?: string[];
   clarityExplanation?: string;
+  progress?: ProgressSnapshot;
+  progressPercent?: number;
 };
 
 type Week = {
   id?: string;
   title?: string;
   items?: Item[];
+  progress?: ProgressSnapshot;
+  progressPercent?: number;
 };
 
 type StatusResponse = {
@@ -1112,24 +1125,136 @@ type StatusCounts = {
   pending: number;
 };
 
-function summarizeChecks(checks?: Check[]): StatusCounts {
-  const total = checks?.length ?? 0;
-  const passed = (checks ?? []).filter((c) => c.ok === true).length;
-  const failed = (checks ?? []).filter((c) => c.ok === false).length;
-  const pending = total - passed - failed;
-  return { total, passed, failed, pending };
+type ProgressStats = StatusCounts & { progressPercent: number | null };
+
+function resolveProgressSnapshot(
+  progress?: ProgressSnapshot,
+  checks?: Check[],
+  done?: boolean,
+): ProgressStats {
+  const checkList = checks ?? [];
+  const fallbackTotal = checkList.length;
+  const fallbackPassed = checkList.filter((c) => c.ok === true).length;
+  const fallbackFailed = checkList.filter((c) => c.ok === false).length;
+
+  const total =
+    typeof progress?.total === "number" && Number.isFinite(progress.total) && progress.total >= 0
+      ? progress.total
+      : fallbackTotal;
+  const passed =
+    typeof progress?.passed === "number" && Number.isFinite(progress.passed) && progress.passed >= 0
+      ? progress.passed
+      : fallbackPassed;
+  const failed =
+    typeof progress?.failed === "number" && Number.isFinite(progress.failed) && progress.failed >= 0
+      ? progress.failed
+      : fallbackFailed;
+  const pending =
+    typeof progress?.pending === "number" && Number.isFinite(progress.pending)
+      ? Math.max(progress.pending, 0)
+      : Math.max(total - passed - failed, 0);
+
+  let percent: number | null = null;
+  if (typeof progress?.progressPercent === "number" && Number.isFinite(progress.progressPercent)) {
+    percent = progress.progressPercent;
+  } else if (total > 0) {
+    percent = (passed / total) * 100;
+  } else if (done === true) {
+    percent = 100;
+  } else if (done === false) {
+    percent = 0;
+  }
+  if (percent !== null) {
+    percent = Math.round(Math.min(100, Math.max(0, percent)) * 100) / 100;
+  }
+
+  return { total, passed, failed, pending, progressPercent: percent };
 }
 
-function formatStatusSummary({ total, passed, failed, pending }: StatusCounts) {
+function summarizeItemProgress(item: Item): ProgressStats {
+  return resolveProgressSnapshot(item.progress, item.checks, item.done);
+}
+
+function summarizeWeekProgress(week: Week): ProgressStats {
+  if (week.progress && typeof week.progress === "object") {
+    return resolveProgressSnapshot(week.progress, undefined, undefined);
+  }
+  let total = 0;
+  let passed = 0;
+  let failed = 0;
+  let pending = 0;
+  for (const item of week.items ?? []) {
+    const summary = summarizeItemProgress(item);
+    total += summary.total;
+    passed += summary.passed;
+    failed += summary.failed;
+    pending += summary.pending;
+  }
+  const percent = total > 0 ? Math.round((passed / total) * 10000) / 100 : null;
+  return { total, passed, failed, pending, progressPercent: percent };
+}
+
+function formatStatusSummary({ total, passed, failed, pending, progressPercent }: ProgressStats) {
   if (total === 0) return null;
 
-  const completionPercent = Math.round((passed / total) * 100);
+  const completionPercent = Math.round(
+    typeof progressPercent === "number" ? progressPercent : (total > 0 ? (passed / total) * 100 : 0),
+  );
   const parts: string[] = [];
   parts.push(`${completionPercent}% — ${passed}/${total} checks complete`);
   if (failed > 0) parts.push(`❌ ${failed} failed`);
   if (pending > 0) parts.push(`⏳ ${pending} pending`);
 
   return parts.join(" · ");
+}
+
+function formatProgressPercent(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const normalized = Math.round(value * 100) / 100;
+  const fixed = normalized.toFixed(2);
+  const trimmed = fixed.replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+  return `${trimmed}%`;
+}
+
+function ProgressStrip({
+  total,
+  passed,
+  failed,
+  pending,
+  height = 10,
+  legend,
+  className = "",
+  legendClassName = "",
+}: {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+  height?: number;
+  legend?: ReactNode;
+  className?: string;
+  legendClassName?: string;
+}) {
+  if (total <= 0) return null;
+  const ratio = (value: number) => `${Math.max(0, Math.min(100, (value / total) * 100))}%`;
+  return (
+    <div className={`progress-strip ${className}`.trim()}>
+      <div className="progress-bar" role="presentation" style={{ height }}>
+        {passed > 0 ? (
+          <div className="progress-fill passed" style={{ width: ratio(passed) }} title={`Passed: ${passed}`} />
+        ) : null}
+        {failed > 0 ? (
+          <div className="progress-fill failed" style={{ width: ratio(failed) }} title={`Failed: ${failed}`} />
+        ) : null}
+        {pending > 0 ? (
+          <div className="progress-fill pending" style={{ width: ratio(pending) }} title={`Pending: ${pending}`} />
+        ) : null}
+      </div>
+      {legend ? (
+        <div className={`progress-legend ${legendClassName}`.trim()}>{legend}</div>
+      ) : null}
+    </div>
+  );
 }
 
 function checksStatus(checks?: Check[]): boolean | undefined {
@@ -1188,13 +1313,11 @@ function WeekProgress({ weeks }: { weeks: Week[] }) {
       failed = 0,
       pending = 0;
     for (const w of weeks) {
-      for (const it of w.items ?? []) {
-        const s = summarizeChecks(it.checks);
-        total += s.total;
-        passed += s.passed;
-        failed += s.failed;
-        pending += s.pending;
-      }
+      const summary = summarizeWeekProgress(w);
+      total += summary.total;
+      passed += summary.passed;
+      failed += summary.failed;
+      pending += summary.pending;
     }
     return { total, passed, failed, pending };
   }, [weeks]);
@@ -1203,7 +1326,8 @@ function WeekProgress({ weeks }: { weeks: Week[] }) {
 
   const pct = (n: number) => Math.round((n / total) * 100);
 
-  const summary = formatStatusSummary({ total, passed, failed, pending });
+  const progressPercent = total > 0 ? (passed / total) * 100 : null;
+  const summary = formatStatusSummary({ total, passed, failed, pending, progressPercent });
   const overallStatus = failed > 0 ? false : pending > 0 ? undefined : true;
 
   return (
@@ -1338,7 +1462,7 @@ function ItemCard({
   clarifyEnabled: boolean;
   onClarify?: (payload: ClarifyTaskPayload) => Promise<ClarifyTaskResult>;
 }) {
-  const sum = summarizeChecks(item.checks);
+  const sum = summarizeItemProgress(item);
   const summary = formatStatusSummary(sum);
   const ok = itemStatus(item);
   const tone = statusTone(ok, sum.total > 0);
@@ -1348,7 +1472,18 @@ function ItemCard({
   const isManual = item.manual === true;
   const canDelete = allowDelete && Boolean(onDelete) && Boolean(item.manualKey);
   const hasIncomplete = ok !== true;
-  const hasChecks = sum.total > 0;
+  const hasChecks = (item.checks?.length ?? 0) > 0;
+  const progressPercentLabel = formatProgressPercent(sum.progressPercent);
+  const progressLegend = sum.total > 0
+    ? (
+        <>
+          {progressPercentLabel ? (
+            <span className="item-progress-percent">{progressPercentLabel}</span>
+          ) : null}
+          <span className="item-progress-counts">✅ {sum.passed} · ❌ {sum.failed} · ⏳ {sum.pending}</span>
+        </>
+      )
+    : null;
   const blockers = useMemo(
     () => incompleteChecks(item.checks).map((chk) => buildCheckSummary(chk)),
     [item.checks],
@@ -1480,20 +1615,32 @@ function ItemCard({
             {subtitle ? <div className="item-meta">{subtitle}</div> : null}
           </div>
         </button>
-        <div className="item-actions">
-          <StatusBadge ok={ok} total={sum.total} summary={summary} />
-          {hasIncomplete ? (
-            <CopyButton label="Copy incomplete details" text={copyText} disabled={!hasIncomplete} size="small" />
-          ) : null}
-          {canDelete ? (
-            <button type="button" className="ghost-button compact" onClick={onDelete}>
-              Remove
-            </button>
-          ) : null}
-        </div>
+      <div className="item-actions">
+        <StatusBadge ok={ok} total={sum.total} summary={summary} />
+        {hasIncomplete ? (
+          <CopyButton label="Copy incomplete details" text={copyText} disabled={!hasIncomplete} size="small" />
+        ) : null}
+        {canDelete ? (
+          <button type="button" className="ghost-button compact" onClick={onDelete}>
+            Remove
+          </button>
+        ) : null}
       </div>
-      <div id={bodyId} className="item-body" hidden={!expanded}>
-        {note ? <div className="item-note">{note}</div> : null}
+    </div>
+    {sum.total > 0 ? (
+      <ProgressStrip
+        total={sum.total}
+        passed={sum.passed}
+        failed={sum.failed}
+        pending={sum.pending}
+        height={6}
+        legend={progressLegend}
+        className="item-progress"
+        legendClassName="item-progress-legend"
+      />
+    ) : null}
+    <div id={bodyId} className="item-body" hidden={!expanded}>
+      {note ? <div className="item-note">{note}</div> : null}
 
         {showClarity ? (
           <div className={`item-section item-clarity ${clarityFlagged ? "item-clarity-flagged" : ""}`}>
@@ -1677,20 +1824,7 @@ function WeekCard({
   clarifyEnabled: boolean;
   onClarifyItem?: (payload: ClarifyTaskPayload) => Promise<ClarifyTaskResult>;
 }) {
-  const rollup = useMemo(() => {
-    let total = 0,
-      passed = 0,
-      failed = 0,
-      pending = 0;
-    for (const it of week.items ?? []) {
-      const s = summarizeChecks(it.checks);
-      total += s.total;
-      passed += s.passed;
-      failed += s.failed;
-      pending += s.pending;
-    }
-    return { total, passed, failed, pending };
-  }, [week]);
+  const rollup = useMemo(() => summarizeWeekProgress(week), [week]);
 
   const summary = formatStatusSummary(rollup);
   const ok = weekStatus(week);
@@ -1710,6 +1844,17 @@ function WeekCard({
   if (manualCounts.overrides > 0) manualSummaryParts.push(`${manualCounts.overrides} overrides`);
   const manualSummary = manualSummaryParts.join(" · ");
   const showManualSummary = manualReady && manualSummaryParts.length > 0;
+  const weekProgressPercent = formatProgressPercent(rollup.progressPercent);
+  const weekProgressLegend = rollup.total > 0
+    ? (
+        <>
+          {weekProgressPercent ? (
+            <span className="week-progress-percent">{weekProgressPercent}</span>
+          ) : null}
+          <span className="week-progress-counts">✅ {rollup.passed} · ❌ {rollup.failed} · ⏳ {rollup.pending}</span>
+        </>
+      )
+    : null;
 
   return (
     <section className={`week-card week-${tone}`}>
@@ -1720,6 +1865,19 @@ function WeekCard({
         </div>
         <StatusBadge ok={ok} total={rollup.total} summary={summary} />
       </div>
+
+      {rollup.total > 0 ? (
+        <ProgressStrip
+          total={rollup.total}
+          passed={rollup.passed}
+          failed={rollup.failed}
+          pending={rollup.pending}
+          height={8}
+          legend={weekProgressLegend}
+          className="week-progress-inline"
+          legendClassName="week-progress-legend"
+        />
+      ) : null}
 
       {showManualSummary ? (
         <div className="manual-summary">
@@ -3750,6 +3908,14 @@ function DashboardPage() {
         checks: [],
         manual: true,
         manualKey: manualItem.key,
+        progress: {
+          passed: manualItem.done ? 1 : 0,
+          failed: manualItem.done === false ? 1 : 0,
+          pending: manualItem.done === undefined ? 1 : 0,
+          total: 1,
+          progressPercent: manualItem.done ? 100 : manualItem.done === false ? 0 : 0,
+        },
+        progressPercent: manualItem.done ? 100 : manualItem.done === false ? 0 : 0,
       }));
       return {
         ...week,
