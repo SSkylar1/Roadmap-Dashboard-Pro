@@ -21,8 +21,10 @@ import { STANDALONE_MODE } from "@/lib/config";
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { WIZARD_ENTRY_POINTS, type WizardEntryPoint } from "@/lib/wizard-entry-points";
 import { describeProjectFile, normalizeProjectKey } from "@/lib/project-paths";
+import { formatRepoSlug, matchesRepoSlugConfirmation } from "@/lib/repo-slug";
 import { mergeProjectOptions } from "@/lib/project-options";
 import { resolveSecrets, useLocalSecrets } from "@/lib/use-local-secrets";
+import type { RepoRef } from "@/types/repos";
 import {
   type ManualItem,
   type ManualOverride,
@@ -158,14 +160,6 @@ type StatusMeta = {
   snapshotId?: string | null;
   workspaceId?: string | null;
   ingestion?: IngestionMeta | null;
-};
-
-type RepoRef = {
-  owner: string;
-  repo: string;
-  label?: string;
-  project?: string;
-  projectLabel?: string;
 };
 
 type ManualOverrideLike = { done?: boolean | null; note?: string | null };
@@ -2533,25 +2527,74 @@ function ProjectSidebar({
   activeKey,
   initializing,
   onSelect,
-  onRemove,
+  onDismiss,
+  onDelete,
   onAdd,
 }: {
   repos: RepoRef[];
   activeKey: string | null;
   initializing: boolean;
   onSelect: (repo: RepoRef) => void;
-  onRemove: (repo: RepoRef) => Promise<void>;
+  onDismiss: (repo: RepoRef) => void;
+  onDelete: (repo: RepoRef) => Promise<void>;
   onAdd: (repo: RepoRef) => RepoRef | null;
 }) {
-  const [removingKey, setRemovingKey] = useState<string | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [pendingDeleteKey, setPendingDeleteKey] = useState<string | null>(null);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [deletingLabel, setDeletingLabel] = useState<string | null>(null);
+  const [deleteInput, setDeleteInput] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const removingRepo = useMemo(() => {
-    if (!removingKey) return null;
-    return repos.find((repo) => repoKey(repo.owner, repo.repo, repo.project) === removingKey) ?? null;
-  }, [repos, removingKey]);
-  const removingDisplay = removingRepo ? formatRepoDisplay(removingRepo) : null;
-  const removingAny = Boolean(removingKey);
+  const pendingDeleteRepo = useMemo(() => {
+    if (!pendingDeleteKey) return null;
+    return repos.find((repo) => repoKey(repo.owner, repo.repo, repo.project) === pendingDeleteKey) ?? null;
+  }, [repos, pendingDeleteKey]);
+
+  const deleteSlug = pendingDeleteRepo ? formatRepoSlug(pendingDeleteRepo) : "";
+  const deleteDisplay = pendingDeleteRepo ? formatRepoDisplay(pendingDeleteRepo) : null;
+  const deletingAny = Boolean(deletingKey);
+  const confirmationValid = pendingDeleteRepo
+    ? matchesRepoSlugConfirmation(deleteInput, pendingDeleteRepo)
+    : false;
+
+  useEffect(() => {
+    setDeleteInput("");
+    setDeleteError(null);
+  }, [pendingDeleteKey]);
+
+  useEffect(() => {
+    if (!pendingDeleteKey) return;
+    if (repos.some((repo) => repoKey(repo.owner, repo.repo, repo.project) === pendingDeleteKey)) {
+      return;
+    }
+    setPendingDeleteKey(null);
+  }, [pendingDeleteKey, repos]);
+
+  const cancelDelete = useCallback(() => {
+    if (deletingAny) return;
+    setPendingDeleteKey(null);
+    setDeletingLabel(null);
+  }, [deletingAny]);
+
+  const confirmDelete = useCallback(() => {
+    if (!pendingDeleteRepo || !confirmationValid) return;
+    const key = repoKey(pendingDeleteRepo.owner, pendingDeleteRepo.repo, pendingDeleteRepo.project);
+    setDeletingKey(key);
+    setDeletingLabel(formatRepoDisplay(pendingDeleteRepo));
+    setDeleteError(null);
+    void onDelete(pendingDeleteRepo)
+      .then(() => {
+        setPendingDeleteKey(null);
+        setDeletingLabel(null);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : typeof error === "string" ? error : null;
+        setDeleteError(message && message.trim() ? message.trim() : "Failed to delete roadmap");
+      })
+      .finally(() => {
+        setDeletingKey((current) => (current === key ? null : current));
+      });
+  }, [confirmationValid, onDelete, pendingDeleteRepo]);
 
   return (
     <aside className="project-panel">
@@ -2570,7 +2613,7 @@ function ProjectSidebar({
               const key = repoKey(repo.owner, repo.repo, repo.project);
               const display = formatRepoDisplay(repo);
               const active = key === activeKey;
-              const busy = removingKey === key;
+              const busy = deletingKey === key;
               return (
                 <li key={key} className="project-item">
                   <button
@@ -2581,47 +2624,100 @@ function ProjectSidebar({
                     <span className="project-slug">{display}</span>
                     {active ? <span className="project-active">Viewing</span> : null}
                   </button>
-                  <button
-                    type="button"
-                    className="icon-button danger"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (removingAny) return;
-                      setRemovingKey(key);
-                      setRemoveError(null);
-                      void onRemove(repo)
-                        .then(() => {
-                          setRemoveError(null);
-                        })
-                        .catch((error) => {
-                          const message =
-                            error instanceof Error ? error.message : typeof error === "string" ? error : null;
-                          setRemoveError(message && message.trim() ? message.trim() : "Failed to remove project");
-                        })
-                        .finally(() => {
-                          setRemovingKey((current) => (current === key ? null : current));
-                        });
-                    }}
-                    aria-label={`Remove ${display}`}
-                    title="Remove project"
-                    disabled={removingAny}
-                    aria-busy={busy ? true : undefined}
-                  >
-                    ×
-                  </button>
+                  <div className="project-actions">
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (deletingAny) return;
+                        onDismiss(repo);
+                      }}
+                      aria-label={`Remove ${display} from dashboard`}
+                      title="Remove from dashboard"
+                      disabled={deletingAny}
+                    >
+                      −
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button delete"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (deletingAny) return;
+                        setPendingDeleteKey(key);
+                      }}
+                      aria-label={`Delete roadmap for ${display}`}
+                      title="Delete roadmap"
+                      disabled={deletingAny}
+                      aria-haspopup="dialog"
+                      aria-busy={busy ? true : undefined}
+                    >
+                      <span aria-hidden="true">⚠</span>
+                    </button>
+                  </div>
                 </li>
               );
             })}
           </ul>
         )}
 
-        {removeError ? <div className="project-error">{removeError}</div> : null}
-        {removingAny ? (
-          <div className="project-hint">Removing {removingDisplay ?? "project"}…</div>
+        {deletingAny && deletingLabel ? (
+          <div className="project-hint">Deleting {deletingLabel}…</div>
         ) : null}
 
         <ProjectForm onAdd={onAdd} onSelect={onSelect} />
       </div>
+
+      {pendingDeleteRepo ? (
+        <div
+          className="project-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="project-delete-title"
+          aria-describedby="project-delete-description"
+        >
+          <div className="project-modal">
+            <h3 id="project-delete-title">Delete roadmap</h3>
+            <p id="project-delete-description" className="project-modal-warning">
+              Deleting the roadmap will remove roadmap files from <code>{deleteSlug || "this repository"}</code>. This
+              cannot be undone.
+            </p>
+            {deleteDisplay ? (
+              <p className="project-modal-subtitle">
+                <strong>{deleteDisplay}</strong> will no longer appear in the dashboard after deletion.
+              </p>
+            ) : null}
+            <label className="project-modal-label">
+              <span>
+                Type <code>{deleteSlug || "owner/repo"}</code> to confirm.
+              </span>
+              <input
+                type="text"
+                value={deleteInput}
+                onChange={(event) => setDeleteInput(event.currentTarget.value)}
+                placeholder={deleteSlug || "owner/repo"}
+                autoFocus
+                disabled={deletingAny}
+              />
+            </label>
+            {deleteError ? <div className="project-modal-error">{deleteError}</div> : null}
+            <div className="project-modal-actions">
+              <button type="button" className="ghost-button" onClick={cancelDelete} disabled={deletingAny}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button danger"
+                onClick={confirmDelete}
+                disabled={!confirmationValid || deletingAny}
+              >
+                {deletingAny ? "Deleting…" : "Delete roadmap"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </aside>
   );
 }
@@ -4266,7 +4362,14 @@ function DashboardPage() {
     [addRepo, handleTabChange]
   );
 
-  const handleRemoveRepo = useCallback(
+  const handleDismissRepo = useCallback(
+    (repo: RepoRef) => {
+      removeRepo(repo);
+    },
+    [removeRepo],
+  );
+
+  const handleDeleteRoadmap = useCallback(
     async (repo: RepoRef) => {
       const normalized = normalizeRepoRef(repo);
       if (!normalized.owner || !normalized.repo) {
@@ -4276,7 +4379,7 @@ function DashboardPage() {
       const secrets = resolveSecrets(secretsStore, normalized.owner, normalized.repo, normalized.project);
       const token = secrets?.githubPat;
       if (!token) {
-        throw new Error("Add a GitHub personal access token in Settings to remove a project.");
+        throw new Error("Add a GitHub personal access token in Settings to delete this roadmap.");
       }
 
       const payload: Record<string, unknown> = { project: normalized.project ?? null };
@@ -4311,7 +4414,7 @@ function DashboardPage() {
             ? body.error
             : typeof body?.message === "string"
               ? body.message
-              : response.statusText || "Failed to remove project";
+              : response.statusText || "Failed to delete roadmap";
         const detailParts = Array.isArray(body?.errors)
           ? body.errors
               .map((entry) => {
@@ -4430,7 +4533,8 @@ function DashboardPage() {
         activeKey={activeKey}
         initializing={!initialized}
         onSelect={handleSelectRepo}
-        onRemove={handleRemoveRepo}
+        onDismiss={handleDismissRepo}
+        onDelete={handleDeleteRoadmap}
         onAdd={handleAddRepo}
       />
       <section className="dashboard">
