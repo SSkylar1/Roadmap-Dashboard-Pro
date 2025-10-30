@@ -37,7 +37,8 @@ test("boolean-only roadmap items emit implicit progress checks", async () => {
   patchModules();
   try {
     const module = await import("../app/page.js");
-    const { resolveProgressSnapshot, summarizeItemProgress, summarizeWeekProgress } = module as any;
+    const { resolveProgressSnapshot, summarizeItemProgress, summarizeWeekProgress, itemStatus, statusText } =
+      module as any;
 
     const doneTrue = resolveProgressSnapshot(undefined, undefined, true);
     assert.equal(doneTrue.total, 1);
@@ -77,6 +78,22 @@ test("boolean-only roadmap items emit implicit progress checks", async () => {
     assert.equal(weekSummary.failed, 1);
     assert.equal(weekSummary.pending, 0);
     assert.equal(weekSummary.progressPercent, 50);
+
+    const progressOnlyItem = {
+      id: "task-3",
+      name: "Legacy progress snapshot",
+      progress: { total: 4, passed: 4, failed: 0, pending: 0 },
+    } as any;
+    const progressSummary = summarizeItemProgress(progressOnlyItem);
+    assert.equal(progressSummary.total, 4);
+    assert.equal(progressSummary.failed, 0);
+    assert.equal(progressSummary.pending, 0);
+
+    const okStatus = itemStatus(progressOnlyItem);
+    assert.equal(okStatus, true);
+
+    const badgeLabel = statusText(okStatus, progressSummary.total > 0);
+    assert.equal(badgeLabel, "Complete");
   } finally {
     restoreModules();
   }

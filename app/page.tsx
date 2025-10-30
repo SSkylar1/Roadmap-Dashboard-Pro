@@ -59,6 +59,7 @@ type Item = {
   id?: string;
   name?: string;
   checks?: Check[];
+  results?: (Check | Record<string, unknown>)[];
   done?: boolean;
   note?: string;
   manual?: boolean;
@@ -1087,6 +1088,34 @@ function checkDetail(check: Check) {
   return typeof detail === "string" && detail.trim() ? detail.trim() : null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function getItemChecks(item: Item): Check[] {
+  if (Array.isArray(item.checks) && item.checks.length > 0) {
+    return item.checks;
+  }
+
+  const rawResults = Array.isArray((item as any).results) ? (item as any).results : [];
+  if (rawResults.length > 0) {
+    const normalized = (rawResults.filter(isRecord) as Record<string, unknown>[]).map((entry) => ({
+      ...(entry as Check),
+    }));
+    if (normalized.length > 0) {
+      item.checks = normalized;
+      return normalized;
+    }
+  }
+
+  if (Array.isArray(item.checks)) {
+    return item.checks;
+  }
+
+  item.checks = [];
+  return item.checks;
+}
+
 function incompleteChecks(checks?: Check[]) {
   return (checks ?? []).filter((c) => c.ok !== true);
 }
@@ -1114,7 +1143,7 @@ function buildItemCopyText(item: Item, week?: Week) {
   const itemPart = `${itemHeading}${itemMeta ? ` (${itemMeta})` : ""}`;
 
   const lines: string[] = [weekPart ? `${weekPart} — ${itemPart}` : itemPart];
-  const checks = item.checks ?? [];
+  const checks = getItemChecks(item);
   const hasChecks = checks.length > 0;
   const status = itemStatus(item);
   lines.push(`Status: ${statusText(status, hasChecks)}`);
@@ -1163,7 +1192,7 @@ function collectChecks(status: StatusResponse | null): Check[] {
   const checks: Check[] = [];
   for (const week of status.weeks ?? []) {
     for (const item of week.items ?? []) {
-      for (const check of item.checks ?? []) {
+      for (const check of getItemChecks(item)) {
         checks.push(check);
       }
     }
@@ -1177,7 +1206,7 @@ function collectIncompleteEntries(weeks: Week[]): IncompleteEntry[] {
     const { title: wTitle, meta: wMeta } = weekTitle(week);
     for (const item of week.items ?? []) {
       const status = itemStatus(item);
-      const checks = item.checks ?? [];
+      const checks = getItemChecks(item);
       const hasChecks = checks.length > 0;
       if (status === true) continue;
       const { title: itemHeading, meta: itemMeta } = itemTitle(item);
@@ -1291,7 +1320,7 @@ function resolveProgressSnapshot(
 }
 
 function summarizeItemProgress(item: Item): ProgressStats {
-  return resolveProgressSnapshot(item.progress, item.checks, item.done);
+  return resolveProgressSnapshot(item.progress, getItemChecks(item), item.done);
 }
 
 function summarizeWeekProgress(week: Week): ProgressStats {
@@ -1313,7 +1342,7 @@ function summarizeWeekProgress(week: Week): ProgressStats {
   return { total, passed, failed, pending, progressPercent: percent };
 }
 
-export { resolveProgressSnapshot, summarizeItemProgress, summarizeWeekProgress };
+export { resolveProgressSnapshot, summarizeItemProgress, summarizeWeekProgress, itemStatus, statusText };
 
 function StatusIngestionCard({ meta }: { meta: StatusMeta | null }) {
   const ingestion = meta?.ingestion;
@@ -1457,7 +1486,20 @@ function checksStatus(checks?: Check[]): boolean | undefined {
 
 function itemStatus(item: Item): boolean | undefined {
   if (typeof item.done === "boolean") return item.done;
-  return checksStatus(item.checks);
+  const checks = getItemChecks(item);
+  const checkStatus = checksStatus(checks);
+  if (checkStatus !== undefined || checks.length > 0) {
+    return checkStatus;
+  }
+
+  const summary = summarizeItemProgress(item);
+  if (summary.total > 0) {
+    if (summary.failed > 0) return false;
+    if (summary.pending > 0) return undefined;
+    return true;
+  }
+
+  return undefined;
 }
 
 function weekStatus(week: Week): boolean | undefined {
@@ -1658,7 +1700,8 @@ function ItemCard({
   const isManual = item.manual === true;
   const canDelete = allowDelete && Boolean(onDelete) && Boolean(item.manualKey);
   const hasIncomplete = ok !== true;
-  const hasChecks = (item.checks?.length ?? 0) > 0;
+  const checks = getItemChecks(item);
+  const hasChecks = checks.length > 0;
   const progressPercentLabel = formatProgressPercent(sum.progressPercent);
   const progressLegend = sum.total > 0
     ? (
@@ -1670,10 +1713,7 @@ function ItemCard({
         </>
       )
     : null;
-  const blockers = useMemo(
-    () => incompleteChecks(item.checks).map((chk) => buildCheckSummary(chk)),
-    [item.checks],
-  );
+  const blockers = useMemo(() => incompleteChecks(checks).map((chk) => buildCheckSummary(chk)), [checks]);
   const nextStepItems = useMemo(() => {
     if (!hasChecks) return ["No checks configured yet."];
     return blockers.length > 0 ? blockers : ["All checks complete."];
@@ -1904,7 +1944,7 @@ function ItemCard({
 
         {sum.total > 0 ? (
           <ul className="subtask-list">
-            {(item.checks ?? []).map((c, i) => {
+            {checks.map((c, i) => {
               const key = c.id || c.name || c.type || `check-${i}`;
               return <CheckRow key={key} c={c} />;
             })}
@@ -3400,7 +3440,7 @@ function SmartEditorCard({
     const suggestions = new Set<string>(base);
     for (const week of status?.weeks ?? []) {
       for (const item of week.items ?? []) {
-        for (const check of item.checks ?? []) {
+        for (const check of getItemChecks(item)) {
           if (Array.isArray(check.globs)) {
             for (const glob of check.globs) {
               if (typeof glob === "string" && glob.trim()) {
