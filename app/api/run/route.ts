@@ -111,21 +111,109 @@ function applyManualAdjustments(weeks: any[], manualState: ManualState): any[] {
         return next;
       });
 
-    const manualItems = (manualWeek.added ?? []).map((manualItem) => ({
-      id: manualItem.key,
-      name: manualItem.name,
-      note: manualItem.note,
-      done: manualItem.done === true,
-      manual: true,
-      manualKey: manualItem.key,
-      checks: [],
-      results: [],
-    }));
+    const manualItems = (manualWeek.added ?? []).map((manualItem) => {
+      const done = manualItem.done === true;
+      const incomplete = manualItem.done === false;
+      const progressPercent = done ? 100 : incomplete ? 0 : 0;
+      return {
+        id: manualItem.key,
+        name: manualItem.name,
+        note: manualItem.note,
+        done,
+        manual: true,
+        manualKey: manualItem.key,
+        checks: [],
+        results: [],
+        progress: {
+          passed: done ? 1 : 0,
+          failed: incomplete ? 1 : 0,
+          pending: !done && !incomplete ? 1 : 0,
+          total: 1,
+          progressPercent,
+        },
+        progressPercent,
+      };
+    });
 
     return {
       ...week,
       items: [...filtered, ...manualItems],
     };
+  });
+}
+
+function ensureItemProgress(rawItem: any): { item: any; summary: { passed: number; failed: number; pending: number; total: number; progressPercent: number } } {
+  const item = rawItem && typeof rawItem === "object" ? { ...rawItem } : {};
+  const baseProgress = item && typeof item.progress === "object" ? (item.progress as Record<string, unknown>) : {};
+  const checks = Array.isArray(item.checks) ? item.checks : [];
+  const fallbackTotal = checks.length;
+  const fallbackPassed = checks.filter((c: any) => c?.ok === true).length;
+  const fallbackFailed = checks.filter((c: any) => c?.ok === false).length;
+
+  const totalCandidate = typeof baseProgress?.total === "number" ? baseProgress.total : fallbackTotal;
+  const total = Number.isFinite(totalCandidate) && totalCandidate >= 0 ? totalCandidate : 0;
+  const passedCandidate = typeof baseProgress?.passed === "number" ? baseProgress.passed : fallbackPassed;
+  const passed = Number.isFinite(passedCandidate) && passedCandidate >= 0 ? passedCandidate : 0;
+  const failedCandidate = typeof baseProgress?.failed === "number" ? baseProgress.failed : fallbackFailed;
+  const failed = Number.isFinite(failedCandidate) && failedCandidate >= 0 ? failedCandidate : 0;
+  const pendingCandidate = typeof baseProgress?.pending === "number" ? baseProgress.pending : undefined;
+  const pending = Number.isFinite(pendingCandidate) && pendingCandidate !== undefined
+    ? Math.max(pendingCandidate, 0)
+    : Math.max(total - passed - failed, 0);
+
+  let percentCandidate = typeof baseProgress?.progressPercent === "number" ? baseProgress.progressPercent : undefined;
+  if (!Number.isFinite(percentCandidate)) {
+    if (total > 0) percentCandidate = (passed / total) * 100;
+    else if (item.done === true) percentCandidate = 100;
+    else percentCandidate = 0;
+  }
+  const clampedPercent = Math.min(100, Math.max(0, percentCandidate ?? 0));
+  const progressPercent = Math.round(clampedPercent * 100) / 100;
+
+  const normalizedProgress = {
+    passed,
+    failed,
+    pending,
+    total,
+    progressPercent,
+  };
+
+  item.progress = normalizedProgress;
+  item.progressPercent = progressPercent;
+
+  return { item, summary: normalizedProgress };
+}
+
+function normalizeWeeksProgress(weeks: any[]): any[] {
+  if (!Array.isArray(weeks)) return weeks;
+  return weeks.map((week) => {
+    const items = Array.isArray(week?.items) ? week.items : [];
+    let passed = 0;
+    let failed = 0;
+    let pending = 0;
+    let total = 0;
+    const normalizedItems = items.map((rawItem) => {
+      const { item, summary } = ensureItemProgress(rawItem);
+      passed += summary.passed;
+      failed += summary.failed;
+      pending += summary.pending;
+      total += summary.total;
+      return item;
+    });
+    const percent = total > 0 ? Math.round((passed / total) * 10000) / 100 : 0;
+    const normalizedWeek = {
+      ...week,
+      items: normalizedItems,
+      progress: {
+        passed,
+        failed,
+        pending,
+        total,
+        progressPercent: percent,
+      },
+      progressPercent: percent,
+    };
+    return normalizedWeek;
   });
 }
 
@@ -744,6 +832,8 @@ export async function POST(req: NextRequest) {
         statusPayload.weeks = applyManualAdjustments(statusPayload.weeks, manualState);
       }
 
+      statusPayload.weeks = normalizeWeeksProgress(statusPayload.weeks);
+
       await annotateClarity(statusPayload.weeks, openAiKey, req.signal);
 
       const computedStatus = computeStandaloneRoadmapStatus(record.normalized);
@@ -794,10 +884,16 @@ export async function POST(req: NextRequest) {
     };
     for (const w of weeks) {
       const W: any = { id: w.id, title: w.title, items: [] as any[] };
+      let weekPassed = 0;
+      let weekFailed = 0;
+      let weekTotal = 0;
+      let weekPending = 0;
       for (const it of w.items ?? []) {
-        let passed = true;
+        let passedAllChecks = true;
         let hadChecks = false;
         const checks: any[] = [];
+        let checkPassedCount = 0;
+        let checkFailedCount = 0;
         for (const c of (it.checks as Check[]) ?? []) {
           hadChecks = true;
           let r;
@@ -817,13 +913,44 @@ export async function POST(req: NextRequest) {
             result: statusValue,
           };
           checks.push(payload);
-          if (ok !== true) passed = false;
+          if (ok === true) checkPassedCount += 1;
+          else if (ok === false) checkFailedCount += 1;
+          if (ok !== true) passedAllChecks = false;
         }
         const manual = it.manual === true;
         const note = typeof it.note === "string" ? it.note : undefined;
         const manualKey = typeof it.manualKey === "string" ? it.manualKey : undefined;
-        const itemDone = hadChecks ? passed : it.done === true;
-        const item: any = { id: it.id, name: it.name, done: itemDone, checks };
+        const totalChecks = checks.length;
+        const pendingChecks = Math.max(totalChecks - checkPassedCount - checkFailedCount, 0);
+        const itemDone = hadChecks ? passedAllChecks && pendingChecks === 0 : it.done === true;
+        const progressTotal = hadChecks ? totalChecks : 1;
+        const progressPassed = hadChecks ? checkPassedCount : itemDone ? 1 : 0;
+        const progressFailed = hadChecks ? checkFailedCount : itemDone === false ? 1 : 0;
+        const progressPending = hadChecks ? pendingChecks : progressTotal - progressPassed - progressFailed;
+        const rawPercent = progressTotal > 0 ? (progressPassed / progressTotal) * 100 : itemDone ? 100 : 0;
+        const progressPercent = Number.isFinite(rawPercent) ? Math.round(rawPercent * 100) / 100 : 0;
+        if (progressTotal > 0) {
+          weekTotal += progressTotal;
+          weekPassed += progressPassed;
+          weekFailed += progressFailed;
+          if (progressPending > 0) {
+            weekPending += progressPending;
+          }
+        }
+        const item: any = {
+          id: it.id,
+          name: it.name,
+          done: itemDone,
+          checks,
+          progress: {
+            passed: progressPassed,
+            failed: progressFailed,
+            pending: Math.max(progressPending, 0),
+            total: progressTotal,
+            progressPercent,
+          },
+          progressPercent,
+        };
         item.results = checks;
         if (manual) item.manual = true;
         if (note) item.note = note;
@@ -849,6 +976,15 @@ export async function POST(req: NextRequest) {
         }
         W.items.push(item);
       }
+      const weekPercent = weekTotal > 0 ? Math.round((weekPassed / weekTotal) * 10000) / 100 : 0;
+      W.progress = {
+        passed: weekPassed,
+        failed: weekFailed,
+        pending: Math.max(weekPending, 0),
+        total: weekTotal,
+        progressPercent: weekPercent,
+      };
+      W.progressPercent = weekPercent;
       status.weeks.push(W);
     }
 
@@ -864,6 +1000,8 @@ export async function POST(req: NextRequest) {
     if (manualState && Object.keys(manualState).length > 0) {
       status.weeks = applyManualAdjustments(status.weeks, manualState);
     }
+
+    status.weeks = normalizeWeeksProgress(status.weeks);
 
     await annotateClarity(status.weeks, openAiKey, req.signal);
 
@@ -888,10 +1026,51 @@ export async function POST(req: NextRequest) {
     await safePut(projectAwarePath("docs/roadmap/roadmap-status.json", projectKey), pretty, statusMessage);
 
     // 2) human-readable plan
+    const formatPercentLabel = (value: unknown): string | null => {
+      if (typeof value !== "number" || !Number.isFinite(value)) return null;
+      const normalized = Math.round(value * 100) / 100;
+      const fixed = normalized.toFixed(2);
+      const trimmed = fixed.replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+      return `${trimmed}%`;
+    };
+
     let plan = `# Project Plan\nGenerated: ${status.generated_at}\n\n`;
     for (const w of status.weeks) {
-      plan += `## ${w.title}\n\n`;
-      for (const it of w.items) plan += `${it.done ? "✅" : "❌"} **${it.name}** (${it.id})\n`;
+      const title = w.title || w.id || "Untitled week";
+      const weekProgressPercent =
+        typeof w.progressPercent === "number" ? w.progressPercent : typeof w.progress?.progressPercent === "number" ? w.progress.progressPercent : undefined;
+      const weekPercentLabel = formatPercentLabel(weekProgressPercent);
+      const weekPassed = typeof w.progress?.passed === "number" ? w.progress.passed : undefined;
+      const weekTotal = typeof w.progress?.total === "number" ? w.progress.total : undefined;
+      const weekSummary =
+        weekPercentLabel && typeof weekPassed === "number" && typeof weekTotal === "number" && weekTotal > 0
+          ? `${weekPercentLabel} complete (${weekPassed}/${weekTotal})`
+          : weekPercentLabel
+            ? `${weekPercentLabel} complete`
+            : null;
+      plan += weekSummary ? `## ${title} — ${weekSummary}\n\n` : `## ${title}\n\n`;
+      for (const it of w.items ?? []) {
+        const badge = it.done ? "✅" : "❌";
+        const name = it.name || it.id || "Untitled task";
+        const identifier = it.id ? ` (${it.id})` : "";
+        const itemProgressPercent =
+          typeof it.progressPercent === "number"
+            ? it.progressPercent
+            : typeof it.progress?.progressPercent === "number"
+              ? it.progress.progressPercent
+              : undefined;
+        const itemPercentLabel = formatPercentLabel(itemProgressPercent);
+        const itemPassed = typeof it.progress?.passed === "number" ? it.progress.passed : undefined;
+        const itemTotal = typeof it.progress?.total === "number" ? it.progress.total : undefined;
+        let progressLabel: string | null = null;
+        if (itemPercentLabel && typeof itemPassed === "number" && typeof itemTotal === "number" && itemTotal > 0) {
+          progressLabel = `${itemPercentLabel} – ${itemPassed}/${itemTotal}`;
+        } else if (itemPercentLabel) {
+          progressLabel = itemPercentLabel;
+        }
+        const detail = progressLabel ? ` (${progressLabel})` : "";
+        plan += `${badge}${detail} **${name}**${identifier}\n`;
+      }
       plan += `\n`;
     }
     const planMessage = projectKey
