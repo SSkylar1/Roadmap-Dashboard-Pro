@@ -19,6 +19,7 @@ import {
   updateStandaloneRoadmapStatus,
   type StandaloneRoadmapRecord,
 } from "@/lib/standalone/roadmaps-store";
+import { evaluateTaskClarity } from "@/lib/task-clarity";
 import { insertStandaloneStatusSnapshot } from "@/lib/standalone/status-snapshots";
 
 type Check = {
@@ -42,6 +43,10 @@ type RoadmapItem = {
   note?: string;
   manualKey?: string;
   manualOverride?: { done?: boolean; note?: string };
+  clarityScore?: number;
+  clarityMissingDetails?: string[];
+  clarityFollowUps?: string[];
+  clarityExplanation?: string;
 };
 
 type RoadmapWeek = { id?: string; title?: string; items?: RoadmapItem[] };
@@ -505,6 +510,49 @@ function extractWeeks(raw: any): RoadmapWeek[] {
   return [];
 }
 
+async function annotateClarity(
+  weeks: RoadmapWeek[] | undefined,
+  openAiKey?: string | null,
+  signal?: AbortSignal,
+) {
+  if (!Array.isArray(weeks)) return;
+  for (const week of weeks) {
+    if (!week?.items) continue;
+    for (const item of week.items) {
+      if (!item || typeof item !== "object") continue;
+      const alreadyAnnotated = typeof item.clarityScore === "number";
+      if (alreadyAnnotated) continue;
+      const candidateName =
+        typeof item.name === "string" && item.name.trim()
+          ? item.name.trim()
+          : typeof item.id === "string"
+            ? item.id
+            : "";
+      const candidateNote = typeof item.note === "string" ? item.note : undefined;
+      const checks = Array.isArray(item.checks) ? item.checks : [];
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const clarity = await evaluateTaskClarity(
+          { title: candidateName, note: candidateNote, checks },
+          { openAiKey, signal },
+        );
+        item.clarityScore = clarity.clarityScore;
+        if (clarity.missingDetails.length > 0) {
+          item.clarityMissingDetails = clarity.missingDetails;
+        }
+        if (clarity.followUpQuestions.length > 0) {
+          item.clarityFollowUps = clarity.followUpQuestions;
+        }
+        if (clarity.explanation) {
+          item.clarityExplanation = clarity.explanation;
+        }
+      } catch (error) {
+        console.error("Failed to evaluate task clarity", error);
+      }
+    }
+  }
+}
+
 function normalizeFileList(check: Check) {
   const collected: string[] = [];
   if (Array.isArray(check.globs)) collected.push(...check.globs.map((value) => String(value).trim()).filter(Boolean));
@@ -655,6 +703,7 @@ export async function POST(req: NextRequest) {
     };
     const projectKey = normalizeProjectKey(payload?.project);
     const token = req.headers.get("x-github-pat")?.trim() || undefined;
+    const openAiKey = req.headers.get("x-openai-key")?.trim() || process.env.OPENAI_API_KEY || undefined;
     if (!owner || !repo) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
@@ -671,6 +720,7 @@ export async function POST(req: NextRequest) {
       }
 
       const weeks = buildStandaloneWeeks(record);
+      await annotateClarity(weeks, openAiKey, req.signal);
       const statusPayload: any = {
         generated_at: new Date().toISOString(),
         owner,
@@ -693,6 +743,8 @@ export async function POST(req: NextRequest) {
       if (manualState && Object.keys(manualState).length > 0) {
         statusPayload.weeks = applyManualAdjustments(statusPayload.weeks, manualState);
       }
+
+      await annotateClarity(statusPayload.weeks, openAiKey, req.signal);
 
       const computedStatus = computeStandaloneRoadmapStatus(record.normalized);
       updateStandaloneRoadmapStatus(record.id, computedStatus);
@@ -776,6 +828,25 @@ export async function POST(req: NextRequest) {
         if (manual) item.manual = true;
         if (note) item.note = note;
         if (manualKey) item.manualKey = manualKey;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const clarity = await evaluateTaskClarity(
+            { title: item.name ?? item.id ?? "", note, checks },
+            { openAiKey, signal: req.signal },
+          );
+          item.clarityScore = clarity.clarityScore;
+          if (clarity.missingDetails.length > 0) {
+            item.clarityMissingDetails = clarity.missingDetails;
+          }
+          if (clarity.followUpQuestions.length > 0) {
+            item.clarityFollowUps = clarity.followUpQuestions;
+          }
+          if (clarity.explanation) {
+            item.clarityExplanation = clarity.explanation;
+          }
+        } catch (error) {
+          console.error("Failed to evaluate task clarity", error);
+        }
         W.items.push(item);
       }
       status.weeks.push(W);
@@ -793,6 +864,8 @@ export async function POST(req: NextRequest) {
     if (manualState && Object.keys(manualState).length > 0) {
       status.weeks = applyManualAdjustments(status.weeks, manualState);
     }
+
+    await annotateClarity(status.weeks, openAiKey, req.signal);
 
     // Commit artifacts (write both root docs/* and legacy docs/roadmap/*)
     const pretty = JSON.stringify(status, null, 2);
