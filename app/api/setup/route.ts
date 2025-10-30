@@ -4,6 +4,7 @@ import { openSetupPR } from "@/lib/github-pr";
 import { ROADMAP_CHECKER_SNIPPET } from "@/lib/roadmap-snippets";
 import { authHeaders, getTokenForRepo, type RepoAuth } from "@/lib/token";
 import { encodeGitHubPath } from "@/lib/github";
+import { describeProjectFile, normalizeProjectKey, projectAwarePath } from "@/lib/project-paths";
 
 // Ensure Node.js runtime (Octokit/jsonwebtoken need Node, not Edge)
 export const runtime = "nodejs";
@@ -322,6 +323,13 @@ export async function POST(req: NextRequest) {
   const repo = String(body?.repo || "");
   const branch = String(body?.branch || "");
   const readOnlyUrl = String(body?.readOnlyUrl || "");
+  const rawProjectSlug =
+    typeof body?.projectSlug === "string"
+      ? body.projectSlug
+      : typeof body?.project === "string"
+        ? body.project
+        : undefined;
+  const projectKey = normalizeProjectKey(rawProjectSlug);
 
   if (!owner || !repo || !branch || !readOnlyUrl) {
     return NextResponse.json({ error: "missing fields: owner, repo, branch, readOnlyUrl" }, { status: 400 });
@@ -391,6 +399,10 @@ export async function POST(req: NextRequest) {
       throw new Error(`Failed to prepare package-lock.json: ${err?.message || String(err)}`);
     }
 
+    const roadmapPath = projectAwarePath("docs/roadmap.yml", projectKey);
+    const statusPath = projectAwarePath("docs/roadmap-status.json", projectKey);
+    const workflowPath = projectAwarePath(".github/workflows/roadmap.yml", projectKey);
+
     const files = [
       {
         path: ".roadmaprc.json",
@@ -414,7 +426,7 @@ export async function POST(req: NextRequest) {
         ),
       },
       {
-        path: "docs/roadmap.yml",
+        path: roadmapPath,
         content: [
           "version: 1",
           "weeks:",
@@ -429,8 +441,8 @@ export async function POST(req: NextRequest) {
           "",
         ].join("\n"),
       },
-      { 
-        path: "docs/roadmap-status.json",
+      {
+        path: statusPath,
         content: ROADMAP_STATUS_JSON,
       },
       {
@@ -447,7 +459,7 @@ export async function POST(req: NextRequest) {
         content: ROADMAP_PACKAGE_LOCK,
       },
       {
-        path: "docs/roadmap-status.json",
+        path: statusPath,
         content: ROADMAP_STATUS_STUB,
       },
       {
@@ -472,7 +484,7 @@ export async function POST(req: NextRequest) {
           ]
         : []),
       {
-        path: ".github/workflows/roadmap.yml",
+        path: workflowPath,
         content: [
           "name: Roadmap Sync",
           "on:",
@@ -500,15 +512,22 @@ export async function POST(req: NextRequest) {
       },
     ];
 
+    const prTitle = projectKey
+      ? `chore(${projectKey}): roadmap-kit bootstrap`
+      : "chore(setup): roadmap-kit bootstrap";
+    const prBody = [
+      "Adds .roadmaprc.json configured for roadmap-kit onboarding.",
+      `Includes ${describeProjectFile("docs/roadmap.yml", projectKey)}, ${describeProjectFile("docs/roadmap-status.json", projectKey)} stub, roadmap checker script, npm metadata, and ${describeProjectFile(".github/workflows/roadmap.yml", projectKey)}.`,
+    ].join("\n\n");
+
     const pr = await openSetupPR({
       owner,
       repo,
       auth,
       branch, // e.g. "chore/roadmap-setup"
       files,
-      title: "chore(setup): roadmap-kit bootstrap",
-      body:
-        "Adds .roadmaprc.json, roadmap + status stub, roadmap checker script, npm metadata, and CI workflow.",
+      title: prTitle,
+      body: prBody,
     });
 
     return NextResponse.json({ ok: true, url: pr?.html_url ?? null, number: pr?.number ?? null });

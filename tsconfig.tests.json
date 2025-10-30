@@ -22,6 +22,7 @@
     "app/api/concept/**/*.ts",
     "app/api/context/**/*.ts",
     "app/api/status/**/*.ts",
+    "app/api/setup/**/*.ts",
     "tests/**/*.ts",
     "tests/**/*.d.ts"
   ],
