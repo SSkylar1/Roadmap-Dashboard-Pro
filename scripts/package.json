@@ -2,6 +2,7 @@
   "name": "roadmap-dashboard-pro-scripts",
   "private": true,
   "scripts": {
-    "roadmap:check": "node scripts/roadmap-check.mjs"
+    "roadmap:check": "node scripts/roadmap-check.mjs",
+    "roadmap:migrate": "node scripts/migrate-project.mjs"
   }
 }
