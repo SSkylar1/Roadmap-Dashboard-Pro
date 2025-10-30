@@ -1231,9 +1231,30 @@ function resolveProgressSnapshot(
   done?: boolean,
 ): ProgressStats {
   const checkList = checks ?? [];
-  const fallbackTotal = checkList.length;
-  const fallbackPassed = checkList.filter((c) => c.ok === true).length;
-  const fallbackFailed = checkList.filter((c) => c.ok === false).length;
+  let fallbackTotal = checkList.length;
+  let fallbackPassed = checkList.filter((c) => c.ok === true).length;
+  let fallbackFailed = checkList.filter((c) => c.ok === false).length;
+
+  const hasProgressMetadata =
+    progress &&
+    typeof progress === "object" &&
+    [progress.total, progress.passed, progress.failed, progress.pending].some(
+      (value) => typeof value === "number" && Number.isFinite(value),
+    );
+
+  if (!hasProgressMetadata && fallbackTotal === 0) {
+    fallbackTotal = 1;
+    if (done === true) {
+      fallbackPassed = 1;
+      fallbackFailed = 0;
+    } else if (done === false) {
+      fallbackPassed = 0;
+      fallbackFailed = 1;
+    } else {
+      fallbackPassed = 0;
+      fallbackFailed = 0;
+    }
+  }
 
   const total =
     typeof progress?.total === "number" && Number.isFinite(progress.total) && progress.total >= 0
@@ -1291,6 +1312,8 @@ function summarizeWeekProgress(week: Week): ProgressStats {
   const percent = total > 0 ? Math.round((passed / total) * 10000) / 100 : null;
   return { total, passed, failed, pending, progressPercent: percent };
 }
+
+export { resolveProgressSnapshot, summarizeItemProgress, summarizeWeekProgress };
 
 function StatusIngestionCard({ meta }: { meta: StatusMeta | null }) {
   const ingestion = meta?.ingestion;
