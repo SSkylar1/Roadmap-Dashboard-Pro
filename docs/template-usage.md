@@ -50,3 +50,36 @@ spin up a repo with everything in place for the dashboard, automation, and docs.
 - Keep the template branch up to date with changes from `main` to avoid drift.
 - When adding features to the dashboard, backport worthwhile improvements into the template.
 - Document any manual steps in this file so future adopters can follow the same playbook.
+
+## Migrating legacy single-project repositories
+
+Older dashboards stored roadmap files directly at the repository root (`docs/roadmap.yml`,
+`docs/roadmap-status.json`, `docs/project-plan.md`, and `.github/workflows/roadmap.yml`). The
+webhooks that trigger roadmap sync jobs now expect project-aware paths such as
+`docs/projects/<slug>/roadmap.yml`. Use the migration command to copy the root artifacts into a
+project-aware slug and optionally delete the legacy files once the copy is complete.
+
+1. Export the repository context for GitHub API calls:
+   ```bash
+   export REPO_OWNER=<org>
+   export REPO_NAME=<repo>
+   export DEFAULT_BRANCH=main
+   export GITHUB_TOKEN=<installation-token-or-pat>
+   ```
+2. Run a dry run to confirm the command detects the expected files. Provide the legacy project
+   name or slug via `--slug` (the script normalizes it for you):
+   ```bash
+   node scripts/migrate-project.mjs --slug "Beta Release" --owner "$REPO_OWNER" --repo "$REPO_NAME" --dry-run
+   ```
+   The output lists the files that would be written under `docs/projects/<normalized-slug>/…`.
+3. Execute the migration for real and remove the legacy files so future webhook runs only target
+   the new slug:
+   ```bash
+   node scripts/migrate-project.mjs --slug "Beta Release" --owner "$REPO_OWNER" --repo "$REPO_NAME" --remove-legacy
+   ```
+   Each artifact is committed via the `putFile` helper, so you will see individual commits for the
+   roadmap, status, workflow, and plan files. The legacy files are deleted after the copy completes
+   so `inferProjectsFromPaths` reports the slug instead of the legacy `null` project.
+4. Repeat the command for every slug that still lives at the root of the repository. After all
+   projects are migrated, rerun `npm run roadmap:check` (optionally with `ROADMAP_PROJECT=<slug>`) to
+   verify the workflow and roadmap automation continue to pass.
