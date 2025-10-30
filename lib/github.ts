@@ -290,3 +290,149 @@ export async function listRepoTreePaths(
 
 export const listRepoTree = listRepoTreePaths;
 
+export interface DeletePathOptions {
+  token?: string;
+  branch?: string;
+  message?: string | ((path: string) => string);
+}
+
+export interface DeletePathResult {
+  deleted: string[];
+  missing: string[];
+}
+
+function resolveDeleteMessage(path: string, message?: string | ((path: string) => string)): string {
+  if (typeof message === "function") {
+    const resolved = message(path);
+    if (typeof resolved === "string" && resolved.trim()) {
+      return resolved.trim();
+    }
+  } else if (typeof message === "string" && message.trim()) {
+    return message.trim();
+  }
+  return `chore: remove ${path}`;
+}
+
+export async function deletePath(
+  owner: string,
+  repo: string,
+  targetPath: string,
+  options: DeletePathOptions = {},
+): Promise<DeletePathResult> {
+  const branch = options.branch?.trim();
+  const t = options.token ?? (await ghToken());
+  const deleted = new Set<string>();
+  const missing = new Set<string>();
+  const visited = new Set<string>();
+
+  async function remove(path: string): Promise<void> {
+    const normalized = path.replace(/^\/+/, "").replace(/\/+/g, "/");
+    if (!normalized || visited.has(normalized)) return;
+    visited.add(normalized);
+
+    const encodedPath = encodeGitHubPath(normalized);
+    const metaUrl =
+      `https://api.github.com/repos/${owner}/${repo}/contents/${encodedPath}` +
+      (branch ? `?ref=${encodeURIComponent(branch)}` : "");
+    const metaResponse = await fetch(metaUrl, { headers: ghHeaders(t, "json"), cache: "no-store" });
+
+    if (metaResponse.status === 404) {
+      missing.add(normalized);
+      return;
+    }
+
+    if (metaResponse.status === 401) {
+      throw new Error(`GitHub 401 deleting ${owner}/${repo}:${normalized}`);
+    }
+
+    if (!metaResponse.ok) {
+      const txt = await metaResponse.text();
+      throw new Error(`HEAD ${owner}/${repo}:${normalized} failed: ${metaResponse.status} ${txt}`);
+    }
+
+    const metaBody = await metaResponse.json();
+
+    if (Array.isArray(metaBody)) {
+      const entries = metaBody
+        .filter((entry) => entry && typeof entry.path === "string")
+        .map((entry) => entry as { path: string; type?: string })
+        .sort((a, b) => {
+          if (a.type === b.type) return a.path.localeCompare(b.path);
+          if (a.type === "dir") return -1;
+          if (b.type === "dir") return 1;
+          return a.path.localeCompare(b.path);
+        });
+      if (entries.length === 0) {
+        missing.add(normalized);
+        return;
+      }
+      for (const entry of entries) {
+        await remove(entry.path);
+      }
+      return;
+    }
+
+    if (metaBody && metaBody.type === "dir" && typeof metaBody.path === "string") {
+      const entriesUrl =
+        `https://api.github.com/repos/${owner}/${repo}/contents/${encodeGitHubPath(metaBody.path)}` +
+        (branch ? `?ref=${encodeURIComponent(branch)}` : "");
+      const entriesResponse = await fetch(entriesUrl, { headers: ghHeaders(t, "json"), cache: "no-store" });
+      if (entriesResponse.status === 404) {
+        missing.add(metaBody.path);
+        return;
+      }
+      if (!entriesResponse.ok) {
+        const txt = await entriesResponse.text();
+        throw new Error(`HEAD ${owner}/${repo}:${metaBody.path} failed: ${entriesResponse.status} ${txt}`);
+      }
+      const entries = (await entriesResponse.json()) as Array<{ path?: string }>;
+      if (!Array.isArray(entries) || entries.length === 0) {
+        missing.add(metaBody.path);
+        return;
+      }
+      for (const entry of entries) {
+        if (typeof entry?.path === "string") {
+          await remove(entry.path);
+        }
+      }
+      return;
+    }
+
+    const sha = typeof metaBody?.sha === "string" ? (metaBody.sha as string) : null;
+    const remotePath = typeof metaBody?.path === "string" ? (metaBody.path as string) : normalized;
+    if (!sha) {
+      throw new Error(`Missing sha for ${owner}/${repo}:${remotePath}`);
+    }
+
+    const deleteUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeGitHubPath(remotePath)}`;
+    const body: Record<string, string> = { message: resolveDeleteMessage(remotePath, options.message), sha };
+    if (branch) body.branch = branch;
+
+    const deleteResponse = await fetch(deleteUrl, {
+      method: "DELETE",
+      headers: ghHeaders(t, "json"),
+      body: JSON.stringify(body),
+    });
+
+    if (deleteResponse.status === 404) {
+      missing.add(remotePath);
+      return;
+    }
+
+    if (deleteResponse.status === 401) {
+      throw new Error(`GitHub 401 deleting ${owner}/${repo}:${remotePath}`);
+    }
+
+    if (!deleteResponse.ok) {
+      const txt = await deleteResponse.text();
+      throw new Error(`DELETE ${owner}/${repo}:${remotePath} failed: ${deleteResponse.status} ${txt}`);
+    }
+
+    deleted.add(remotePath);
+  }
+
+  await remove(targetPath);
+
+  return { deleted: Array.from(deleted), missing: Array.from(missing) };
+}
+

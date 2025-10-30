@@ -533,6 +533,20 @@ function normalizeRepoRef(ref: Partial<RepoRef> | RepoRef): RepoRef {
   return { owner, repo, label, ...(project ? { project } : {}), ...(projectLabel ? { projectLabel } : {}) };
 }
 
+function formatRepoDisplay(repo: RepoRef): string {
+  const slug = `${repo.owner}/${repo.repo}`;
+  const projectLabel =
+    typeof repo.projectLabel === "string" && repo.projectLabel.trim() ? repo.projectLabel.trim() : undefined;
+  const projectKey = typeof repo.project === "string" && repo.project.trim() ? repo.project.trim() : undefined;
+  if (projectLabel) {
+    return `${slug} · ${projectLabel}`;
+  }
+  if (projectKey) {
+    return `${slug} · #${projectKey}`;
+  }
+  return slug;
+}
+
 function getWeekKey(week: Week, index: number) {
   return week.id || week.title || `week-${index + 1}`;
 }
@@ -546,7 +560,58 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [meta, setMeta] = useState<StatusMeta | null>(null);
+  const projectKey = useMemo(() => normalizeProjectKey(project ?? undefined), [project]);
   const ingestionRef = useRef<IngestionMeta | null>(null);
+  const ingestionRequestRef = useRef(0);
+
+  const fetchIngestion = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    if (!owner || !repo) {
+      ingestionRef.current = null;
+      setMeta((prev) => (prev ? { ...prev, ingestion: null } : prev));
+      return { ok: false, error: "missing_repo" };
+    }
+
+    ingestionRef.current = null;
+    setMeta((prev) => (prev ? { ...prev, ingestion: null } : prev));
+
+    const params = new URLSearchParams();
+    if (projectKey) {
+      params.set("project", projectKey);
+    }
+    const query = params.toString();
+    const ingestionUrl = query
+      ? `/api/ingestion/${owner}/${repo}?${query}`
+      : `/api/ingestion/${owner}/${repo}`;
+    const requestId = ++ingestionRequestRef.current;
+
+    try {
+      const response = await fetch(ingestionUrl, { cache: "no-store" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const message = body?.error || body?.message || response.statusText || "Failed to load ingestion metadata";
+        throw new Error(message);
+      }
+      const body = await response.json();
+      if (ingestionRequestRef.current !== requestId) {
+        return { ok: false };
+      }
+      if (body && typeof body === "object" && body.ok && typeof body.state === "object") {
+        const ingestionMeta = mapIngestionState(body.state);
+        ingestionRef.current = ingestionMeta;
+        setMeta((prev) => (prev ? { ...prev, ingestion: ingestionMeta } : prev));
+        return { ok: true };
+      }
+      ingestionRef.current = null;
+      setMeta((prev) => (prev ? { ...prev, ingestion: null } : prev));
+      return { ok: false };
+    } catch (error) {
+      if (ingestionRequestRef.current === requestId) {
+        ingestionRef.current = null;
+        setMeta((prev) => (prev ? { ...prev, ingestion: null } : prev));
+      }
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }, [owner, repo, projectKey]);
 
   useEffect(() => {
     if (!owner || !repo) {
@@ -560,15 +625,11 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
 
     let cancelled = false;
     const params = new URLSearchParams();
-    const projectKey = normalizeProjectKey(project ?? undefined);
     if (projectKey) {
       params.set("project", projectKey);
     }
     const query = params.toString();
     const url = query ? `/api/status/${owner}/${repo}?${query}` : `/api/status/${owner}/${repo}`;
-    const ingestionUrl = query
-      ? `/api/ingestion/${owner}/${repo}?${query}`
-      : `/api/ingestion/${owner}/${repo}`;
 
     setLoading(true);
     ingestionRef.current = null;
@@ -633,39 +694,14 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
         if (!cancelled) setLoading(false);
       });
 
-    fetch(ingestionUrl, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          const message = body?.error || body?.message || response.statusText || "Failed to load ingestion metadata";
-          throw new Error(message);
-        }
-        return response.json();
-      })
-      .then((body: any) => {
-        if (cancelled) return;
-        if (body && typeof body === "object" && body.ok && typeof body.state === "object") {
-          const ingestionMeta = mapIngestionState(body.state);
-          ingestionRef.current = ingestionMeta;
-          setMeta((prev) => (prev ? { ...prev, ingestion: ingestionMeta } : prev));
-        } else {
-          ingestionRef.current = null;
-          setMeta((prev) => (prev ? { ...prev, ingestion: null } : prev));
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          ingestionRef.current = null;
-          setMeta((prev) => (prev ? { ...prev, ingestion: null } : prev));
-        }
-      });
+    fetchIngestion().catch(() => {});
 
     return () => {
       cancelled = true;
     };
-  }, [owner, repo, project, token]);
+  }, [owner, repo, projectKey, token, fetchIngestion]);
 
-  return { data, err, loading, meta };
+  return { data, err, loading, meta, refreshIngestion: fetchIngestion };
 }
 
 function useStoredRepos() {
@@ -2504,9 +2540,19 @@ function ProjectSidebar({
   activeKey: string | null;
   initializing: boolean;
   onSelect: (repo: RepoRef) => void;
-  onRemove: (repo: RepoRef) => void;
+  onRemove: (repo: RepoRef) => Promise<void>;
   onAdd: (repo: RepoRef) => RepoRef | null;
 }) {
+  const [removingKey, setRemovingKey] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  const removingRepo = useMemo(() => {
+    if (!removingKey) return null;
+    return repos.find((repo) => repoKey(repo.owner, repo.repo, repo.project) === removingKey) ?? null;
+  }, [repos, removingKey]);
+  const removingDisplay = removingRepo ? formatRepoDisplay(removingRepo) : null;
+  const removingAny = Boolean(removingKey);
+
   return (
     <aside className="project-panel">
       <div className="project-header">
@@ -2522,19 +2568,9 @@ function ProjectSidebar({
           <ul className="project-list">
             {repos.map((repo) => {
               const key = repoKey(repo.owner, repo.repo, repo.project);
-              const slug = `${repo.owner}/${repo.repo}`;
-              const projectLabel =
-                typeof repo.projectLabel === "string" && repo.projectLabel.trim()
-                  ? repo.projectLabel.trim()
-                  : undefined;
-              const projectKey =
-                typeof repo.project === "string" && repo.project.trim() ? repo.project.trim() : undefined;
-              const display = projectLabel
-                ? `${slug} · ${projectLabel}`
-                : projectKey
-                  ? `${slug} · #${projectKey}`
-                  : slug;
+              const display = formatRepoDisplay(repo);
               const active = key === activeKey;
+              const busy = removingKey === key;
               return (
                 <li key={key} className="project-item">
                   <button
@@ -2550,10 +2586,26 @@ function ProjectSidebar({
                     className="icon-button danger"
                     onClick={(event) => {
                       event.stopPropagation();
-                      onRemove(repo);
+                      if (removingAny) return;
+                      setRemovingKey(key);
+                      setRemoveError(null);
+                      void onRemove(repo)
+                        .then(() => {
+                          setRemoveError(null);
+                        })
+                        .catch((error) => {
+                          const message =
+                            error instanceof Error ? error.message : typeof error === "string" ? error : null;
+                          setRemoveError(message && message.trim() ? message.trim() : "Failed to remove project");
+                        })
+                        .finally(() => {
+                          setRemovingKey((current) => (current === key ? null : current));
+                        });
                     }}
                     aria-label={`Remove ${display}`}
                     title="Remove project"
+                    disabled={removingAny}
+                    aria-busy={busy ? true : undefined}
                   >
                     ×
                   </button>
@@ -2562,6 +2614,11 @@ function ProjectSidebar({
             })}
           </ul>
         )}
+
+        {removeError ? <div className="project-error">{removeError}</div> : null}
+        {removingAny ? (
+          <div className="project-hint">Removing {removingDisplay ?? "project"}…</div>
+        ) : null}
 
         <ProjectForm onAdd={onAdd} onSelect={onSelect} />
       </div>
@@ -4055,6 +4112,7 @@ function DashboardPage() {
     err,
     loading,
     meta: statusMeta,
+    refreshIngestion,
   } = useStatus(
     activeRepo?.owner ?? "",
     activeRepo?.repo ?? "",
@@ -4209,10 +4267,70 @@ function DashboardPage() {
   );
 
   const handleRemoveRepo = useCallback(
-    (repo: RepoRef) => {
-      removeRepo(repo);
+    async (repo: RepoRef) => {
+      const normalized = normalizeRepoRef(repo);
+      if (!normalized.owner || !normalized.repo) {
+        throw new Error("Missing owner or repository");
+      }
+
+      const secrets = resolveSecrets(secretsStore, normalized.owner, normalized.repo, normalized.project);
+      const token = secrets?.githubPat;
+      if (!token) {
+        throw new Error("Add a GitHub personal access token in Settings to remove a project.");
+      }
+
+      const payload: Record<string, unknown> = { project: normalized.project ?? null };
+      if (
+        activeRepo &&
+        repoKey(activeRepo.owner, activeRepo.repo, activeRepo.project) ===
+          repoKey(normalized.owner, normalized.repo, normalized.project) &&
+        statusMeta?.branch
+      ) {
+        payload.branch = statusMeta.branch;
+      }
+
+      const response = await fetch(`/api/projects/${normalized.owner}/${normalized.repo}/delete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-github-pat": token,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const body = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        errors?: Array<{ path?: string; error?: string }>;
+      };
+
+      if (!response.ok || body?.ok === false) {
+        const baseMessage =
+          typeof body?.error === "string"
+            ? body.error
+            : typeof body?.message === "string"
+              ? body.message
+              : response.statusText || "Failed to remove project";
+        const detailParts = Array.isArray(body?.errors)
+          ? body.errors
+              .map((entry) => {
+                if (!entry) return null;
+                const pathValue = typeof entry.path === "string" ? entry.path : null;
+                const errorMsg = typeof entry.error === "string" ? entry.error : null;
+                if (pathValue && errorMsg) return `${pathValue}: ${errorMsg}`;
+                return pathValue || errorMsg;
+              })
+              .filter((entry): entry is string => Boolean(entry && entry.trim()))
+          : [];
+        const message = detailParts.length > 0 ? `${baseMessage}: ${detailParts.join("; ")}` : baseMessage;
+        throw new Error(message);
+      }
+
+      await refreshIngestion().catch(() => {});
+      removeRepo(normalized);
     },
-    [removeRepo]
+    [activeRepo, refreshIngestion, removeRepo, secretsStore, statusMeta?.branch],
   );
 
   const handleAddManualItem = useCallback(
