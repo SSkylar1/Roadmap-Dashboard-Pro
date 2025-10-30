@@ -13,6 +13,7 @@ function WizardForm() {
   const [readOnlyUrl, setReadOnlyUrl] = useState(
     () => search.get("readOnlyUrl") ?? "https://<ref>.functions.supabase.co/read_only_checks"
   );
+  const [projectSlug, setProjectSlug] = useState(() => search.get("project") ?? "");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<WizardResult>(null);
 
@@ -20,10 +21,16 @@ function WizardForm() {
     setLoading(true);
     setResult(null);
     try {
+      const payload: Record<string, unknown> = { owner, repo, branch, readOnlyUrl };
+      const trimmedSlug = projectSlug.trim();
+      if (trimmedSlug) {
+        payload.projectSlug = trimmedSlug;
+      }
+
       const response = await fetch("/api/setup", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ owner, repo, branch, readOnlyUrl }),
+        body: JSON.stringify(payload),
       });
       const json = await response.json();
       setResult(json);
@@ -55,6 +62,12 @@ function WizardForm() {
         <div>
           <label>READ_ONLY_CHECKS_URL</label>
           <input value={readOnlyUrl} onChange={(event) => setReadOnlyUrl(event.target.value)} />
+        </div>
+      </div>
+      <div className="form-row">
+        <div>
+          <label>Project slug (optional)</label>
+          <input value={projectSlug} onChange={(event) => setProjectSlug(event.target.value)} />
         </div>
       </div>
       <div style={{ height: 12 }} />
