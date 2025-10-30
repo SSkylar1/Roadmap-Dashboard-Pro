@@ -87,6 +87,68 @@ type StatusResponse = {
   weeks: Week[];
 };
 
+type IngestionMeta = {
+  lastCommitSha?: string | null;
+  lastCommitMessage?: string | null;
+  lastCommitAuthor?: string | null;
+  lastCommitUrl?: string | null;
+  lastCommitAt?: string | null;
+  lastCommitPaths?: string[];
+  lastManualStateAt?: string | null;
+  lastRunSha?: string | null;
+  lastRunAt?: string | null;
+  lastRunManualStateAt?: string | null;
+};
+
+function normalizeIngestionPaths(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const set = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    set.add(trimmed);
+  }
+  return Array.from(set);
+}
+
+function mapIngestionState(raw: any): IngestionMeta {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  return {
+    lastCommitSha: typeof raw.last_commit_sha === "string" ? raw.last_commit_sha : null,
+    lastCommitMessage: typeof raw.last_commit_message === "string" ? raw.last_commit_message : null,
+    lastCommitAuthor: typeof raw.last_commit_author === "string" ? raw.last_commit_author : null,
+    lastCommitUrl: typeof raw.last_commit_url === "string" ? raw.last_commit_url : null,
+    lastCommitAt: typeof raw.last_commit_at === "string" ? raw.last_commit_at : null,
+    lastCommitPaths: normalizeIngestionPaths(raw.last_commit_paths),
+    lastManualStateAt: typeof raw.last_manual_state_at === "string" ? raw.last_manual_state_at : null,
+    lastRunSha: typeof raw.last_run_sha === "string" ? raw.last_run_sha : null,
+    lastRunAt: typeof raw.last_run_at === "string" ? raw.last_run_at : null,
+    lastRunManualStateAt:
+      typeof raw.last_run_manual_state_at === "string" ? raw.last_run_manual_state_at : null,
+  };
+}
+
+function formatTimestamp(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const time = Date.parse(value);
+  if (Number.isNaN(time)) return value;
+  try {
+    return new Date(time).toLocaleString();
+  } catch {
+    return new Date(time).toISOString();
+  }
+}
+
+function shortSha(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (trimmed.length <= 7) return trimmed || null;
+  return trimmed.slice(0, 7);
+}
+
 type StatusMeta = {
   source: "github" | "standalone";
   branch?: string | null;
@@ -94,6 +156,7 @@ type StatusMeta = {
   updatedAt?: string | null;
   snapshotId?: string | null;
   workspaceId?: string | null;
+  ingestion?: IngestionMeta | null;
 };
 
 type RepoRef = {
@@ -482,6 +545,7 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [meta, setMeta] = useState<StatusMeta | null>(null);
+  const ingestionRef = useRef<IngestionMeta | null>(null);
 
   useEffect(() => {
     if (!owner || !repo) {
@@ -489,6 +553,7 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
       setErr(null);
       setMeta(null);
       setLoading(false);
+      ingestionRef.current = null;
       return;
     }
 
@@ -500,8 +565,12 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
     }
     const query = params.toString();
     const url = query ? `/api/status/${owner}/${repo}?${query}` : `/api/status/${owner}/${repo}`;
+    const ingestionUrl = query
+      ? `/api/ingestion/${owner}/${repo}?${query}`
+      : `/api/ingestion/${owner}/${repo}`;
 
     setLoading(true);
+    ingestionRef.current = null;
     const init: RequestInit = { cache: "no-store" };
     if (token) {
       init.headers = { "x-github-pat": token };
@@ -539,6 +608,7 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
             updatedAt,
             snapshotId,
             workspaceId,
+            ingestion: ingestionRef.current,
           });
         } else {
           const payload = json as StatusResponse;
@@ -547,6 +617,7 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
             source: "github",
             project: projectKey ?? null,
             updatedAt: typeof payload?.generated_at === "string" ? payload.generated_at : null,
+            ingestion: ingestionRef.current,
           });
         }
       })
@@ -559,6 +630,33 @@ function useStatus(owner: string, repo: string, project?: string | null, token?:
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+
+    fetch(ingestionUrl, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          const message = body?.error || body?.message || response.statusText || "Failed to load ingestion metadata";
+          throw new Error(message);
+        }
+        return response.json();
+      })
+      .then((body: any) => {
+        if (cancelled) return;
+        if (body && typeof body === "object" && body.ok && typeof body.state === "object") {
+          const ingestionMeta = mapIngestionState(body.state);
+          ingestionRef.current = ingestionMeta;
+          setMeta((prev) => (prev ? { ...prev, ingestion: ingestionMeta } : prev));
+        } else {
+          ingestionRef.current = null;
+          setMeta((prev) => (prev ? { ...prev, ingestion: null } : prev));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          ingestionRef.current = null;
+          setMeta((prev) => (prev ? { ...prev, ingestion: null } : prev));
+        }
       });
 
     return () => {
@@ -1192,6 +1290,71 @@ function summarizeWeekProgress(week: Week): ProgressStats {
   }
   const percent = total > 0 ? Math.round((passed / total) * 10000) / 100 : null;
   return { total, passed, failed, pending, progressPercent: percent };
+}
+
+function StatusIngestionCard({ meta }: { meta: StatusMeta | null }) {
+  const ingestion = meta?.ingestion;
+  if (!ingestion) return null;
+
+  const commitSha = shortSha(ingestion.lastCommitSha);
+  const commitUrl = ingestion.lastCommitUrl && commitSha ? ingestion.lastCommitUrl : null;
+  const runLabel = formatTimestamp(ingestion.lastRunAt ?? meta?.updatedAt ?? null);
+  const manualLabel = formatTimestamp(ingestion.lastManualStateAt);
+  const commitAtLabel = formatTimestamp(ingestion.lastCommitAt);
+  const paths = Array.isArray(ingestion.lastCommitPaths) ? ingestion.lastCommitPaths : [];
+  const topPaths = paths.slice(0, 4);
+  const moreCount = paths.length > 4 ? paths.length - 4 : 0;
+
+  return (
+    <div className="card status-meta-card">
+      <div className="status-meta-header">
+        <div className="status-meta-title">Live ingestion</div>
+        {runLabel ? <div className="status-meta-subtitle">Last run {runLabel}</div> : null}
+      </div>
+      <div className="status-meta-grid">
+        <div>
+          <div className="status-meta-label">Commit</div>
+          <div className="status-meta-value">
+            {commitSha ? (
+              commitUrl ? (
+                <a href={commitUrl} target="_blank" rel="noreferrer">
+                  <code>{commitSha}</code>
+                </a>
+              ) : (
+                <code>{commitSha}</code>
+              )
+            ) : (
+              <span>—</span>
+            )}
+            {ingestion.lastCommitMessage ? (
+              <span className="status-meta-message">{ingestion.lastCommitMessage}</span>
+            ) : null}
+          </div>
+          {ingestion.lastCommitAuthor ? (
+            <div className="status-meta-hint">Author: {ingestion.lastCommitAuthor}</div>
+          ) : null}
+          {commitAtLabel ? <div className="status-meta-hint">Committed {commitAtLabel}</div> : null}
+        </div>
+        <div>
+          <div className="status-meta-label">Manual overrides</div>
+          <div className="status-meta-value">
+            {manualLabel ? `Updated ${manualLabel}` : "No manual overrides"}
+          </div>
+        </div>
+        {topPaths.length > 0 ? (
+          <div>
+            <div className="status-meta-label">Changed paths</div>
+            <ul className="status-meta-paths">
+              {topPaths.map((path) => (
+                <li key={path}>{path}</li>
+              ))}
+              {moreCount > 0 ? <li>+{moreCount} more…</li> : null}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function formatStatusSummary({ total, passed, failed, pending, progressPercent }: ProgressStats) {
@@ -4160,6 +4323,8 @@ function DashboardPage() {
                     </div>
                   </div>
                 ) : null}
+
+                <StatusIngestionCard meta={statusMeta} />
 
                 {decoratedWeeks.length > 0 ? <WeekProgress weeks={decoratedWeeks} /> : null}
 

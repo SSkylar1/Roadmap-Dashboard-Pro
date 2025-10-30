@@ -12,6 +12,7 @@ import { loadManualState } from "@/lib/manual-store";
 import type { ManualState } from "@/lib/manual-state";
 import { parseProbeHeaders, probeReadOnlyCheck } from "@/lib/read-only-probe";
 import type { ProbeHeaders } from "@/lib/read-only-probe";
+import { markRunComplete } from "@/lib/ingestion-state";
 import {
   computeStandaloneRoadmapStatus,
   deriveStandaloneWorkspaceId,
@@ -768,6 +769,11 @@ export async function POST(req: NextRequest) {
     const repo = typeof payload?.repo === "string" ? payload.repo.trim() : "";
     const branch =
       typeof payload?.branch === "string" && payload.branch.trim() ? payload.branch.trim() : "main";
+    const commitSha = typeof payload?.commitSha === "string" ? payload.commitSha.trim() : undefined;
+    const manualStateFromPayload =
+      typeof payload?.manualStateUpdatedAt === "string" ? payload.manualStateUpdatedAt.trim() : undefined;
+    const runRequestedAt =
+      typeof payload?.runAt === "string" && payload.runAt.trim() ? payload.runAt.trim() : undefined;
     const probeUrl = typeof payload?.probeUrl === "string" ? payload.probeUrl : undefined;
     const rawRequestProbeHeaders =
       req.headers.get("x-supabase-headers") ??
@@ -796,6 +802,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "missing owner/repo" }, { status: 400 });
     }
 
+    let manualStateUpdatedAt: string | null = manualStateFromPayload ?? null;
+
     if (STANDALONE_MODE) {
       const workspaceId = deriveStandaloneWorkspaceId(owner, repo);
       if (!workspaceId) {
@@ -823,6 +831,9 @@ export async function POST(req: NextRequest) {
         const manualResult = await loadManualState(owner, repo, projectKey ?? null);
         if (manualResult.available) {
           manualState = manualResult.state;
+          if (typeof manualResult.updated_at === "string") {
+            manualStateUpdatedAt = manualResult.updated_at;
+          }
         }
       } catch (error) {
         console.error("Failed to load manual roadmap overrides", error);
@@ -844,6 +855,16 @@ export async function POST(req: NextRequest) {
         project_id: projectKey ?? null,
         branch: branch ?? null,
         payload: statusPayload,
+      });
+
+      const runTimestamp =
+        typeof statusPayload.generated_at === "string"
+          ? statusPayload.generated_at
+          : runRequestedAt ?? new Date().toISOString();
+      await markRunComplete(owner, repo, projectKey ?? null, {
+        commitSha,
+        manualStateAt: manualStateUpdatedAt,
+        runAt: runTimestamp,
       });
 
       return NextResponse.json(
@@ -993,6 +1014,9 @@ export async function POST(req: NextRequest) {
       const manualResult = await loadManualState(owner, repo, projectKey ?? null);
       if (manualResult.available) {
         manualState = manualResult.state;
+        if (typeof manualResult.updated_at === "string") {
+          manualStateUpdatedAt = manualResult.updated_at;
+        }
       }
     } catch (error) {
       console.error("Failed to load manual roadmap overrides", error);
@@ -1078,6 +1102,16 @@ export async function POST(req: NextRequest) {
       : "chore(roadmap): update plan [skip ci]";
     await safePut(projectAwarePath("docs/project-plan.md", projectKey), plan, planMessage);
     await safePut(projectAwarePath("docs/roadmap/project-plan.md", projectKey), plan, planMessage);
+
+    const runTimestamp =
+      typeof status.generated_at === "string"
+        ? status.generated_at
+        : runRequestedAt ?? new Date().toISOString();
+    await markRunComplete(owner, repo, projectKey ?? null, {
+      commitSha,
+      manualStateAt: manualStateUpdatedAt,
+      runAt: runTimestamp,
+    });
 
     return NextResponse.json({ ok: true, wrote }, { headers: { "cache-control": "no-store" } });
   } catch (e: any) {

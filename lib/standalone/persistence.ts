@@ -4,9 +4,27 @@ import { dirname, resolve } from "node:path";
 import type { StandaloneRoadmapRecord } from "./roadmaps-store";
 import type { StandaloneStatusSnapshot } from "./status-snapshots";
 
+export type StandaloneIngestionStateRecord = {
+  owner: string;
+  repo: string;
+  project_id: string;
+  last_commit_sha?: string | null;
+  last_commit_message?: string | null;
+  last_commit_author?: string | null;
+  last_commit_url?: string | null;
+  last_commit_at?: string | null;
+  last_commit_paths?: string[];
+  last_manual_state_at?: string | null;
+  last_run_sha?: string | null;
+  last_run_at?: string | null;
+  last_run_manual_state_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type StandaloneStoresPayload = {
   roadmaps: StandaloneRoadmapRecord[];
   statusSnapshots: StandaloneStatusSnapshot[];
+  ingestionStates: StandaloneIngestionStateRecord[];
 };
 
 type StandaloneStoreUpdate = Partial<StandaloneStoresPayload>;
@@ -39,9 +57,13 @@ function normalizePayload(payload: any): StandaloneStoresPayload {
   const statusSnapshots = Array.isArray(payload?.statusSnapshots)
     ? payload.statusSnapshots
     : [];
+  const ingestionStates = Array.isArray(payload?.ingestionStates)
+    ? payload.ingestionStates
+    : [];
   return {
     roadmaps,
     statusSnapshots,
+    ingestionStates,
   };
 }
 
@@ -51,7 +73,7 @@ function readFromDisk(): StandaloneStoresPayload {
     const parsed = JSON.parse(raw);
     return normalizePayload(parsed);
   } catch (error) {
-    return { roadmaps: [], statusSnapshots: [] };
+    return { roadmaps: [], statusSnapshots: [], ingestionStates: [] };
   }
 }
 
@@ -73,6 +95,7 @@ export function loadStandaloneStores(): StandaloneStoresPayload {
   return {
     roadmaps: deepClone(current.roadmaps),
     statusSnapshots: deepClone(current.statusSnapshots),
+    ingestionStates: deepClone(current.ingestionStates),
   };
 }
 
@@ -81,6 +104,7 @@ export function saveStandaloneStores(update: StandaloneStoreUpdate): void {
   const next: StandaloneStoresPayload = {
     roadmaps: deepClone(update.roadmaps ?? current.roadmaps),
     statusSnapshots: deepClone(update.statusSnapshots ?? current.statusSnapshots),
+    ingestionStates: deepClone(update.ingestionStates ?? current.ingestionStates),
   };
   cache = next;
   writeToDisk(next);
