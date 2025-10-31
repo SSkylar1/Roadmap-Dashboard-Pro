@@ -18,6 +18,9 @@ const REMOVAL_PATHS = [
   "docs/backlog-discovered.yml",
   "docs/summary.txt",
   "docs/gtm-plan.md",
+  "docs/infra-facts.md",
+  "docs/tech-stack.yml",
+  "docs/idea-log.md",
   ".github/workflows/roadmap.yml",
   "docs/roadmap",
 ] as const;
