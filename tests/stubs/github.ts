@@ -33,6 +33,24 @@ let putCalls: Array<{
 
 let mockPutError: Error | null = null;
 
+type DeleteImplementation = (
+  owner: string,
+  repo: string,
+  targetPath: string,
+  options: { token?: string; branch?: string; message?: string | ((path: string) => string) },
+) => Promise<{ deleted: string[]; missing: string[] }>;
+
+type DeleteCall = {
+  owner: string;
+  repo: string;
+  path: string;
+  options: { token?: string; branch?: string; message?: string | ((path: string) => string) };
+};
+
+let deleteCalls: DeleteCall[] = [];
+let mockDeleteImplementation: DeleteImplementation | null = null;
+let mockDeleteError: Error | null = null;
+
 export function __setMockResponse(response: unknown) {
   mockResponse = response;
   mockResponseConfigured = true;
@@ -52,6 +70,9 @@ export function __resetMockGithub() {
   mockTreeError = null;
   putCalls = [];
   mockPutError = null;
+  deleteCalls = [];
+  mockDeleteImplementation = null;
+  mockDeleteError = null;
 }
 
 export function __getLastCall() {
@@ -76,6 +97,18 @@ export function __getPutCalls() {
 
 export function __setMockPutError(error: Error | null) {
   mockPutError = error;
+}
+
+export function __getDeleteCalls() {
+  return deleteCalls.slice();
+}
+
+export function __setMockDeleteImplementation(implementation: DeleteImplementation | null) {
+  mockDeleteImplementation = implementation;
+}
+
+export function __setMockDeleteError(error: Error | null) {
+  mockDeleteError = error;
 }
 
 export async function getFileRaw(
@@ -159,4 +192,22 @@ export async function putFile(
     throw err;
   }
   return { path, branch, sha: "mock-sha" };
+}
+
+export async function deletePath(
+  owner: string,
+  repo: string,
+  targetPath: string,
+  options: { token?: string; branch?: string; message?: string | ((path: string) => string) },
+) {
+  deleteCalls.push({ owner, repo, path: targetPath, options });
+  if (mockDeleteError) {
+    const err = mockDeleteError;
+    mockDeleteError = null;
+    throw err;
+  }
+  if (mockDeleteImplementation) {
+    return mockDeleteImplementation(owner, repo, targetPath, options);
+  }
+  return { deleted: [targetPath], missing: [] };
 }
