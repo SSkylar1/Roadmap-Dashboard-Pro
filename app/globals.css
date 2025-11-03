@@ -91,7 +91,25 @@ textarea{ min-height:180px; font-family: ui-monospace, SFMono-Regular, Menlo, Mo
 .onboarding-step-description{ margin:8px 0 0; font-size:14px; line-height:1.5; color:var(--muted); max-width:720px }
 .onboarding-step-description code{ font-size:13px }
 .onboarding-details{ background:rgba(15,21,32,0.7); border:1px solid #1f2732; border-radius:12px; padding:12px 14px }
-.onboarding-details summary{ cursor:pointer; font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; outline:none }
+.onboarding-details summary{
+  cursor:pointer;
+  font-size:13px;
+  color:var(--muted);
+  display:flex;
+  align-items:center;
+  gap:6px;
+  background:rgba(17,24,34,0.6);
+  padding:10px 12px;
+  border-radius:10px;
+  transition:background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+.onboarding-details summary:hover,
+.onboarding-details summary:focus-visible,
+.onboarding-details summary:active{
+  background:rgba(33,45,61,0.75);
+  color:var(--fg);
+  box-shadow:0 0 0 1px rgba(41,50,65,0.9);
+}
 .onboarding-details summary::-webkit-details-marker{ display:none }
 .onboarding-details summary::before{ content:"＋"; color:var(--accent); font-weight:600 }
 .onboarding-details[open] summary{ color:var(--accent); margin-bottom:12px }
