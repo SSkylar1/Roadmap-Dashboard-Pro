@@ -1,0 +1,13 @@
+# Query: .lg\\:grid-cols-\\[260px,1fr\\]
+# ContextLines: 1
+
+2 results - 1 file
+
+app/globals.css:
+  668  .settings-page .bg-slate-900.text-white{ color:var(--fg) !important; }
+  669: .settings-page .lg\:grid-cols-\[260px\,1fr\]{ grid-template-columns:minmax(0,1fr); }
+  670  .settings-page .md\:grid-cols-2{ grid-template-columns:repeat(1,minmax(0,1fr)); }
+
+  680  @media (min-width:1024px){
+  681:   .settings-page .lg\:grid-cols-\[260px\,1fr\]{ grid-template-columns:260px minmax(0,1fr); }
+  682  }

@@ -685,4 +685,31 @@ button.primary-button.danger:disabled{ opacity:0.65; cursor:not-allowed; backgro
 .paint { contain: paint; isolation: isolate; }
 .backface-hidden { backface-visibility: hidden; }
 
+/* ==== scroll/compositing hardening for right column ==== */
+.dashboard-shell > :nth-child(2){
+  /* right content column */
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: paint;
+  isolation: isolate;
+}
+
+/* ensure major scroll surface is also on its own layer */
+main, .tab-panel, .week-grid {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: paint;
+}
+
+/* if any full-width sticky rows exist in the content column, promote them too */
+.sticky, [data-sticky="true"]{
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  isolation: isolate;
+}
+
+
 
